@@ -1,0 +1,42 @@
+[
+  {
+    "id": "ac978161-6f46-4f6b-ad9e-a258e642751c",
+    "text": "Administrative Business Partner",
+    "categories": {
+      "commitment": "Full-time",
+      "location": "London, United Kingdom",
+      "team": "Administrative",
+      "allLocations": ["London, United Kingdom"]
+    },
+    "country": "GB",
+    "workplaceType": "hybrid",
+    "createdAt": 1711403416463,
+    "opening": "<div><strong>A World-Changing Company</strong></div>",
+    "openingPlain": "A World-Changing Company",
+    "descriptionBody": "<div><strong>The Role</strong></div>",
+    "descriptionBodyPlain": "The Role",
+    "description": "<div><strong>A World-Changing Company</strong></div><div><strong>The Role</strong></div>",
+    "descriptionPlain": "A World-Changing Company\nThe Role",
+    "additional": "<div><strong>Life at Palantir</strong></div>",
+    "additionalPlain": "Life at Palantir",
+    "lists": [
+      {"text": "What We Value", "content": "\n<li>Ability to adjust quickly</li>"}
+    ],
+    "hostedUrl": "https://jobs.lever.co/palantir/ac978161-6f46-4f6b-ad9e-a258e642751c",
+    "applyUrl": "https://jobs.lever.co/palantir/ac978161-6f46-4f6b-ad9e-a258e642751c/apply"
+  },
+  {
+    "id": "0d1e2f3a-0000-4000-8000-000000000002",
+    "text": "  Remote Engineer  ",
+    "categories": {"commitment": "Contract", "location": "Remote", "allLocations": []},
+    "workplaceType": "remote",
+    "createdAt": 1711403416463,
+    "salaryRange": {"min": 100000, "max": 150000, "currency": "USD", "interval": "per-year-salary"},
+    "opening": "<p>Hi</p>",
+    "descriptionBody": "",
+    "additional": "",
+    "lists": [],
+    "hostedUrl": "https://jobs.lever.co/palantir/0d1e2f3a-0000-4000-8000-000000000002",
+    "applyUrl": "https://jobs.lever.co/palantir/0d1e2f3a-0000-4000-8000-000000000002/apply"
+  }
+]
