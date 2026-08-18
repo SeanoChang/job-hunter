@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# Local data — the corpus lives outside the install (see docs), but never commit it here either
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Session artifacts
+.playwright-mcp/
+.DS_Store

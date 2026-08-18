@@ -1,0 +1,1104 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>job-hunter — unified posting data model</title>
+<style>
+/* base.css — structure only. Defines the scale tokens; references but never
+   defines the colour tokens, which every theme file supplies.
+
+   Two widths, not one. --container is the page column: figures, tables,
+   grids and cards fill it. --measure is the narrower cap on running prose
+   inside it. Applying the prose measure to the container squeezes every
+   diagram to paragraph width — the 2026-08-15 data-model page did exactly
+   that and clipped a six-step flow at step five. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  --step--1: 0.875rem;                       /* 14px  captions, labels, table body */
+  --step-0: 1.0625rem;                       /* 17px  body */
+  --step-1: 1.3rem;                          /* 21px  lede, pull-claim, h3 */
+  --step-2: 1.8rem;                          /* 29px  h2 */
+  --step-3: 2.4rem;                          /* 38px  stat */
+  --step-4: clamp(2.125rem, 5vw, 3.25rem);   /* 34–52px h1 */
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+  --space-5: 2.5rem;
+  --space-6: 4rem;
+  --space-7: 5.25rem;                        /* 84px  between sections */
+
+  --container: 920px;
+  --measure: 42em;
+  --radius: 8px;
+  --radius-lg: 16px;
+}
+
+html {
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--step-0);
+  line-height: 1.62;
+  letter-spacing: -0.003em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- page column ------------------------------------------------------ */
+
+main, article, .wrap {
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 0 var(--space-4) var(--space-7);
+}
+
+header {
+  padding: var(--space-7) 0 var(--space-5);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-2);
+}
+
+footer {
+  margin-top: var(--space-7);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}
+
+/* ---- type ------------------------------------------------------------- */
+
+h1, h2, h3, h4 {
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  margin: 0;
+}
+h1 {
+  font-size: var(--step-4);
+  font-weight: 700;
+  line-height: 1.06;
+  letter-spacing: -0.028em;
+  margin: 0 0 var(--space-4);
+}
+h2 {
+  font-size: var(--step-2);
+  font-weight: 650;
+  margin: var(--space-7) 0 var(--space-2);
+}
+h3 {
+  font-size: var(--step-1);
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  margin: var(--space-5) 0 var(--space-2);
+}
+h4 {
+  font-size: var(--step-0);
+  font-weight: 620;
+  margin: var(--space-4) 0 var(--space-2);
+}
+h2 + h3 { margin-top: var(--space-4); }
+
+/* Section marker: the small accent line above an h2 ("02 — The constraint").
+   Numbering is information — use .num only when the sections are a sequence;
+   for unordered sections use .eyebrow inside the h2 instead. */
+.num, h2 > .eyebrow {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 620;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: var(--space-2);
+}
+.eyebrow {
+  font-size: 0.75rem;
+  font-weight: 590;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 var(--space-3);
+}
+
+/* Prose is capped at the measure; the container is not. */
+p, ul, ol, dl, .lede, .big, .note {
+  max-width: var(--measure);
+}
+p, ul, ol, dl { margin: 0 0 var(--space-3); }
+ul, ol { padding-left: 1.4em; }
+li { margin-bottom: var(--space-2); }
+strong { font-weight: 620; }
+
+.lede {
+  font-size: var(--step-1);
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin: 0;
+}
+.big {
+  font-size: var(--step-1);
+  line-height: 1.45;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  margin: var(--space-4) 0;
+}
+.note {
+  border-left: 2px solid var(--border-strong);
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  color: var(--text-muted);
+  font-size: 0.95em;
+  margin: var(--space-4) 0;
+}
+small, .caption { font-size: var(--step--1); color: var(--text-muted); }
+.faint { color: var(--text-faint); }
+
+a { color: var(--accent); text-underline-offset: 0.15em; }
+a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 2px;
+}
+
+hr { border: 0; border-top: 1px solid var(--border); margin: var(--space-6) 0; }
+
+/* ---- contents ---------------------------------------------------------- */
+
+nav.toc, .toc { margin: var(--space-5) 0 0; font-size: 0.95em; }
+.toc a {
+  color: var(--text-muted);
+  text-decoration: none;
+  display: block;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.toc a:hover { color: var(--accent); }
+.toc span {
+  color: var(--text-faint);
+  margin-right: var(--space-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- code and equations ----------------------------------------------- */
+
+code, kbd, samp { font-family: var(--font-mono); font-size: 0.86em; }
+
+:not(pre) > code {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.05em 0.35em;
+}
+
+pre {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  overflow-x: auto;
+  line-height: 1.55;
+  font-size: var(--step--1);
+  margin: var(--space-3) 0;
+}
+pre code { background: none; border: 0; padding: 0; font-size: 1em; }
+
+/* An equation, schema, or key statement set apart in mono. .hl tints it. */
+.eq {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  line-height: 1.9;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+  overflow-x: auto;
+  color: var(--text);
+}
+.eq .c { color: var(--text-muted); font-size: 0.9em; }
+.eq.hl { background: var(--accent-soft); border-color: var(--accent); }
+.eqname {
+  display: block;
+  font: 590 0.7rem var(--font-sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: var(--space-2);
+}
+
+/* ---- callouts ---------------------------------------------------------- */
+
+.callout {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+  background: var(--bg-raised);
+}
+.callout > :last-child { margin-bottom: 0; }
+.callout-accent { background: var(--accent-soft); border-color: var(--accent); }
+.callout-ok     { background: var(--ok-soft);     border-color: var(--ok); }
+.callout-warn   { background: var(--warn-soft);   border-color: var(--warn); }
+.callout-bad    { background: var(--bad-soft);    border-color: var(--bad); }
+
+blockquote {
+  margin: var(--space-4) 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-muted);
+  max-width: var(--measure);
+}
+
+/* ---- tables ------------------------------------------------------------ */
+
+.table-wrap { overflow-x: auto; margin: var(--space-4) 0; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--step--1);
+  min-width: 34rem;
+}
+th, td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+th {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+td:first-child { font-weight: 590; }
+td.m, th.m { font-family: var(--font-mono); font-size: 0.8rem; white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- figures ----------------------------------------------------------- */
+
+figure { margin: var(--space-5) 0 var(--space-3); }
+figure > svg, figure > img { width: 100%; max-width: 100%; height: auto; display: block; }
+figcaption {
+  margin-top: var(--space-3);
+  font-size: var(--step--1);
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 52em;
+}
+
+/* Text inside inline SVG. Set font on the <text> via class so every figure
+   on the page shares one label scale instead of per-diagram guesses. */
+.lbl     { font: 590 13px var(--font-sans); }
+.lbl-s   { font: 500 11.5px var(--font-sans); }
+.lbl-xs  { font: 500 10.5px var(--font-sans); }
+.mono-s  { font: 500 11px var(--font-mono); }
+.mono-xs { font: 500 9.5px var(--font-mono); }
+
+/* ---- cards, grids, stats ---------------------------------------------- */
+
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-4);
+  margin: var(--space-4) 0;
+}
+.card > :first-child { margin-top: 0; }
+.card > :last-child { margin-bottom: 0; }
+.card h3, .card h4 { margin-top: 0; }
+
+.grid2, .grid3, .stats {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+.grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stats { grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); }
+.grid2 > .card, .grid3 > .card, .stats > .card { margin: 0; }
+.grid2 p, .grid3 p, .stats p { max-width: none; }
+
+/* One number that is the point. */
+.stat {
+  font-size: var(--step-3);
+  line-height: 1.05;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.stat-label {
+  font-size: var(--step--1);
+  color: var(--text-muted);
+  margin-top: var(--space-1);
+}
+.stat-sub { font-size: 0.8rem; color: var(--text-faint); }
+
+.status-ok { color: var(--ok); }
+.status-warn { color: var(--warn); }
+.status-bad { color: var(--bad); }
+
+.legend { display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--step--1); }
+.legend-item { display: inline-flex; align-items: center; gap: var(--space-2); }
+.swatch { width: 0.8em; height: 0.8em; border-radius: 2px; flex: none; }
+.s1 { background: var(--series-1); }
+.s2 { background: var(--series-2); }
+.s3 { background: var(--series-3); }
+.s4 { background: var(--series-4); }
+.s5 { background: var(--series-5); }
+.s6 { background: var(--series-6); }
+
+/* ---- theme toggle (local files own their theme) ----------------------- */
+
+.theme-toggle {
+  position: fixed;
+  top: var(--space-3);
+  right: var(--space-3);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-3);
+  font: inherit;
+  font-size: var(--step--1);
+  cursor: pointer;
+}
+.theme-toggle:hover { color: var(--text); border-color: var(--border-strong); }
+
+/* ---- responsive ------------------------------------------------------- */
+
+@media (max-width: 44rem) {
+  main, article, .wrap { padding: 0 var(--space-3) var(--space-6); }
+  header { padding-top: var(--space-6); }
+  h2 { margin-top: var(--space-6); }
+  .grid2, .grid3 { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media print {
+  body { background: #fff; color: #000; }
+  main, article, .wrap { padding: 0; max-width: none; }
+  a { text-decoration: underline; }
+  pre, .card, figure, .callout, .eq { break-inside: avoid; }
+  h2 { break-after: avoid; }
+  .no-print, .theme-toggle { display: none; }
+}
+
+/* apple — the default. The system palette: true black ground in dark, pure
+   white in light, the SF stack throughout including code. Opens light.
+
+   The four -soft tints are the fills for highlighted blocks, callouts and
+   diagram boxes; they sit one step off the ground so a tinted region reads
+   as emphasis, not as a coloured surface.
+
+   Series slots keep Apple's system hues, re-placed inside the chart lightness
+   band. The system colours themselves sit too light for filled marks — the
+   same reason TokyoNight's do — so #30d158 becomes #00992c as a series while
+   staying #30d158 as a status colour, where it is text and WCAG governs. */
+
+:root {
+  --bg: #ffffff;
+  --bg-raised: #f5f5f7;
+  --bg-inset: #fafafc;
+  --border: #d2d2d7;
+  --border-strong: #939397;
+  --text: #1d1d1f;
+  --text-muted: #515154;
+  --text-faint: #6e6e73;
+  --accent: #0071e3;
+  --ok: #1f8639;
+  --warn: #a75800;
+  --bad: #d70015;
+  --accent-soft: #e8f1fd;
+  --ok-soft: #e6f5ef;
+  --warn-soft: #fdf3e2;
+  --bad-soft: #fdeceb;
+  --series-1: #0077dd;
+  --series-2: #00a63a;
+  --series-3: #78249e;
+  --series-4: #d77c00;
+  --series-5: #249ec9;
+  --series-6: #b91a3f;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #000000;
+    --bg-raised: #1d1d1f;
+    --bg-inset: #141416;
+    --border: #38383a;
+    --border-strong: #5a5a5c;
+    --text: #f5f5f7;
+    --text-muted: #aeaeb2;
+    --text-faint: #8e8e93;
+    --accent: #2997ff;
+    --ok: #30d158;
+    --warn: #ff9f0a;
+    --bad: #ff453a;
+    --accent-soft: #10243b;
+    --ok-soft: #0e2b21;
+    --warn-soft: #2e2313;
+    --bad-soft: #331715;
+    --series-1: #0074d9;
+    --series-2: #c57100;
+    --series-3: #8735af;
+    --series-4: #00992c;
+    --series-5: #219cc7;
+    --series-6: #c12444;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #000000;
+  --bg-raised: #1d1d1f;
+  --bg-inset: #141416;
+  --border: #38383a;
+  --border-strong: #5a5a5c;
+  --text: #f5f5f7;
+  --text-muted: #aeaeb2;
+  --text-faint: #8e8e93;
+  --accent: #2997ff;
+  --ok: #30d158;
+  --warn: #ff9f0a;
+  --bad: #ff453a;
+  --accent-soft: #10243b;
+  --ok-soft: #0e2b21;
+  --warn-soft: #2e2313;
+  --bad-soft: #331715;
+  --series-1: #0074d9;
+  --series-2: #c57100;
+  --series-3: #8735af;
+  --series-4: #00992c;
+  --series-5: #219cc7;
+  --series-6: #c12444;
+}
+
+/* page-specific: capture pairs sit inside a figure as a two-column grid */
+.pair > div { min-width: 0; }
+.pair > div > pre { margin: 0; }
+.pair .eyebrow { margin-bottom: var(--space-2); }
+h3 + .caption + figure { margin-top: var(--space-3); }
+figcaption ul { padding-left: 1.2em; margin: 0; }
+figcaption li { margin-bottom: var(--space-1); }
+</style>
+</head>
+<body>
+<button class="theme-toggle no-print" id="themeToggle" aria-label="Toggle colour theme">theme</button>
+<main>
+  <header>
+    <p class="eyebrow">design · job-hunter · 2026-08-15</p>
+    <h1>One posting shape, eight sources, three markets</h1>
+    <p class="lede">
+      Every source normalizes into a single three-ring record — a frozen identity
+      ring, a small normalized core, and a free-form extras ring — and everything
+      interpretive (skills, seniority, scores) lives in a separate relational
+      layer keyed to the exact JD version it came from. The whole database is a
+      cache: it can be deleted and rebuilt from the raw snapshot archive at any
+      time, which is what makes the schema safe to evolve.
+    </p>
+    <div class="callout callout-accent">
+      <p><strong>Status 2026-08-17 — partially superseded.</strong> Kept: raw
+      archive forever, per-version derivation, events not overwrites, null over
+      guess. Changed since this was written: the "three rings" framing was
+      dropped on 2026-08-16 (plain column groups); the derived layer is now an
+      <em>evidence-first demand profile</em> (areas of atomic verbatim claims,
+      synthesis as an optional labelled projection) produced by LLM-first
+      extraction over Markdown as the canonical text; "rebuildable from raw" is
+      narrowed to "recomputable from raw + extraction archives + curation
+      event log"; and <code>content_hash</code> is split into raw-capture,
+      posting-version, document, and extraction-run identities. Current
+      statement of the design: <code>2026-08-17-parsing-direction.md</code>.</p>
+    </div>
+    <nav class="toc" aria-label="Contents">
+      <a href="#problem"><span>01</span>Problem and constraints</a>
+      <a href="#design"><span>02</span>Proposed design</a>
+      <a href="#record"><span>03</span>The record: three rings</a>
+      <a href="#flow2"><span>04</span>Data flow: one posting captured in three markets</a>
+      <a href="#skills"><span>05</span>The derived layer: posting → skills → detail</a>
+      <a href="#decisions"><span>06</span>Decisions and rejected alternatives</a>
+      <a href="#failures"><span>07</span>Failure modes</a>
+      <a href="#testing"><span>08</span>Testing strategy</a>
+    </nav>
+  </header>
+
+  <!-- ============================================================ 01 -->
+  <h2 id="problem"><span class="num">01 — Problem</span>Problem and constraints</h2>
+  <p>
+    Eight source types (Greenhouse, Lever, Ashby, Workable, SmartRecruiters,
+    MyCareersFuture, JSON-LD pages, Yourator) across four markets disagree
+    about everything: field names, timestamp formats, description encoding,
+    salary currency and period, language, and how much structure they offer.
+    The format must be <em>unified</em> enough that one query answers
+    &ldquo;what changed in my panel this week&rdquo; across all of them, and
+    <em>flexible</em> enough that a new source never forces a redesign.
+  </p>
+  <figure>
+<svg viewBox="0 0 880 340" role="img" aria-label="Eight source types across four markets converge through one unified record into one query">
+<rect x="0" y="0" width="880" height="340" rx="16" fill="var(--bg-raised)" stroke="var(--border)"/>
+<text x="26" y="34" class="lbl" fill="var(--text-muted)">EIGHT SOURCE TYPES · FOUR MARKETS · one query that must not care which</text>
+<rect x="26" y="58" width="176" height="24" rx="6" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="114.0" y="74" class="lbl-s" fill="var(--text)" text-anchor="middle">Greenhouse</text>
+<path d="M202 70.0 L262 182.0" stroke="var(--border-strong)" stroke-width="1" fill="none" opacity="0.7"/>
+<rect x="26" y="90" width="176" height="24" rx="6" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="114.0" y="106" class="lbl-s" fill="var(--text)" text-anchor="middle">Lever</text>
+<path d="M202 102.0 L262 182.0" stroke="var(--border-strong)" stroke-width="1" fill="none" opacity="0.7"/>
+<rect x="26" y="122" width="176" height="24" rx="6" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="114.0" y="138" class="lbl-s" fill="var(--text)" text-anchor="middle">Ashby</text>
+<path d="M202 134.0 L262 182.0" stroke="var(--border-strong)" stroke-width="1" fill="none" opacity="0.7"/>
+<rect x="26" y="154" width="176" height="24" rx="6" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="114.0" y="170" class="lbl-s" fill="var(--text)" text-anchor="middle">Workable</text>
+<path d="M202 166.0 L262 182.0" stroke="var(--border-strong)" stroke-width="1" fill="none" opacity="0.7"/>
+<rect x="26" y="186" width="176" height="24" rx="6" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="114.0" y="202" class="lbl-s" fill="var(--text)" text-anchor="middle">SmartRecruiters</text>
+<path d="M202 198.0 L262 182.0" stroke="var(--border-strong)" stroke-width="1" fill="none" opacity="0.7"/>
+<rect x="26" y="218" width="176" height="24" rx="6" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="114.0" y="234" class="lbl-s" fill="var(--text)" text-anchor="middle">MyCareersFuture</text>
+<path d="M202 230.0 L262 182.0" stroke="var(--border-strong)" stroke-width="1" fill="none" opacity="0.7"/>
+<rect x="26" y="250" width="176" height="24" rx="6" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="114.0" y="266" class="lbl-s" fill="var(--text)" text-anchor="middle">JSON-LD pages</text>
+<path d="M202 262.0 L262 182.0" stroke="var(--border-strong)" stroke-width="1" fill="none" opacity="0.7"/>
+<rect x="26" y="282" width="176" height="24" rx="6" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="114.0" y="298" class="lbl-s" fill="var(--text)" text-anchor="middle">Yourator</text>
+<path d="M202 294.0 L262 182.0" stroke="var(--border-strong)" stroke-width="1" fill="none" opacity="0.7"/>
+<rect x="262" y="104" width="236" height="156" rx="12" fill="var(--bg)" stroke="var(--border-strong)" stroke-dasharray="5 4"/>
+<text x="280" y="128" class="lbl-s" fill="var(--text)" font-weight="620">They disagree about</text>
+<text x="280" y="150" class="lbl-xs" fill="var(--text-muted)">field names</text>
+<text x="280" y="167" class="lbl-xs" fill="var(--text-muted)">timestamp formats</text>
+<text x="280" y="184" class="lbl-xs" fill="var(--text-muted)">description encoding</text>
+<text x="280" y="201" class="lbl-xs" fill="var(--text-muted)">salary currency and period</text>
+<text x="280" y="218" class="lbl-xs" fill="var(--text-muted)">language</text>
+<text x="280" y="235" class="lbl-xs" fill="var(--text-muted)">how much structure they offer</text>
+<path d="M498 182.0 L536 182.0" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s1a)"/>
+<rect x="540" y="152.0" width="150" height="60" rx="12" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<text x="615.0" y="178.0" class="lbl-s" fill="var(--text)" text-anchor="middle" font-weight="620">Unified record</text>
+<text x="615.0" y="196.0" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">one shape, three rings</text>
+<path d="M690 182.0 L728 182.0" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s1a)"/>
+<rect x="732" y="146.0" width="122" height="72" rx="12" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="793.0" y="170.0" class="lbl-s" fill="var(--text)" text-anchor="middle" font-weight="620">One query</text>
+<text x="793.0" y="188.0" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">what changed in my</text>
+<text x="793.0" y="202.0" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">panel this week</text>
+<text x="697" y="306" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">a new source = one more adapter, never a redesign</text>
+<defs><marker id="s1a" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L6 3 L0 6 z" fill="var(--text-faint)"/></marker></defs>
+</svg>
+    <figcaption>Unified enough that one query spans all eight sources; flexible enough that a ninth source is one more adapter, never a redesign.</figcaption>
+  </figure>
+  <div class="grid2">
+    <div class="card">
+      <h4>Constraints carried from earlier decisions</h4>
+      <ul>
+        <li>Raw payloads are archived forever and never edited.</li>
+        <li>The store is rebuildable from raw.</li>
+        <li>Changes are events, never overwrites.</li>
+        <li>Fields prefer <code>null</code> over a guess.</li>
+        <li>No scraping of fenced platforms.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Non-goals</h4>
+      <ul>
+        <li>Merging cross-source identity into one record (duplicates are linked, not merged).</li>
+        <li>Storing derived interpretations inside the posting record.</li>
+        <li>Translating content between languages.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ============================================================ 02 -->
+  <h2 id="design"><span class="num">02 — Design</span>Proposed design</h2>
+  <p>
+    A fetch lands as an immutable raw snapshot; a per-source adapter parses it
+    into the unified record; the store diffs against the previous version by
+    content hash and appends events; the derived layer re-computes only for
+    versions whose content actually changed.
+  </p>
+  <figure>
+<svg viewBox="0 0 880 236" role="img" aria-label="Capture path from source endpoint through raw archive, adapter, unified record and temporal store to the derived layer">
+<rect x="0" y="0" width="880" height="236" rx="16" fill="var(--bg-raised)" stroke="var(--border)"/>
+<text x="26" y="34" class="lbl" fill="var(--text-muted)">CAPTURE PATH · left of the archive is raw, right is rebuildable</text>
+<path d="M26 74 V78 H286 V74" stroke="var(--border-strong)" stroke-width="1" fill="none"/>
+<text x="156" y="68" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">fetched once · never edited</text>
+<path d="M310 74 V78 H854 V74" stroke="var(--accent)" stroke-width="1" fill="none"/>
+<text x="582" y="68" class="lbl-xs" fill="var(--accent)" text-anchor="middle">rebuildable from raw at any time</text>
+<path d="M298 60 V206" stroke="var(--border-strong)" stroke-width="1" stroke-dasharray="3 3" fill="none"/>
+<rect x="26" y="96" width="118" height="68" rx="12" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="85.0" y="122" class="lbl-s" fill="var(--text)" text-anchor="middle" font-weight="620">Source endpoint</text>
+<text x="85.0" y="140" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">API · JSON-LD</text>
+<text x="85.0" y="154" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">govt feed</text>
+<rect x="168" y="96" width="118" height="68" rx="12" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<text x="227.0" y="122" class="lbl-s" fill="var(--text)" text-anchor="middle" font-weight="620">Raw archive</text>
+<text x="227.0" y="140" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">append-only .json.gz</text>
+<text x="227.0" y="154" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">kept forever</text>
+<rect x="310" y="96" width="118" height="68" rx="12" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="369.0" y="122" class="lbl-s" fill="var(--text)" text-anchor="middle" font-weight="620">Adapter parse()</text>
+<text x="369.0" y="140" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">mapping table</text>
+<text x="369.0" y="154" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">per source</text>
+<rect x="452" y="96" width="118" height="68" rx="12" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="511.0" y="122" class="lbl-s" fill="var(--text)" text-anchor="middle" font-weight="620">Unified record</text>
+<text x="511.0" y="140" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">3 rings, 2 hashes</text>
+<rect x="594" y="96" width="118" height="68" rx="12" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="653.0" y="122" class="lbl-s" fill="var(--text)" text-anchor="middle" font-weight="620">Temporal store</text>
+<text x="653.0" y="140" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">postings + events</text>
+<text x="653.0" y="154" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">bi-temporal</text>
+<rect x="736" y="96" width="118" height="68" rx="12" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="795.0" y="122" class="lbl-s" fill="var(--text)" text-anchor="middle" font-weight="620">Derived layer</text>
+<text x="795.0" y="140" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">skills · embeddings</text>
+<text x="795.0" y="154" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">scores</text>
+<path d="M144 130.0 L167 130.0" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s2a)"/>
+<path d="M286 130.0 L309 130.0" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s2a)"/>
+<path d="M428 130.0 L451 130.0" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s2a)"/>
+<path d="M570 130.0 L593 130.0" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s2a)"/>
+<path d="M712 130.0 L735 130.0" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s2a)"/>
+<text x="653.0" y="190" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">diff by content_hash,</text>
+<text x="653.0" y="204" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">append events</text>
+<text x="795.0" y="190" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">re-computes only when</text>
+<text x="795.0" y="204" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">content changed</text>
+<text x="369.0" y="190" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">one adapter</text>
+<text x="369.0" y="204" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">per source type</text>
+<defs><marker id="s2a" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L6 3 L0 6 z" fill="var(--text-faint)"/></marker></defs>
+</svg>
+    <figcaption>The capture path. Everything right of the raw archive is rebuildable; nothing left of it is.</figcaption>
+  </figure>
+
+  <!-- ============================================================ 03 -->
+  <h2 id="record"><span class="num">03 — Record</span>The record: three rings</h2>
+  <p>
+    The rings are layered by <strong>rate of change</strong>: Ring&nbsp;1 is a
+    frozen contract the temporal machinery depends on; Ring&nbsp;2 changes only
+    through a deliberate promotion rule; Ring&nbsp;3 changes freely per source.
+  </p>
+  <p class="big">
+    Two hashes split &ldquo;the employer edited the job&rdquo; from
+    &ldquo;the source jiggled its metadata&rdquo;.
+  </p>
+  <figure>
+<svg viewBox="0 0 880 440" role="img" aria-label="The unified record as three stacked rings: identity and lifecycle, normalized core covered by content_hash, extras and provenance covered by extras_hash">
+<rect x="0" y="0" width="880" height="440" rx="16" fill="var(--bg-raised)" stroke="var(--border)"/>
+<text x="26" y="34" class="lbl" fill="var(--text-muted)">THE RECORD · three rings layered by rate of change · two hashes</text>
+<rect x="26" y="56" width="690" height="96" rx="12" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="40" y="78" class="lbl" fill="var(--text)">Ring 1 — identity &amp; lifecycle</text>
+<rect x="40" y="90" width="199" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="47" y="104" class="mono-s" fill="var(--text)">uid = source:board:source_id</text>
+<rect x="247" y="90" width="54" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="254" y="104" class="mono-s" fill="var(--text)">source</text>
+<rect x="309" y="90" width="47" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="316" y="104" class="mono-s" fill="var(--text)">board</text>
+<rect x="364" y="90" width="93" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="371" y="104" class="mono-s" fill="var(--text)">fetch_method</text>
+<rect x="40" y="116" width="93" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="47" y="130" class="mono-s" fill="var(--text)">content_hash</text>
+<rect x="141" y="116" width="87" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="148" y="130" class="mono-s" fill="var(--text)">extras_hash</text>
+<rect x="236" y="116" width="93" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="243" y="130" class="mono-s" fill="var(--text)">hash_version</text>
+<rect x="337" y="116" width="60" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="344" y="130" class="mono-s" fill="var(--text)">raw_ref</text>
+<path d="M730 56 V152" stroke="var(--border-strong)" stroke-width="1.5"/>
+<text x="740" y="94" class="lbl-s" fill="var(--text)" font-weight="620">frozen contract</text>
+<text x="740" y="110" class="lbl-xs" fill="var(--text-muted)">the temporal machinery</text>
+<text x="740" y="124" class="lbl-xs" fill="var(--text-muted)">depends on it</text>
+<rect x="26" y="170" width="690" height="122" rx="12" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<text x="40" y="192" class="lbl" fill="var(--text)">Ring 2 — normalized core</text>
+<rect x="40" y="204" width="47" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="47" y="218" class="mono-s" fill="var(--text)">title</text>
+<rect x="95" y="204" width="159" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="102" y="218" class="mono-s" fill="var(--text)">company (registry key)</text>
+<rect x="262" y="204" width="87" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="269" y="218" class="mono-s" fill="var(--text)">locations[]</text>
+<rect x="357" y="204" width="106" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="364" y="218" class="mono-s" fill="var(--text)">workplace_type</text>
+<rect x="471" y="204" width="113" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="478" y="218" class="mono-s" fill="var(--text)">employment_type</text>
+<rect x="592" y="204" width="80" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="599" y="218" class="mono-s" fill="var(--text)">department</text>
+<rect x="40" y="230" width="67" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="47" y="244" class="mono-s" fill="var(--text)">language</text>
+<rect x="115" y="230" width="60" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="122" y="244" class="mono-s" fill="var(--text)">country</text>
+<rect x="183" y="230" width="390" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="190" y="244" class="mono-s" fill="var(--text)">compensation{raw,min,max,currency,period,months_per_year}</text>
+<rect x="40" y="256" width="120" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="47" y="270" class="mono-s" fill="var(--text)">source_posted_at</text>
+<rect x="168" y="256" width="120" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="175" y="270" class="mono-s" fill="var(--text)">description_html</text>
+<rect x="296" y="256" width="166" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="303" y="270" class="mono-s" fill="var(--text)">description_text (NFKC)</text>
+<rect x="470" y="256" width="34" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="477" y="270" class="mono-s" fill="var(--text)">url</text>
+<path d="M730 170 V292" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="740" y="210" class="mono-s" fill="var(--accent)">content_hash</text>
+<text x="740" y="226" class="lbl-xs" fill="var(--text-muted)">covers this ring</text>
+<text x="740" y="240" class="lbl-xs" fill="var(--text-muted)">changes only through</text>
+<text x="740" y="254" class="lbl-xs" fill="var(--text-muted)">the promotion rule</text>
+<path d="M200 340 L200 300" stroke="var(--accent)" stroke-width="1.6" fill="none" stroke-dasharray="4 3" marker-end="url(#s3p)"/>
+<text x="212" y="314" class="lbl-xs" fill="var(--text-muted)">promotion rule · Ring 3 → Ring 2 only when ≥ 2 sources supply the field</text>
+<text x="212" y="327" class="lbl-xs" fill="var(--text-muted)">and a cross-source consumer needs it — then add the column, replay the raw archive</text>
+<rect x="26" y="340" width="690" height="76" rx="12" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="40" y="362" class="lbl" fill="var(--text)">Ring 3 — extras &amp; provenance</text>
+<rect x="40" y="374" width="285" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="47" y="388" class="mono-s" fill="var(--text)">extras{ mcf_skills[], comp_tiers, tags… }</text>
+<rect x="333" y="374" width="278" height="20" rx="5" fill="var(--bg)" stroke="var(--border)"/>
+<text x="340" y="388" class="mono-s" fill="var(--text)">provenance{ field → method, confidence }</text>
+<path d="M730 340 V416" stroke="var(--border-strong)" stroke-width="1.5"/>
+<text x="740" y="372" class="mono-s" fill="var(--text)">extras_hash</text>
+<text x="740" y="388" class="lbl-xs" fill="var(--text-muted)">covers this ring</text>
+<text x="740" y="402" class="lbl-xs" fill="var(--text-muted)">changes freely per source</text>
+<defs><marker id="s3p" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L6 3 L0 6 z" fill="var(--accent)"/></marker></defs>
+</svg>
+    <figcaption>
+      Promotion rule: a field graduates from Ring 3 to Ring 2 only when two or
+      more sources supply it and a cross-source consumer needs it — then add the
+      column and replay the raw archive.
+    </figcaption>
+  </figure>
+
+  <!-- ============================================================ 04 -->
+  <h2 id="flow2"><span class="num">04 — Data flow</span>Data flow: one posting captured in three markets</h2>
+  <p>
+    The same pipeline, three fetch methods, three locales. Left: an abridged
+    raw fragment as the source serves it. Right: the Ring&nbsp;2 fields it
+    normalizes into.
+  </p>
+
+  <h3>US — Ramp via Ashby</h3>
+  <p class="caption">fetch_method: <code class="status-ok">api_documented</code></p>
+  <figure>
+    <div class="grid2 pair">
+      <div>
+        <p class="eyebrow">Raw fragment · as served</p>
+<pre><code>// api.ashbyhq.com/posting-api/
+//   job-board/ramp?includeCompensation=true
+{
+  "title": "Software Engineer | Backend ",
+  "location": "New York",
+  "isRemote": false,
+  "workplaceType": "Hybrid",
+  "employmentType": "FullTime",
+  "compensation": { "summaryComponents": [
+    { "compensationType": "Salary",
+      "minValue": 189000, "maxValue": 220000,
+      "currencyCode": "USD" } ] }
+}</code></pre>
+      </div>
+      <div>
+        <p class="eyebrow">Ring 2 fields · normalized</p>
+<pre><code>uid:   "ashby:ramp:6b21…"
+title: "Software Engineer | Backend"
+company: "ramp"          // registry key
+locations: ["New York"]
+workplace_type: "hybrid" // casing normalized
+language: "en"  country: "US"
+compensation: { min: 189000, max: 220000,
+  currency: "USD", period: "year",
+  months_per_year: 12 }
+provenance.compensation:
+  { method: "native", confidence: "high" }</code></pre>
+      </div>
+    </div>
+    <figcaption><ul>
+      <li>Structured comp arrives native — no parsing, high confidence.</li>
+      <li>Title trimmed, casing folded; description → unicode61 FTS index.</li>
+      <li>No update timestamp from Ashby — change detection is our content_hash diff.</li>
+    </ul></figcaption>
+  </figure>
+
+  <h3>Japan — Nota via HERP (JSON-LD)</h3>
+  <p class="caption">fetch_method: <code class="status-warn">jsonld</code></p>
+  <figure>
+    <div class="grid2 pair">
+      <div>
+        <p class="eyebrow">Raw fragment · as served</p>
+<pre><code>&lt;!-- herp.careers/careers/companies/
+     notainc/jobs/… --&gt;
+&lt;script type="application/ld+json"&gt;
+{
+  "@type": "JobPosting",
+  "title": "ソフトウェアエンジニア",
+  "datePosted": "2026-08-01",
+  "baseSalary": { "@type": "MonetaryAmount",
+    "currency": "JPY",
+    "value": { "minValue": 6000000,
+      "maxValue": 10000000,
+      "unitText": "YEAR" } },
+  "jobLocation": { "address":
+    { "addressLocality": "京都" } }
+}
+&lt;/script&gt;
+// body text: 年収６００万〜１，０００万円</code></pre>
+      </div>
+      <div>
+        <p class="eyebrow">Ring 2 fields · normalized</p>
+<pre><code>uid:   "herp:notainc:_zcN5…"
+title: "ソフトウェアエンジニア"
+company: "notainc"
+locations: ["京都, JP"]
+language: "ja"  country: "JP"
+compensation: {
+  raw_text: "年収600万〜1,000万円", // NFKC
+  min: 6000000, max: 10000000,
+  currency: "JPY", period: "year",
+  months_per_year: 12 }
+source_posted_at: "2026-08-01"
+  // employer claim — lower bound is
+  // our own first_seen
+provenance.compensation:
+  { method: "jsonld", confidence: "medium" }</code></pre>
+      </div>
+    </div>
+    <figcaption><ul>
+      <li>NFKC folds full-width ６００万 → 600万 <em>before</em> hashing, so formatting noise never looks like a job change.</li>
+      <li>JSON-LD dates are employer-supplied and manipulable — trusted as claims, never as observations.</li>
+      <li>CJK description routes to the trigram FTS index; unicode61 would silently never match 機械学習.</li>
+    </ul></figcaption>
+  </figure>
+
+  <h3>Taiwan — startup via Yourator</h3>
+  <p class="caption">fetch_method: <code class="status-warn">api_undocumented</code></p>
+  <figure>
+    <div class="grid2 pair">
+      <div>
+        <p class="eyebrow">Raw fragment · as served</p>
+<pre><code>// yourator.co/api/v4/jobs?page=1
+{
+  "name": "資深後端工程師",
+  "salary": "月薪 NT$ 70,000 - 100,000",
+  "company": { "brand": "AcmeTW" },
+  "category": "後端開發",
+  "path": "/companies/acmetw/jobs/9481"
+}</code></pre>
+      </div>
+      <div>
+        <p class="eyebrow">Ring 2 fields · normalized</p>
+<pre><code>uid:   "yourator:acmetw:9481"
+title: "資深後端工程師"
+company: "acmetw"
+language: "zh-TW"  country: "TW"
+compensation: {
+  raw_text: "月薪 NT$ 70,000 - 100,000",
+  min: 70000, max: 100000,
+  currency: "TWD", period: "month",
+  months_per_year: 12 }
+  // ×13–16薪 when stated
+extras: { yourator_category: "後端開發" }
+provenance.compensation:
+  { method: "regex", confidence: "medium" }</code></pre>
+      </div>
+    </div>
+    <figcaption><ul>
+      <li>月薪 = monthly — stored as period "month"; annualized only at query time (an annual-by-default assumption would understate 12×).</li>
+      <li>OpenCC folds traditional↔simplified so 後端/后端 cross-match in search.</li>
+      <li>Undocumented API: parser version-pinned, raw snapshot kept, schema-drift alarm on parse failure.</li>
+    </ul></figcaption>
+  </figure>
+
+  <!-- ============================================================ 05 -->
+  <h2 id="skills"><span class="num">05 — Derived layer</span>The derived layer: posting → skills → detail</h2>
+  <p class="big">Skills never live inside the posting record.</p>
+  <p>
+    They are relational rows
+    pinned to the exact JD version they were extracted from, pointing into a
+    canonical dimension whose wording variants collapse in an alias table.
+    Here the three postings above meet: three markets, three wordings, one
+    skill.
+  </p>
+  <figure>
+<svg viewBox="0 0 880 262" role="img" aria-label="Entity diagram: three posting versions join through the posting_skills junction and the skill_aliases table to one canonical skill row with its detail JSON">
+<rect x="0" y="0" width="880" height="262" rx="16" fill="var(--bg-raised)" stroke="var(--border)"/>
+<text x="26" y="34" class="lbl" fill="var(--text-muted)">DERIVED LAYER · postings → posting_skills → skill_aliases → skills #412</text>
+<rect x="26" y="60" width="166" height="176" rx="10" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="36" y="79" class="lbl-s" fill="var(--text)" font-weight="620">postings (3 versions)</text>
+<path d="M26 88 H192" stroke="var(--border-strong)" stroke-width="1"/>
+<text x="36.0" y="106" class="mono-s" fill="var(--text-muted)">ashby:ramp:6b21…</text>
+<text x="36.0" y="122" class="mono-s" fill="var(--text)">content_hash a91f…</text>
+<text x="36.0" y="138" class="mono-s" fill="var(--text-muted)">herp:notainc:_zcN5…</text>
+<text x="36.0" y="154" class="mono-s" fill="var(--text)">content_hash 77c2…</text>
+<text x="36.0" y="170" class="mono-s" fill="var(--text-muted)">yourator:acmetw:9481</text>
+<text x="36.0" y="186" class="mono-s" fill="var(--text)">content_hash e04d…</text>
+<rect x="246" y="60" width="166" height="176" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<text x="256" y="79" class="lbl-s" fill="var(--text)" font-weight="620">posting_skills (junction)</text>
+<path d="M246 88 H412" stroke="var(--accent)" stroke-width="1"/>
+<text x="256.0" y="106" class="mono-s" fill="var(--text)">uid + content_hash</text>
+<text x="256.0" y="122" class="mono-s" fill="var(--text)" font-weight="700">skill_id 412</text>
+<text x="256.0" y="138" class="mono-s" fill="var(--text)">method: native |</text>
+<text x="269.2" y="154" class="mono-s" fill="var(--text)">model | llm</text>
+<text x="256.0" y="170" class="mono-s" fill="var(--text)">evidence: offsets</text>
+<text x="269.2" y="186" class="mono-s" fill="var(--text)">214–224</text>
+<text x="256.0" y="202" class="mono-s" fill="var(--text)">confidence 0.93</text>
+<text x="256.0" y="218" class="mono-s" fill="var(--text)">extractor_version 3</text>
+<rect x="466" y="60" width="166" height="176" rx="10" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="476" y="79" class="lbl-s" fill="var(--text)" font-weight="620">skill_aliases</text>
+<path d="M466 88 H632" stroke="var(--border-strong)" stroke-width="1"/>
+<text x="476.0" y="106" class="mono-s" fill="var(--text)">"Kubernetes"  en</text>
+<text x="476.0" y="122" class="mono-s" fill="var(--text)">"K8s"  en</text>
+<text x="476.0" y="138" class="mono-s" fill="var(--text)">"Kubernetes運用"  ja</text>
+<text x="476.0" y="154" class="mono-s" fill="var(--text)">"容器編排 (K8s)"  zh-TW</text>
+<text x="476.0" y="170" class="mono-s" fill="var(--text-muted)">all → skill_id 412</text>
+<rect x="686" y="60" width="166" height="176" rx="10" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="696" y="79" class="lbl-s" fill="var(--text)" font-weight="620">skills #412 + detail</text>
+<path d="M686 88 H852" stroke="var(--border-strong)" stroke-width="1"/>
+<text x="696.0" y="106" class="mono-s" fill="var(--text)">canonical: Kubernetes</text>
+<text x="696.0" y="122" class="mono-s" fill="var(--text)">status: active</text>
+<text x="696.0" y="138" class="mono-s" fill="var(--text)">merged_into: —</text>
+<text x="696.0" y="154" class="mono-s" fill="var(--text-muted)">detail JSON:</text>
+<text x="696.0" y="170" class="mono-s" fill="var(--text)">esco_uri, onet_code</text>
+<text x="696.0" y="186" class="mono-s" fill="var(--text)">origin,</text>
+<text x="696.0" y="202" class="mono-s" fill="var(--text)">first_market_seen</text>
+<text x="696.0" y="218" class="mono-s" fill="var(--text)">embedding_ref</text>
+<path d="M192 156 L245 156" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s5a)"/>
+<text x="219.0" y="148" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">uid, hash</text>
+<path d="M412 156 L465 156" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s5a)"/>
+<text x="439.0" y="148" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">skill_id</text>
+<path d="M632 156 L685 156" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s5a)"/>
+<text x="659.0" y="148" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">skill_id</text>
+<defs><marker id="s5a" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L6 3 L0 6 z" fill="var(--text-faint)"/></marker></defs>
+</svg>
+    <figcaption>
+      Three surface forms across three markets condense to one canonical row;
+      the junction stays integer-thin (evidence is offsets into the JD, not
+      copied text). skill_events records created / renamed / merged /
+      deprecated — vocabulary history is append-only, like everything else.
+    </figcaption>
+  </figure>
+  <p>
+    Serving is a projection: <code>json_group_array()</code> compiles a
+    per-posting skills digest for the MCP layer on demand, so agents get one
+    convenient array while analytics keeps its indexes — the digest can never
+    drift from the junction because it is derived from it.
+  </p>
+
+  <!-- ============================================================ 06 -->
+  <h2 id="decisions"><span class="num">06 — Decisions</span>Decisions and rejected alternatives</h2>
+  <p>
+    Each row is a choice the design turns on, the alternative that was
+    considered, and the reason it lost.
+  </p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Chosen</th><th>Rejected</th><th>Why</th></tr></thead>
+    <tbody>
+    <tr><td>Three rings + promotion rule</td><td>One wide flat table</td>
+        <td>Every new source becomes a migration and a sea of nulls.</td></tr>
+    <tr><td>Typed core columns</td><td>Pure JSON documents</td>
+        <td>Discipline erodes; analytics queries degrade to json_each scans.</td></tr>
+    <tr><td>Two hashes (content / extras)</td><td>Single hash over everything</td>
+        <td>Source metadata churn would trigger re-embedding and false change events.</td></tr>
+    <tr><td>Relational skills junction</td><td>Skills JSON array per posting</td>
+        <td>Cross-posting aggregation is the point; arrays can't join or index. The array survives as a derived serving projection.</td></tr>
+    <tr><td>Per-source uid + duplicate links</td><td>Merged cross-source identity</td>
+        <td>Merging is an inference; inferences don't get to own identity.</td></tr>
+    <tr><td>Company = registry key</td><td>Payload-supplied names</td>
+        <td>Cross-source joins need one canonical key; payload names become aliases.</td></tr>
+    </tbody>
+  </table></div>
+
+  <!-- ============================================================ 07 -->
+  <h2 id="failures"><span class="num">07 — Failures</span>Failure modes</h2>
+  <p>
+    What breaks, what happens when it does, and how it recovers. The common
+    thread is that nothing is ever lost or overwritten, so every recovery is a
+    replay, a filter, or a pointer update.
+  </p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>What breaks</th><th>What happens</th><th>How it recovers</th></tr></thead>
+    <tbody>
+    <tr><td>Undocumented API drifts (Yourator, MCF)</td>
+        <td>Parse fails loudly, fetch-health flags the source, raw snapshots keep accumulating.</td>
+        <td>Fix the adapter, replay, no data lost.</td></tr>
+    <tr><td>Salary parse is wrong</td>
+        <td><code>raw_text</code> is always kept and null-over-guess applies.</td>
+        <td>A bad rule yields nulls to fix, not silent wrong numbers.</td></tr>
+    <tr><td>Extractor regression</td>
+        <td>New skills rows carry a new <code>extractor_version</code>; old rows are untouched.</td>
+        <td>Comparisons are possible, rollback is a filter.</td></tr>
+    <tr><td>Normalization rules change</td>
+        <td><code>hash_version</code> bumps.</td>
+        <td>Re-normalization never masquerades as thousands of employer edits.</td></tr>
+    <tr><td>Bad skill merge</td>
+        <td><code>merged_into</code> is a pointer and junction rows were never rewritten.</td>
+        <td>Reversing a merge is an update, not a repair.</td></tr>
+    </tbody>
+  </table></div>
+
+  <!-- ============================================================ 08 -->
+  <h2 id="testing"><span class="num">08 — Testing</span>Testing strategy</h2>
+  <ul>
+    <li>Golden fixtures per adapter from the captured payload docs; byte-stable parse output.</li>
+    <li>Rebuild-determinism in CI: replay the raw archive into a fresh store, diff against the incremental one — zero diff or fail.</li>
+    <li>Per-market salary rule tests (万円 annual, monthly TWD/SGD/HKD, ×13–16薪 annualization).</li>
+    <li>Extraction scored against SkillSpan + the in-house gold set; MCF native-vs-extracted agreement monitored as a free accuracy signal.</li>
+  </ul>
+  <figure>
+<svg viewBox="0 0 880 220" role="img" aria-label="CI check: the raw archive feeds both the incremental store and a fresh replayed store; a diff between them must be zero or the build fails">
+<rect x="0" y="0" width="880" height="220" rx="16" fill="var(--bg-raised)" stroke="var(--border)"/>
+<text x="26" y="34" class="lbl" fill="var(--text-muted)">REBUILD-DETERMINISM IN CI · replay the raw archive into a fresh store, diff against the incremental one</text>
+<rect x="26" y="86" width="150" height="60" rx="12" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<text x="101" y="111" class="lbl-s" fill="var(--text)" text-anchor="middle" font-weight="620">Raw archive</text>
+<text x="101" y="129" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">append-only snapshots</text>
+<rect x="250" y="56" width="170" height="52" rx="12" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="335" y="78" class="lbl-s" fill="var(--text)" text-anchor="middle" font-weight="620">Incremental store</text>
+<text x="335" y="96" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">built fetch by fetch</text>
+<rect x="250" y="134" width="170" height="52" rx="12" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="335" y="156" class="lbl-s" fill="var(--text)" text-anchor="middle" font-weight="620">Fresh store</text>
+<text x="335" y="174" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">replayed from raw in CI</text>
+<path d="M176 106 L248 82" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s8a)"/>
+<path d="M176 126 L248 160" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s8a)"/>
+<rect x="486" y="95" width="110" height="52" rx="12" fill="var(--bg)" stroke="var(--border-strong)"/>
+<text x="541" y="117" class="lbl" fill="var(--text)" text-anchor="middle">diff</text>
+<text x="541" y="135" class="lbl-xs" fill="var(--text-muted)" text-anchor="middle">store vs store</text>
+<path d="M420 82 L484 112" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s8a)"/>
+<path d="M420 160 L484 130" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s8a)"/>
+<rect x="660" y="56" width="194" height="52" rx="12" fill="var(--ok-soft)" stroke="var(--ok)"/>
+<text x="757" y="86" class="lbl-s" fill="var(--ok)" text-anchor="middle" font-weight="620">zero diff → pass</text>
+<rect x="660" y="134" width="194" height="52" rx="12" fill="var(--bad-soft)" stroke="var(--bad)"/>
+<text x="757" y="164" class="lbl-s" fill="var(--bad)" text-anchor="middle" font-weight="620">any diff → fail</text>
+<path d="M596 112 L658 82" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s8a)"/>
+<path d="M596 130 L658 160" stroke="var(--text-faint)" stroke-width="1.6" fill="none" marker-end="url(#s8a)"/>
+<defs><marker id="s8a" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L6 3 L0 6 z" fill="var(--text-faint)"/></marker></defs>
+</svg>
+    <figcaption>The rebuild-determinism check is the test that proves the thesis: if the fresh store and the incremental store ever differ, the database has stopped being a cache of the raw archive.</figcaption>
+  </figure>
+
+  <!-- ====================================================== summary -->
+  <h2><span class="eyebrow">Summary</span>The chain of reasoning</h2>
+  <div class="card"><ol>
+    <li>Raw payloads are archived forever and never edited; everything downstream is rebuildable from them.</li>
+    <li>Every source parses into one three-ring record: Ring 1 frozen, Ring 2 changed only by the promotion rule, Ring 3 free per source.</li>
+    <li>Two hashes separate an employer edit from source metadata churn, so change events and re-embedding fire only when content changed.</li>
+    <li>Skills, seniority and scores live in a relational layer pinned to the exact JD version; the per-posting array is a serving projection, never the source of truth.</li>
+    <li>Because the whole store is a cache, evolving the schema is: add the column, replay the raw archive.</li>
+  </ol></div>
+
+  <footer>
+    Design document · job-hunter · 2026-08-15 · <code>docs/2026-08-15-data-model.html</code>.
+    Source examples abridged from captured payloads (Ashby, HERP JSON-LD, Yourator).
+  </footer>
+</main>
+<script>
+  (function () {
+    var btn = document.getElementById('themeToggle');
+    btn.addEventListener('click', function () {
+      var root = document.documentElement;
+      var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+    });
+  })();
+</script>
+</body>
+</html>
