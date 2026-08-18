@@ -21,11 +21,12 @@ of `2026-08-08-stage1-ingestion-context.md` and `2026-08-09-data-exploration.md`
 §3–4 where they differ.
 
 Revision, same day, after the product ruling that the corpus is **one hosted
-instance** serving public CLI/MCP users (nobody self-hosts the DB): the store
-moved from a SQLite file in R2 to Postgres on Neon; per-sample `observations`
-became run-length `presence` intervals (the per-sample table would have grown to
-~9M rows a year); `description_html` moved out of the DB into content-addressed
-archive objects; `sync` and the ETag protocol were removed.
+instance** serving public CLI/MCP users (nobody self-hosts the DB): the store is
+Postgres on Neon (the earlier file-based store is withdrawn); per-sample
+`observations` became run-length `presence` intervals (the per-sample table
+would have grown to ~9M rows a year); `description_html` moved out of the DB
+into content-addressed archive objects; `sync` and the ETag protocol were
+removed.
 
 > [!TLDR] Files are truth, the database is a build artifact
 >
@@ -616,14 +617,13 @@ unreachable, schema mismatch, or every board failed.
   `pgvector` for later layers, SQL/PGQ graph queries arriving in Postgres 19 (GA
   targeted September 2026), a free tier that holds an index-sized DB, no ops,
   and a rebuildable store that makes changing hosts trivial. Rejected: SQLite
-  (right for a self-hosted toolkit, wrong for one shared corpus with many remote
-  readers; kept as a possible export format for an offline mode); MySQL (weaker
-  JSON, no PGQ, thinner ecosystem for the FTS/embedding work ahead); Supabase
-  for now ($25 floor, free tier pauses after 7 idle days — reconsider when the
-  read API is built, since PostgREST + RLS would serve it for free); PlanetScale
-  / DigitalOcean / a Hetzner box (better per-GB price at tens of GB of index;
-  not where we are); Aurora, RDS, Cloud SQL (idle and I/O pricing for a small,
-  spiky workload).
+  (the earlier self-hosted-toolkit choice; wrong for one shared corpus with many
+  remote readers, and not kept in any role); MySQL (weaker JSON, no PGQ, thinner
+  ecosystem for the FTS/embedding work ahead); Supabase for now ($25 floor, free
+  tier pauses after 7 idle days — reconsider when the read API is built, since
+  PostgREST + RLS would serve it for free); PlanetScale / DigitalOcean / a
+  Hetzner box (better per-GB price at tens of GB of index; not where we are);
+  Aurora, RDS, Cloud SQL (idle and I/O pricing for a small, spiky workload).
 - **Storage** — Cloudflare R2 from day one. Rejected: local disk (a laptop that
   is off loses days of history); S3 (12-month free tier, egress fees); D1 (100k
   row writes per day, REST access only).
