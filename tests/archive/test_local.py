@@ -42,3 +42,13 @@ def test_open_store_file_url(tmp_path: Path) -> None:
 def test_open_store_rejects_unknown_scheme() -> None:
     with pytest.raises(ValueError):
         open_store("ftp://x")
+
+
+def test_open_store_relative_file_url_resolves_under_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    s = open_store("file://data/archive")
+    assert isinstance(s, LocalFS)
+    s.put("k", b"v")
+    assert (tmp_path / "data" / "archive" / "k").read_bytes() == b"v"

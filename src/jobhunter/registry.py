@@ -52,7 +52,7 @@ def _board(entry: Any, i: int) -> Board:
         raise RegistryError(f"boards[{i}]: company must be a non-empty string")
     if source not in VALID_SOURCES:
         raise RegistryError(f"boards[{i}]: unknown source {source!r}")
-    if not isinstance(board, str) or not _BOARD_RE.match(board):
+    if not isinstance(board, str) or not _BOARD_RE.fullmatch(board):
         raise RegistryError(f"boards[{i}]: board must match {_BOARD_RE.pattern}")
     country = entry.get("country")
     if country is not None and not isinstance(country, str):
@@ -65,7 +65,14 @@ def _board(entry: Any, i: int) -> Board:
 
 
 def load(path: Path) -> Registry:
-    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as e:
+        raise RegistryError(f"registry file not found: {path}") from e
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise RegistryError(f"{path}: invalid TOML: {e}") from e
     raw = data.get("boards")
     if not isinstance(raw, list):
         raise RegistryError("boards must be an array of tables")

@@ -66,3 +66,14 @@ def test_snapshot_json_is_canonical(tmp_path: Path) -> None:
 def test_validation_errors(tmp_path: Path, bad: str, msg: str) -> None:
     with pytest.raises(RegistryError, match=msg):
         load(_write(tmp_path, bad))
+
+
+def test_missing_file_is_a_registry_error(tmp_path: Path) -> None:
+    with pytest.raises(RegistryError, match="not found"):
+        load(tmp_path / "absent.toml")
+
+
+def test_board_with_trailing_newline_is_rejected(tmp_path: Path) -> None:
+    bad = '[[boards]]\ncompany="X"\nsource="lever"\nboard="""x\n"""\n'
+    with pytest.raises(RegistryError, match="board"):
+        load(_write(tmp_path, bad))

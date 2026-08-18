@@ -81,6 +81,7 @@ def fetch(
     """Fetch every registered board and archive manifests + blobs."""
     settings = _settings()
     store = _store(settings)
+    _split_board(board)  # validates the source:board shape; exits 2 otherwise
     fetcher = _make_fetcher()
     try:
         summary = fetch_run(settings, store=store, fetcher=fetcher, only=board,
@@ -91,6 +92,8 @@ def fetch(
     except ArchiveError as e:
         typer.echo(f"archive error: {e}")
         raise typer.Exit(EXIT_SYSTEMIC) from e
+    finally:
+        fetcher.close()
     counts = summary.counts()
     lines = [f"run {summary.run_id} — {counts['ok']}/{counts['boards']} boards ok, "
              f"{counts['new_blobs']} new blobs" + (" (dry run)" if dry_run else "")]

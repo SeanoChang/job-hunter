@@ -104,3 +104,8 @@ def test_fetch_all_boards_failed_is_systemic(env: Path, monkeypatch: pytest.Monk
         httpx.Client(transport=httpx.MockTransport(down)), sleep=lambda s: None))
     r = runner.invoke(cli.app, ["fetch"])
     assert r.exit_code == 2
+
+
+def test_fetch_board_option_is_validated(env: Path) -> None:
+    r = runner.invoke(cli.app, ["fetch", "--board", "anthropic"])
+    assert r.exit_code == 2 and "source:board" in r.stdout

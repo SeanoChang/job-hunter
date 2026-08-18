@@ -91,9 +91,10 @@ def _salary(v: Any) -> Compensation | None:
         if not isinstance(lo, int | float) and not isinstance(hi, int | float):
             continue
         raw_interval = opt_str(comp.get("interval"))
-        interval = _INTERVALS.get(
-            raw_interval or "", raw_interval.lower() if raw_interval else None
-        )
+        if raw_interval is None or raw_interval.upper() == "NONE":
+            interval = None
+        else:
+            interval = _INTERVALS.get(raw_interval, raw_interval.lower())
         return Compensation(
             min=float(lo) if isinstance(lo, int | float) else None,
             max=float(hi) if isinstance(hi, int | float) else None,
