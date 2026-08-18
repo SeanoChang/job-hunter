@@ -20,8 +20,12 @@ def iter_manifests(
     start_after: str | None = None,
 ) -> Iterator[AttemptManifest]:
     for key in store.list(attempts_prefix(source, board), start_after=start_after):
-        if key.endswith(".json"):
-            yield AttemptManifest.from_json(store.get(key))
+        if not key.endswith(".json"):
+            continue
+        m = AttemptManifest.from_json(store.get(key))
+        if board is not None and m.board != board:
+            continue  # prefix cannot narrow by board when source is None
+        yield m
 
 
 def latest_per_board(store: ArchiveStore) -> dict[str, AttemptManifest]:

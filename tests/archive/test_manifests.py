@@ -43,3 +43,11 @@ def test_latest_per_board_and_time_order(tmp_path: Path) -> None:
     latest = latest_per_board(s)
     assert latest == {"ashby:ramp": late_ashby, "lever:palantir": lever}
     assert all_sorted_by_time(s) == [early_ashby, lever, late_ashby]
+
+
+def test_iter_manifests_board_filter_without_source(tmp_path: Path) -> None:
+    s = LocalFS(tmp_path)
+    t0 = datetime(2026, 8, 18, 6, tzinfo=UTC)
+    write_manifest(s, _m("ashby", "ramp", t0))
+    write_manifest(s, _m("lever", "palantir", t0))
+    assert [m.board for m in iter_manifests(s, None, "palantir")] == ["palantir"]

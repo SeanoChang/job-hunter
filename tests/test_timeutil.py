@@ -24,3 +24,8 @@ def test_from_epoch_ms() -> None:
     assert from_epoch_ms(1711403416463) == datetime(
         2024, 3, 25, 21, 50, 16, 463000, tzinfo=UTC
     )
+
+
+def test_iso_treats_naive_as_utc_like_parse_iso() -> None:
+    naive = datetime(2026, 8, 18, 6, 0, 0)
+    assert iso(naive) == "2026-08-18T06:00:00Z"

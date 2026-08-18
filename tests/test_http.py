@@ -70,3 +70,11 @@ def test_too_large_body_is_rejected() -> None:
 
     r = Fetcher(_client(h), max_bytes=1024, sleep=lambda s: None).fetch("https://x")
     assert r.transport == "too_large" and r.body == b""
+
+
+def test_retries_zero_still_makes_one_attempt() -> None:
+    def h(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"ok")
+
+    r = Fetcher(_client(h), retries=0, sleep=lambda s: None).fetch("https://x")
+    assert r.transport == "ok"

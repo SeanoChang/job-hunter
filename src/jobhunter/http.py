@@ -47,7 +47,7 @@ class Fetcher:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._client = client or default_client()
-        self._retries = retries
+        self._retries = max(1, retries)  # attempts; 0 still means one request
         self._backoff = backoff
         self._max_bytes = max_bytes
         self._sleep = sleep

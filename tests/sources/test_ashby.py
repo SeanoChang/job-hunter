@@ -64,3 +64,14 @@ def test_normalize_trims_title_and_handles_no_compensation(boards: dict[str, Boa
     assert pv.title == "Security Engineer"
     assert pv.compensation is None and pv.employment_type == "part_time"
     assert pv.locations == ("NYC",)
+
+
+def test_salary_with_interval_none_yields_null_interval(boards: dict[str, Board]) -> None:
+    rec = RawRecord("y", 0, {
+        "id": "y", "title": "T", "descriptionHtml": "<p>a</p>",
+        "compensation": {"summaryComponents": [
+            {"compensationType": "Salary", "interval": "NONE", "currencyCode": "USD",
+             "minValue": 10, "maxValue": 20}]},
+    })
+    pv = get_source("ashby").normalize(rec, boards["ashby"])
+    assert pv.compensation == Compensation(10.0, 20.0, "USD", None)

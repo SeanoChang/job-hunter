@@ -10,7 +10,8 @@ __all__ = ["ArchiveError", "ArchiveStore", "LocalFS", "open_store"]
 def open_store(url: str) -> ArchiveStore:
     u = urlparse(url)
     if u.scheme == "file":
-        return LocalFS(Path(u.path))
+        # file:///abs/path -> netloc "" ; file://rel/path -> netloc "rel", path "/path"
+        return LocalFS(Path(u.netloc + u.path) if u.netloc else Path(u.path))
     if u.scheme == "s3":
         from jobhunter.archive.s3 import S3Compatible
 

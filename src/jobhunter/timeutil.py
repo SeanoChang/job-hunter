@@ -10,6 +10,8 @@ def utcnow() -> datetime:
 
 
 def iso(dt: datetime) -> str:
+    if dt.tzinfo is None:  # naive means UTC everywhere in this codebase, same as parse_iso
+        dt = dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
