@@ -1,0 +1,21 @@
+# job-hunter registry: one table per ATS board. Editing this file is how the
+# corpus grows. Keys: company (display name), source (greenhouse|lever|ashby),
+# board (the token in the ATS URL). Optional: country (ISO-2), tags.
+
+[[boards]]
+company = "Anthropic"
+source  = "greenhouse"
+board   = "anthropic"
+country = "US"
+
+[[boards]]
+company = "Palantir"
+source  = "lever"
+board   = "palantir"
+country = "US"
+
+[[boards]]
+company = "Ramp"
+source  = "ashby"
+board   = "ramp"
+country = "US"
