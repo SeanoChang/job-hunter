@@ -3184,7 +3184,10 @@ jobs:
         run: uv run job-hunter status
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: fetch-summary-${{ github.run_id }}, path: summary.json, retention-days: 30 }
+        with:
+          name: fetch-summary-${{ github.run_id }}
+          path: summary.json
+          retention-days: 30
       # GitHub disables cron workflows after 60 days without repository activity.
       - uses: gautamkrishnar/keepalive-workflow@v2
         if: github.event_name == 'schedule'

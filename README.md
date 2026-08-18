@@ -30,3 +30,15 @@ referrals surfaced from public collaboration data, and labor-market research
 
 Design in progress — see `docs/`. The ingestion pipeline is the first build; real
 ATS payload analysis lives in `docs/sources/`.
+
+## Running the fetcher
+
+```bash
+uv sync
+export JOB_HUNTER_ARCHIVE_URL=file:///tmp/jh-archive   # or s3://bucket/prefix + AWS_* for R2
+uv run job-hunter registry check
+uv run job-hunter fetch
+uv run job-hunter status
+```
+
+Deployment on R2 + GitHub Actions: `docs/runbooks/2026-08-18-deploy-fetcher.md`.
