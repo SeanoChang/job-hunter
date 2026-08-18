@@ -1,6 +1,6 @@
 # job-hunter docs — index and status
 
-Last consolidated 2026-08-17. One line per document: what it is, and whether it
+Last consolidated 2026-08-18. One line per document: what it is, and whether it
 is the current statement, partially superseded (with a status note inside), or
 historical. When two documents disagree, the one marked **current** wins.
 
@@ -25,6 +25,10 @@ dispositions of the 2026-08-17 external review:
 
 ## Design documents
 
+- `2026-08-18-ingestion-layer-spec.md` — **current, normative.** Ingestion
+  layer: R2 archive, artifact identities, SQLite store schema, lifecycle
+  algorithm with drop guard and interval-censored closes, CLI, deployment,
+  testing. Resolves the first next-step of the parsing-direction doc.
 - `2026-08-17-parsing-direction.md` — **current, canonical.** Parsing model,
   unified record, engine choice, external-review dispositions.
 - `2026-08-17-parsing-vs-other-tools.md` — current. How 16 tools ingest and
