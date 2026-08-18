@@ -1,0 +1,112 @@
+"""Frozen data types shared by every module. No I/O, no logic beyond validation."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, fields
+from datetime import datetime
+from typing import Any
+
+from jobhunter.hashing import canonical_json
+from jobhunter.timeutil import iso, parse_iso
+
+SOURCE_PREFIX: dict[str, str] = {"greenhouse": "gh", "lever": "lv", "ashby": "ab"}
+
+
+@dataclass(frozen=True, slots=True)
+class Board:
+    company: str
+    source: str
+    board: str
+    country: str | None = None
+    tags: tuple[str, ...] = ()
+
+    @property
+    def key(self) -> str:
+        return f"{self.source}:{self.board}"
+
+
+@dataclass(frozen=True, slots=True)
+class RawRecord:
+    source_id: str | None
+    index: int
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class Compensation:
+    min: float | None
+    max: float | None
+    currency: str | None
+    interval: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class PostingVersion:
+    source: str
+    board: str
+    source_id: str
+    title: str
+    company: str
+    locations: tuple[str, ...]
+    workplace_type: str | None
+    is_remote: bool | None
+    department: str | None
+    team: str | None
+    employment_type: str | None
+    compensation: Compensation | None
+    url: str | None
+    apply_url: str | None
+    source_created_at: datetime | None
+    source_updated_at: datetime | None
+    description_html: str
+
+    @property
+    def uid(self) -> str:
+        return f"{SOURCE_PREFIX[self.source]}:{self.board}:{self.source_id}"
+
+
+@dataclass(frozen=True, slots=True)
+class FetchResult:
+    status: int | None
+    body: bytes
+    elapsed: float
+    transport: str  # ok | timeout | dns | tls | connect | http_error | too_large | other
+    error: str | None
+
+
+_MANIFEST_DT_FIELDS = ("started_at", "finished_at")
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptManifest:
+    attempt_id: str
+    run_id: str
+    source: str
+    board: str
+    started_at: datetime
+    finished_at: datetime
+    url: str
+    http_status: int | None
+    transport: str
+    blob_sha256: str | None
+    payload_bytes: int
+    record_count: int | None
+    adapter_version: str
+    registry_revision: str
+    cli_version: str
+    error: str | None
+
+    def to_json(self) -> bytes:
+        d: dict[str, Any] = {}
+        for f in fields(self):
+            v = getattr(self, f.name)
+            d[f.name] = iso(v) if f.name in _MANIFEST_DT_FIELDS else v
+        return canonical_json(d)
+
+    @classmethod
+    def from_json(cls, data: bytes) -> AttemptManifest:
+        d = json.loads(data.decode("utf-8"))
+        for name in _MANIFEST_DT_FIELDS:
+            d[name] = parse_iso(d[name])
+        return cls(**d)
