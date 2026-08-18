@@ -44,6 +44,8 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_version() -> None:
     r = runner.invoke(cli.app, ["version"])
     assert r.exit_code == 0 and "0.1.0" in r.stdout
+    rj = runner.invoke(cli.app, ["version", "--json"])
+    assert rj.exit_code == 0 and json.loads(rj.stdout) == {"version": "0.1.0"}
 
 
 def test_fetch_json_summary(env: Path) -> None:
