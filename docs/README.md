@@ -26,9 +26,10 @@ dispositions of the 2026-08-17 external review:
 ## Design documents
 
 - `2026-08-18-ingestion-layer-spec.md` — **current, normative.** Ingestion
-  layer: R2 archive, artifact identities, SQLite store schema, lifecycle
-  algorithm with drop guard and interval-censored closes, CLI, deployment,
-  testing. Resolves the first next-step of the parsing-direction doc.
+  layer: one hosted corpus, R2 archive as truth, artifact identities, Postgres
+  (Neon) store with presence intervals, lifecycle algorithm with drop guard and
+  interval-censored closes, CLI, deployment, testing. Resolves the first
+  next-step of the parsing-direction doc.
 - `2026-08-17-parsing-direction.md` — **current, canonical.** Parsing model,
   unified record, engine choice, external-review dispositions.
 - `2026-08-17-parsing-vs-other-tools.md` — current. How 16 tools ingest and
@@ -84,6 +85,9 @@ built yet.
 - 2026-08-16 — experimental/personal use first; effort goes to parsing;
   extraction is not keyword ticking; TS is a language, React a framework
   (facets, typed edges); scoring is model-based; no 0–100 match score.
+- 2026-08-18 — one hosted corpus, users are CLI/MCP clients (nobody self-hosts
+  the DB); personal data stays on the client; R2 archive is truth; Postgres on
+  Neon replaces SQLite; presence intervals, not per-sample observations.
 - 2026-08-17 — regex cannot be exhausted over 1M JDs; descriptions of skill, not
   levels; the demand description is the most important extraction; the LLM is
   not the only solution — record must be evidence-first, LLM as labeler, small
