@@ -6,33 +6,49 @@ on:
 concurrency:
   group: fetch
   cancel-in-progress: false
+permissions:
+  contents: read
+  actions: write # keepalive: re-enable this workflow so the 60-day idle rule cannot silence it
 jobs:
   fetch:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
-      AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: auto
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with: { enable-cache: true }
+      # Third-party actions are pinned to commit SHAs (supply-chain). Tag shown for humans.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
       - run: uv python install 3.12
       - run: uv sync --frozen --no-dev
+      # Secrets are scoped to the two steps that need them, never job-wide.
       - name: fetch
+        env:
+          JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
+          AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
         run: uv run job-hunter fetch --json | tee summary.json
       - name: status
         if: always()
+        env:
+          JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
+          AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
         run: uv run job-hunter status
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: fetch-summary-${{ github.run_id }}
           path: summary.json
           retention-days: 30
-      # GitHub disables cron workflows after 60 days without repository activity.
-      - uses: gautamkrishnar/keepalive-workflow@v2
+      # GitHub disables scheduled workflows after 60 days without repository activity.
+      # Re-enabling via the API resets that clock; first-party gh, no third-party action.
+      - name: keepalive
         if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow enable fetch.yml --repo "$GITHUB_REPOSITORY"

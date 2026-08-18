@@ -79,7 +79,7 @@ tests/test_fetch.py  tests/test_cli.py
 **Interfaces:**
 - Produces: `jobhunter.__version__: str = "0.1.0"`; the `job-hunter` console script entry `jobhunter.cli:app` (module created in Task 12; until then the script import fails, which is fine — nothing runs it).
 
-- [ ] **Step 1: Write `pyproject.toml`**
+- [x] **Step 1: Write `pyproject.toml`**
 
 ```toml
 [project]
@@ -136,7 +136,7 @@ module = ["moto.*"]
 ignore_missing_imports = true
 ```
 
-- [ ] **Step 2: Create the package and a version test**
+- [x] **Step 2: Create the package and a version test**
 
 `src/jobhunter/__init__.py`:
 
@@ -159,17 +159,17 @@ def test_version_is_semver() -> None:
     assert all(part.isdigit() for part in (major, minor, patch))
 ```
 
-- [ ] **Step 3: Sync and run**
+- [x] **Step 3: Sync and run**
 
 Run: `uv sync && uv run pytest tests/test_version.py -v`
 Expected: `1 passed`; `uv.lock` and `.venv/` created.
 
-- [ ] **Step 4: Lint/type baseline**
+- [x] **Step 4: Lint/type baseline**
 
 Run: `uv run ruff check . && uv run mypy`
 Expected: no errors (an empty package type-checks).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pyproject.toml uv.lock src/jobhunter/__init__.py tests/__init__.py tests/test_version.py
@@ -197,7 +197,7 @@ git commit -m "chore: scaffold jobhunter package with uv, pytest, ruff, mypy"
   - `models.AttemptManifest(...)` with `to_json() -> bytes` (canonical) and `AttemptManifest.from_json(bytes)`.
   - `models.FetchResult(status, body, elapsed, transport, error)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_hashing.py`:
 
@@ -296,12 +296,12 @@ def test_manifest_json_uses_z_timestamps() -> None:
     assert b'"started_at":"2026-08-18T06:00:00Z"' in _manifest().to_json()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_hashing.py tests/test_timeutil.py tests/test_models.py -q`
 Expected: FAIL / errors with `ModuleNotFoundError: jobhunter.hashing` etc.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/jobhunter/hashing.py`:
 
@@ -471,12 +471,12 @@ class AttemptManifest:
         return cls(**d)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_hashing.py tests/test_timeutil.py tests/test_models.py -q && uv run ruff check . && uv run mypy`
 Expected: all pass, no lint/type errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/jobhunter/hashing.py src/jobhunter/timeutil.py src/jobhunter/models.py tests/test_hashing.py tests/test_timeutil.py tests/test_models.py
@@ -495,7 +495,7 @@ git commit -m "feat: models, canonical hashing, UTC time helpers"
 - Consumes: `models.Board`, `hashing.canonical_json`, `hashing.sha256_hex`.
 - Produces: `registry.Registry(boards: tuple[Board, ...], revision: str)` with `.snapshot_json() -> bytes`; `registry.load(path: Path) -> Registry`; `registry.RegistryError(ValueError)`; `registry.VALID_SOURCES`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_registry.py`:
 
@@ -570,12 +570,12 @@ def test_validation_errors(tmp_path: Path, bad: str, msg: str) -> None:
         load(_write(tmp_path, bad))
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_registry.py -q`
 Expected: `ModuleNotFoundError: jobhunter.registry`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/jobhunter/registry.py`:
 
@@ -687,12 +687,12 @@ board   = "ramp"
 country = "US"
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_registry.py -q && uv run ruff check . && uv run mypy`
 Expected: pass, clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/jobhunter/registry.py companies.toml tests/test_registry.py
@@ -717,7 +717,7 @@ git commit -m "feat: registry loader with validation and revision hash; seed com
   - `sources.get_source(name: str) -> Source`; `sources.SOURCES: dict[str, Source]`.
   - `tests/conftest.py`: `fixture_bytes(name: str) -> bytes` helper and `boards` fixture returning `dict[str, Board]` keyed by source.
 
-- [ ] **Step 1: Create the fixture and the failing tests**
+- [x] **Step 1: Create the fixture and the failing tests**
 
 Create the fixture from the real record already in the repo:
 
@@ -824,12 +824,12 @@ def test_get_source_unknown() -> None:
         get_source("workday")
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/sources/test_greenhouse.py -q`
 Expected: `ModuleNotFoundError: jobhunter.sources`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/jobhunter/sources/base.py`:
 
@@ -1018,12 +1018,12 @@ def get_source(name: str) -> Source:
     return SOURCES[name]
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/sources -q && uv run ruff check . && uv run mypy`
 Expected: pass, clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/jobhunter/sources tests/conftest.py tests/sources tests/fixtures/greenhouse_board.json
@@ -1043,7 +1043,7 @@ git commit -m "feat: source protocol, shared normalisers, Greenhouse adapter"
 - Consumes: `sources.base` helpers, `timeutil.from_epoch_ms`.
 - Produces: `sources.lever.Lever` (`name="lever"`, `adapter_version="lever/1"`).
 
-- [ ] **Step 1: Create the fixture and the failing tests**
+- [x] **Step 1: Create the fixture and the failing tests**
 
 `tests/fixtures/lever_board.json` (built from the documented real record; a bare array):
 
@@ -1163,12 +1163,12 @@ def test_normalize_second_record_remote_and_salary(boards: dict[str, Board]) -> 
     assert pv.description_html == "<p>Hi</p>"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/sources/test_lever.py -q`
 Expected: `KeyError: 'lever'` from `get_source`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/jobhunter/sources/lever.py`:
 
@@ -1293,12 +1293,12 @@ def get_source(name: str) -> Source:
     return SOURCES[name]
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/sources -q && uv run ruff check . && uv run mypy`
 Expected: pass, clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/jobhunter/sources/lever.py src/jobhunter/sources/__init__.py tests/sources/test_lever.py tests/fixtures/lever_board.json
@@ -1317,7 +1317,7 @@ git commit -m "feat: Lever adapter"
 **Interfaces:**
 - Produces: `sources.ashby.Ashby` (`name="ashby"`, `adapter_version="ashby/1"`).
 
-- [ ] **Step 1: Create the fixture and the failing tests**
+- [x] **Step 1: Create the fixture and the failing tests**
 
 ```bash
 python3 -c "
@@ -1389,12 +1389,12 @@ def test_normalize_trims_title_and_handles_no_compensation(boards: dict[str, Boa
     assert pv.locations == ("NYC",)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/sources/test_ashby.py -q`
 Expected: `KeyError: 'ashby'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/jobhunter/sources/ashby.py`:
 
@@ -1499,12 +1499,12 @@ def _salary(v: Any) -> Compensation | None:
 
 Register in `src/jobhunter/sources/__init__.py` (add `from jobhunter.sources.ashby import Ashby` and `"ashby": Ashby(),`).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/sources -q && uv run ruff check . && uv run mypy`
 Expected: pass, clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/jobhunter/sources/ashby.py src/jobhunter/sources/__init__.py tests/sources/test_ashby.py tests/fixtures/ashby_board.json
@@ -1523,7 +1523,7 @@ git commit -m "feat: Ashby adapter with structured compensation"
 - Consumes: `models.FetchResult`, `jobhunter.__version__`.
 - Produces: `http.USER_AGENT`; `http.Fetcher(client: httpx.Client | None = None, *, retries: int = 3, backoff: float = 1.0, max_bytes: int = 64 * 2**20, sleep: Callable[[float], None] = time.sleep)` with `.fetch(url: str) -> FetchResult` and `.close()`; `http.default_client() -> httpx.Client` (timeouts 30/60, follow redirects, UA header).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_http.py`:
 
@@ -1602,12 +1602,12 @@ def test_too_large_body_is_rejected() -> None:
     assert r.transport == "too_large" and r.body == b""
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_http.py -q`
 Expected: `ModuleNotFoundError: jobhunter.http`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/jobhunter/http.py`:
 
@@ -1711,12 +1711,12 @@ class Fetcher:
         return b"".join(chunks)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_http.py -q && uv run ruff check . && uv run mypy`
 Expected: pass, clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/jobhunter/http.py tests/test_http.py
@@ -1739,7 +1739,7 @@ git commit -m "feat: HTTP fetcher with retries, size cap, transport classificati
   - `archive.local.LocalFS(root: Path)`.
   - `archive.open_store(url: str) -> ArchiveStore` (`file://` → LocalFS; `s3://` → S3Compatible from Task 9; else `ValueError`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/archive/__init__.py`: empty.
 
@@ -1828,12 +1828,12 @@ def test_open_store_rejects_unknown_scheme() -> None:
         open_store("ftp://x")
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/archive -q`
 Expected: `ModuleNotFoundError: jobhunter.archive`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/jobhunter/archive/base.py`:
 
@@ -1983,12 +1983,12 @@ def open_store(url: str) -> ArchiveStore:
     raise ValueError(f"unsupported archive url scheme: {u.scheme!r}")
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/archive -q && uv run ruff check . && uv run mypy`
 Expected: pass. mypy will complain that `jobhunter.archive.s3` does not exist yet — create a placeholder `src/jobhunter/archive/s3.py` containing only `class S3Compatible: ...` with the constructor signature `def __init__(self, bucket: str, prefix: str = "") -> None` so the import resolves; Task 9 replaces it.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/jobhunter/archive tests/archive
@@ -2006,7 +2006,7 @@ git commit -m "feat: archive protocol, key layout, LocalFS backend"
 **Interfaces:**
 - Produces: `archive.s3.S3Compatible(bucket: str, prefix: str = "", *, client: Any | None = None)` implementing `ArchiveStore`. Reads endpoint/credentials from the standard AWS environment (`AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`), `region_name` from `AWS_DEFAULT_REGION` defaulting to `"auto"` (R2's requirement). Wraps `botocore` connection failures in `ArchiveError`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/archive/test_s3.py`:
 
@@ -2079,12 +2079,12 @@ def test_region_defaults_to_auto_when_unset(monkeypatch: pytest.MonkeyPatch) -> 
     assert "AWS_DEFAULT_REGION" not in os.environ
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/archive/test_s3.py -q`
 Expected: failures — placeholder class has no `put`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/jobhunter/archive/s3.py`:
 
@@ -2160,12 +2160,12 @@ class S3Compatible:
             raise ArchiveError(f"list {prefix}: {e}") from e
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/archive -q && uv run ruff check . && uv run mypy`
 Expected: pass, clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/jobhunter/archive/s3.py tests/archive/test_s3.py
@@ -2184,7 +2184,7 @@ git commit -m "feat: S3-compatible archive backend for R2/MinIO"
 - Consumes: `ArchiveStore`, `AttemptManifest`, `keys.attempts_prefix`.
 - Produces: `manifests.write_manifest(store, m) -> bool`; `manifests.iter_manifests(store, source=None, board=None, start_after=None) -> Iterator[AttemptManifest]` (key order); `manifests.latest_per_board(store) -> dict[str, AttemptManifest]` keyed by `"source:board"`; `manifests.all_sorted_by_time(store) -> list[AttemptManifest]` (by `started_at`, then key).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/archive/test_manifests.py`:
 
@@ -2236,12 +2236,12 @@ def test_latest_per_board_and_time_order(tmp_path: Path) -> None:
     assert all_sorted_by_time(s) == [early_ashby, lever, late_ashby]
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/archive/test_manifests.py -q`
 Expected: `ModuleNotFoundError`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/jobhunter/archive/manifests.py`:
 
@@ -2285,12 +2285,12 @@ def all_sorted_by_time(store: ArchiveStore) -> list[AttemptManifest]:
     return sorted(iter_manifests(store), key=lambda m: (m.started_at, m.attempt_id))
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/archive -q && uv run ruff check . && uv run mypy`
 Expected: pass, clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/jobhunter/archive/manifests.py tests/archive/test_manifests.py
@@ -2315,7 +2315,7 @@ git commit -m "feat: manifest read/write helpers"
   - `fetch.fetch_board(board, source, fetcher, store, *, run_id, registry_revision, now, dry_run) -> BoardOutcome` (the per-board unit, exposed for tests).
   - `fetch.gzip_bytes(data) -> bytes` (`mtime=0`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_config.py`:
 
@@ -2476,12 +2476,12 @@ def test_summary_to_dict_is_json_serialisable(tmp_path: Path) -> None:
     json.dumps(s.to_dict())
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_config.py tests/test_fetch.py -q`
 Expected: `ModuleNotFoundError`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/jobhunter/config.py`:
 
@@ -2691,12 +2691,12 @@ def run(
     )
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_config.py tests/test_fetch.py -q && uv run ruff check . && uv run mypy`
 Expected: pass, clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/jobhunter/config.py src/jobhunter/fetch.py tests/test_config.py tests/test_fetch.py
@@ -2715,7 +2715,7 @@ git commit -m "feat: settings and fetch.run — registry snapshot, per-board arc
 - Consumes: `fetch.run`, `manifests.latest_per_board/iter_manifests`, `registry.load`, `config.Settings`.
 - Produces: `cli.app: typer.Typer` (console script). Commands: `fetch [--board S:B] [--dry-run] [--json]`, `status [--json]`, `archive ls [--board S:B] [--json]`, `registry check [--json]`, `version`. Exit codes per Global Constraints. `cli.EXIT_SYSTEMIC = 2`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_cli.py`:
 
@@ -2826,12 +2826,12 @@ def test_fetch_all_boards_failed_is_systemic(env: Path, monkeypatch: pytest.Monk
     assert r.exit_code == 2
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_cli.py -q`
 Expected: `ModuleNotFoundError: jobhunter.cli`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/jobhunter/cli.py`:
 
@@ -3027,12 +3027,12 @@ if __name__ == "__main__":
     app()
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest -q && uv run ruff check . && uv run mypy && uv run job-hunter --help`
 Expected: all tests pass; help lists `fetch`, `status`, `archive`, `registry`, `version`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/jobhunter/cli.py tests/test_cli.py
@@ -3051,7 +3051,7 @@ git commit -m "feat: CLI — fetch, status, archive ls, registry check"
 - Consumes: the `job-hunter` console script; env contract from spec §6.1.
 - Produces: an image whose `ENTRYPOINT` is `job-hunter`; a `fetch.yml` that runs daily at 06:00 UTC.
 
-- [ ] **Step 1: Write the container files**
+- [x] **Step 1: Write the container files**
 
 `Dockerfile`:
 
@@ -3118,12 +3118,12 @@ volumes:
   minio-data: {}
 ```
 
-- [ ] **Step 2: Build and run the image against MinIO (manual verification)**
+- [x] **Step 2: Build and run the image against MinIO (manual verification)**
 
 Run: `docker compose build fetcher && docker compose run --rm fetcher status`
 Expected: table with the three boards, `last attempt = never`. (Requires Docker; if unavailable locally, CI covers the build in the next step.)
 
-- [ ] **Step 3: Write the CI workflows**
+- [x] **Step 3: Write the CI workflows**
 
 `.github/workflows/test.yml`:
 
@@ -3193,7 +3193,7 @@ jobs:
         if: github.event_name == 'schedule'
 ```
 
-- [ ] **Step 4: Live smoke script and deploy runbook**
+- [x] **Step 4: Live smoke script and deploy runbook**
 
 `scripts/live_smoke.py` (opt-in; hits the three real boards read-only; never in CI):
 
@@ -3291,7 +3291,7 @@ uv run job-hunter status
 Deployment on R2 + GitHub Actions: `docs/runbooks/2026-08-18-deploy-fetcher.md`.
 ```
 
-- [ ] **Step 5: Verify, format docs, commit**
+- [x] **Step 5: Verify, format docs, commit**
 
 Run:
 
@@ -3314,17 +3314,17 @@ git commit -m "chore: Docker image, MinIO compose, CI test + daily fetch workflo
 
 **Files:** none new.
 
-- [ ] **Step 1: Full local suite**
+- [x] **Step 1: Full local suite**
 
 Run: `uv run pytest -q && uv run ruff check . && uv run mypy`
 Expected: every test passes; zero lint/type findings. Paste the output into the PR/commit message body.
 
-- [ ] **Step 2: Live smoke (opt-in, needs network; the user runs it or approves it)**
+- [x] **Step 2: Live smoke (opt-in, needs network; the user runs it or approves it)**
 
 Run: `uv run python scripts/live_smoke.py`
 Expected: three lines, all `ok`, record counts in the low hundreds (Anthropic ~390, Palantir ~300, Ramp ~120 as of 2026-08-08). If a board returns `200 []`, that is the Lever dead-board signature — check the token before deploying.
 
-- [ ] **Step 3: One real fetch into a local archive**
+- [x] **Step 3: One real fetch into a local archive**
 
 Run:
 

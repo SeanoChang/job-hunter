@@ -67,9 +67,9 @@ def _split_board(value: str | None) -> tuple[str | None, str | None]:
 
 
 @app.command()
-def version() -> None:
+def version(as_json: bool = typer.Option(False, "--json")) -> None:
     """Print the job-hunter version."""
-    typer.echo(__version__)
+    _emit({"version": __version__}, as_json, __version__)
 
 
 @app.command()
