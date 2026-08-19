@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 import psycopg
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from jobhunter import cli
@@ -153,3 +154,33 @@ def test_fetch_requires_database_url_and_ingest_command(
     assert json.loads(r.stdout)["db_error"]
     r = runner.invoke(cli.app, ["ingest"])
     assert r.exit_code == 2 and "database error" in r.stdout
+
+
+def test_report_and_registry_list_and_rebuild(env: Path) -> None:
+    assert runner.invoke(cli.app, ["fetch"]).exit_code == 0
+    r = runner.invoke(cli.app, ["report", "--since", "1d", "--json"])
+    assert r.exit_code == 0
+    data = json.loads(r.stdout)
+    assert data["counts"]["opened"] == 1 and data["events"][0]["kind"] == "opened"
+    r = runner.invoke(cli.app, ["registry", "list", "--json"])
+    assert r.exit_code == 0
+    assert {row["board"] for row in json.loads(r.stdout)} == {
+        "greenhouse:anthropic", "lever:palantir"
+    }
+    r = runner.invoke(cli.app, ["rebuild", "--json"])
+    assert r.exit_code == 0, r.stdout
+    assert json.loads(r.stdout)["swapped"] is True
+    r = runner.invoke(cli.app, ["status", "--json"])
+    rows = {row["board"]: row for row in json.loads(r.stdout)["boards"]}
+    assert rows["greenhouse:anthropic"]["health"] == "ok"
+    assert rows["greenhouse:anthropic"]["open"] == 1
+
+
+def test_report_since_parsing() -> None:
+    from jobhunter.cli import _parse_since
+
+    assert _parse_since("24h").total_seconds() == 86400
+    assert _parse_since("2d").total_seconds() == 172800
+    assert _parse_since("30m").total_seconds() == 1800
+    with pytest.raises(typer.BadParameter):
+        _parse_since("soon")
