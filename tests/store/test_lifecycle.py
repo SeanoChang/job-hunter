@@ -407,3 +407,29 @@ def test_registry_watermark_not_set_when_snapshot_missing(
     ing2.ingest(make_manifest(store, "ashby", "ramp", day(1), body, registry_revision="missing"))
     pg.commit()
     assert q(pg, "SELECT count(*) AS n FROM panel")[0]["n"] == 1
+
+def test_event_order_is_payload_order_then_closed_events_by_uid(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    """Batched writes must not reorder events: event_id order is part of the store contract
+    (a rebuild has to reproduce it row for row)."""
+    ing = Ingestor(pg, store)
+    def gh(i: int, title: str) -> dict[str, Any]:
+        return gh_record(i, title, f"<p>body {i}</p>")
+
+    d0 = [gh(3, "C"), gh(1, "A"), gh(2, "B"), gh(5, "E"), gh(4, "D")]
+    d1 = [gh(5, "E2"), gh(3, "C"), gh(1, "A2")]          # 2 and 4 disappear -> closed
+    d2 = [gh(1, "A2"), gh(5, "E2"), gh(4, "D"), gh(3, "C"), gh(2, "B")]  # 4 and 2 come back
+    for n, recs in enumerate([d0, d1, d2]):
+        r = ing.ingest(make_manifest(store, "greenhouse", "anthropic", day(n),
+                                     board_payload("greenhouse", recs), registry_revision=rev))
+        assert r is not None and r.health == "ok"
+    pg.commit()
+    u = "gh:anthropic:"
+    assert _events(pg) == [
+        ("opened", f"{u}3"), ("opened", f"{u}1"), ("opened", f"{u}2"), ("opened", f"{u}5"),
+        ("opened", f"{u}4"),
+        ("changed", f"{u}5"), ("changed", f"{u}1"),      # payload order, not uid order
+        ("closed", f"{u}2"), ("closed", f"{u}4"),        # reconcile closes in uid order
+        ("reopened", f"{u}4"), ("reopened", f"{u}2"),    # payload order again
+    ]
