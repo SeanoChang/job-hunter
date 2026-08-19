@@ -77,3 +77,12 @@ def test_structure_survives(name: str) -> None:
     md = to_markdown(_fixture_htmls()[name])
     assert "\n- " in md or "\n1. " in md or md.startswith("- ")  # every posting has lists
     assert "<" not in md.replace("<=", "")  # no leftover tags
+
+
+def test_table_cells_do_not_glue() -> None:
+    html_table = "<table><tr><td>a</td><td>b</td></tr><tr><td>c</td></tr></table>"
+    assert to_markdown(html_table) == "a b\n\nc"
+
+
+def test_source_nul_is_not_mistaken_for_br() -> None:
+    assert to_markdown("<p>x\x00y</p>") == "x\x00y"

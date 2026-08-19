@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import gzip
 import secrets
 from collections.abc import Callable
@@ -24,7 +25,7 @@ from jobhunter.registry import load as load_registry
 from jobhunter.sources import get_source
 from jobhunter.sources.base import EnvelopeError, Source
 from jobhunter.store import db as _db
-from jobhunter.store.lifecycle import Ingestor
+from jobhunter.store.lifecycle import Ingestor, OutOfOrder
 from jobhunter.timeutil import iso, utcnow
 
 
@@ -218,15 +219,19 @@ def run(
                 if ing.ingest(o.manifest) is not None:
                     ingested += 1
             conn.commit()
-        except (psycopg.Error, OSError) as e:
+        except (psycopg.Error, OSError, OutOfOrder, ArchiveError) as e:
             # Each attempt is its own committed transaction (Ingestor.ingest); the rollback
-            # only discards the failed one, so `ingested` keeps counting what landed.
-            conn.rollback()
+            # only discards the failed one, so `ingested` keeps counting what landed. The
+            # archive is already written either way; the caller reports db_error and exits 2.
+            with contextlib.suppress(Exception):
+                conn.rollback()
             db_error = f"{type(e).__name__}: {e}"
         finally:
-            try:
+            # Unlocking a dead connection must not mask the error that killed it; a session
+            # lock dies with its session anyway.
+            with contextlib.suppress(Exception):
                 _db.unlock(conn)
-            finally:
+            with contextlib.suppress(Exception):
                 conn.close()
     return RunSummary(
         run_id=run_id, started_at=started, finished_at=now(), registry_revision=registry.revision,

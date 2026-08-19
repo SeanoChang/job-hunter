@@ -220,7 +220,7 @@ class Ingestor:
             "employment_type, "
             "compensation, url, apply_url, source_created_at, first_seen_attempt) VALUES "
             "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
-            "ON CONFLICT (version_hash) DO NOTHING",
+            "ON CONFLICT (uid, version_hash) DO NOTHING",
             (vh, VERSION_HASH_V, pv.uid, pv.source, pv.board, pv.source_id, pv.title, pv.company,
              Jsonb(list(pv.locations)), pv.workplace_type, pv.is_remote, pv.department, pv.team,
              pv.employment_type,
@@ -240,9 +240,9 @@ class Ingestor:
         markdown = self.to_markdown(pv.description_html)
         dh = sha256_hex(markdown.encode("utf-8"))
         cur = self.conn.execute(
-            "INSERT INTO documents (document_hash, version_hash, normalizer_version, markdown) "
-            "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
-            (dh, vh, self.normalizer_version, markdown),
+            "INSERT INTO documents (version_hash, normalizer_version, document_hash, markdown) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (version_hash, normalizer_version) DO NOTHING",
+            (vh, self.normalizer_version, dh, markdown),
         )
         return cur.rowcount == 1
 

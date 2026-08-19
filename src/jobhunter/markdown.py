@@ -20,7 +20,8 @@ _SKIP = {"script", "style", "noscript", "template", "head", "title"}
 _WS = re.compile(r"\s+")
 _LEAD_WS = re.compile(r"^\s+")
 _TRAIL_WS = re.compile(r"\s+$")
-_BR = "\x00"  # placeholder for <br>, survives whitespace collapsing
+_BR = "\ue000"  # private-use sentinel for <br>; survives whitespace collapsing
+_CELL = {"td", "th"}
 
 
 class _Converter(HTMLParser):
@@ -107,6 +108,8 @@ class _Converter(HTMLParser):
                 self.lists.append(["ul", 0])
             self.lists[-1][1] = int(self.lists[-1][1]) + 1  # type: ignore[call-overload]
             self.li_depth += 1
+        elif tag in _CELL:
+            self.buf.append(" ")  # cells never glue; tables are flattened to text in md/1
         elif tag == "br":
             self.buf.append(_BR)
         elif tag == "hr":

@@ -41,3 +41,13 @@ def test_add_remove_readd(pg: psycopg.Connection[dict[str, Any]]) -> None:
     assert ramp[0]["registry_revision"] == "rev1"
     assert ramp[1]["removed_at"] is None and ramp[1]["registry_revision"] == "rev3"
     assert [r for r in rows if r["board"] == "anthropic"][0]["removed_at"] is None
+
+
+def test_remove_then_readd_at_same_instant(pg: psycopg.Connection[dict[str, Any]]) -> None:
+    t0 = datetime(2026, 8, 18, 6, tzinfo=UTC)
+    apply_snapshot(pg, [B1], t0, "r1")
+    apply_snapshot(pg, [], t0, "r2")
+    d = apply_snapshot(pg, [B1], t0, "r3")
+    assert d.added == ["greenhouse:anthropic"]
+    rows = _rows(pg)
+    assert len(rows) == 1 and rows[0]["removed_at"] is None and rows[0]["registry_revision"] == "r3"

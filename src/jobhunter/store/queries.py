@@ -14,8 +14,8 @@ def events_since(conn: Conn, since: datetime) -> list[dict[str, Any]]:
         "e.closed_lower_at, e.closed_upper_at, v.title, v.company, v.url "
         "FROM posting_events e "
         "JOIN postings p ON p.uid = e.uid "
-        "LEFT JOIN posting_versions v ON v.version_hash = COALESCE(e.to_version, "
-        "p.current_version_hash) "
+        "LEFT JOIN posting_versions v ON v.uid = e.uid "
+        "AND v.version_hash = COALESCE(e.to_version, p.current_version_hash) "
         "WHERE e.at >= %s ORDER BY e.event_id",
         (since,),
     ).fetchall()

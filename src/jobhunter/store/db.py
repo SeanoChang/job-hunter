@@ -36,17 +36,22 @@ def schema_exists(conn: Conn, schema: str) -> bool:
 
 def init(conn: Conn, schema: str = SCHEMA) -> None:
     """Create the schema and all tables if absent; record schema_version. Idempotent."""
+    row = conn.execute("SHOW search_path").fetchone()
+    previous_path = str(row["search_path"]) if row else "public"
     with conn.transaction():
         conn.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema)))
-        conn.execute(
-            sql.SQL("SET LOCAL search_path TO {}, public").format(sql.Identifier(schema))
-        )
-        conn.execute(load_schema_sql())
-        conn.execute(
-            "INSERT INTO schema_meta (key, value) VALUES ('schema_version', %s) "
-            "ON CONFLICT (key) DO NOTHING",
-            (SCHEMA_VERSION,),
-        )
+        # Session-level SET, restored explicitly below: SET LOCAL would leak to the outer
+        # transaction when conn.transaction() is only a savepoint.
+        conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+        try:
+            conn.execute(load_schema_sql())
+            conn.execute(
+                "INSERT INTO schema_meta (key, value) VALUES ('schema_version', %s) "
+                "ON CONFLICT (key) DO NOTHING",
+                (SCHEMA_VERSION,),
+            )
+        finally:
+            conn.execute(sql.SQL("SET search_path TO {}").format(sql.SQL(previous_path)))
 
 
 def stored_schema_version(conn: Conn) -> str | None:

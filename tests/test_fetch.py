@@ -205,3 +205,26 @@ def test_run_returns_lock_held_when_another_run_holds_it(
         assert summary.lock_held and summary.outcomes == []
     finally:
         _db.unlock(pg)
+
+
+def test_ingest_failures_are_reported_not_raised(
+    tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    from jobhunter.store import db as _db
+
+    settings = replace(_settings(tmp_path), database_url=TEST_DSN)
+    schema = pg.execute("SELECT current_schema() AS s").fetchone()["s"]
+    t_late = datetime(2026, 8, 19, 6, 0, 0, tzinfo=UTC)
+    t_early = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
+    first = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t_late, schema=schema)
+    assert first.db_error is None
+    # a run whose clock is earlier than the last ingested attempt -> OutOfOrder inside ingest
+    s = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t_early, schema=schema)
+    assert s.db_error and "OutOfOrder" in s.db_error and s.ingested == 0
+    assert len(list(iter_manifests(LocalFS(tmp_path / "archive")))) == 6  # archive still written
+    conn = _db.connect(TEST_DSN, schema=schema)
+    try:
+        assert _db.try_lock(conn)  # lock was released despite the failure
+        _db.unlock(conn)
+    finally:
+        conn.close()
