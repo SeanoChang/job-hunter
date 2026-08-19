@@ -29,3 +29,13 @@ def test_attempts_prefix() -> None:
 def test_registry_and_version_keys() -> None:
     assert registry_key("r" * 64) == "registry/" + "r" * 64 + ".json"
     assert version_key("ef" * 32) == "versions/ef/" + "ef" * 32 + ".html.gz"
+
+
+def test_parse_attempt_key_roundtrip() -> None:
+    from jobhunter.archive.keys import parse_attempt_key
+
+    t = datetime(2026, 8, 18, 6, 1, 2, tzinfo=UTC)
+    key = attempt_key("greenhouse", "anthropic", t)
+    assert parse_attempt_key(key) == ("greenhouse", "anthropic", t)
+    assert parse_attempt_key("blobs/sha256/ab/x.gz") is None
+    assert parse_attempt_key("attempts/greenhouse/anthropic/garbage.json") is None

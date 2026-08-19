@@ -358,3 +358,52 @@ def test_versions_differing_only_in_metadata_each_get_a_document(
     joined = q(pg, "SELECT count(*) AS n FROM posting_versions v JOIN documents d "
                    "ON d.version_hash = v.version_hash AND d.normalizer_version = 'md/1'")
     assert joined[0]["n"] == 2  # no version is left without a document
+
+
+def test_document_conversion_is_skipped_when_document_exists(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    from jobhunter.markdown import to_markdown as real_to_markdown
+
+    calls = {"n": 0}
+
+    def counting(html: str) -> str:
+        calls["n"] += 1
+        return real_to_markdown(html)
+
+    body = board_payload("greenhouse", [gh_record(1, "A", "<p>a</p>")])
+    ing = Ingestor(pg, store, to_markdown=counting)
+    ing.ingest(make_manifest(store, "greenhouse", "anthropic", day(0), body, registry_revision=rev))
+    assert calls["n"] == 1
+    ing.ingest(make_manifest(store, "greenhouse", "anthropic", day(1), body, registry_revision=rev))
+    pg.commit()
+    assert calls["n"] == 1  # unchanged posting: no reconversion on later attempts
+
+
+def test_run_id_index_exists(pg: psycopg.Connection[dict[str, Any]]) -> None:
+    row = pg.execute(
+        "SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() "
+        "AND indexname = 'ix_attempts_run'"
+    ).fetchone()
+    assert row is not None
+
+
+def test_registry_watermark_not_set_when_snapshot_missing(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS
+) -> None:
+    body = board_payload("ashby", [ab_record("x", "T", "<p>t</p>")])
+    ing = Ingestor(pg, store)
+    # revision whose snapshot object does not exist in the archive
+    ing.ingest(make_manifest(store, "ashby", "ramp", day(0), body, registry_revision="missing"))
+    assert q(pg, "SELECT count(*) AS n FROM panel")[0]["n"] == 0
+    # the snapshot appears later under the same revision; the next attempt must apply it
+    from jobhunter.registry import Registry
+
+    reg = Registry(boards=(BOARDS[2],), revision="")
+    from jobhunter.archive.keys import registry_key
+
+    store.put(registry_key("missing"), reg.snapshot_json())
+    ing2 = Ingestor(pg, store)
+    ing2.ingest(make_manifest(store, "ashby", "ramp", day(1), body, registry_revision="missing"))
+    pg.commit()
+    assert q(pg, "SELECT count(*) AS n FROM panel")[0]["n"] == 1

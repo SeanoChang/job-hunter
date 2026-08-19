@@ -74,3 +74,13 @@ renames the new schema into place; the swap is one transaction, so readers see
 either the old store or the new one. `jobhunter_previous` is left behind as the
 rollback copy and is dropped at the start of the next rebuild — check the new
 store with `job-hunter report --since 24h` before running another one.
+
+> [!WARNING] Rebuild time grows with the archive
+>
+> Ingest issues ~6 single-row statements per record with no batching; a measured
+> replay runs ~2.7 ms/record on loopback Postgres — roughly 7 hours for a year
+> of personal-scale archive, and several times that over the network to Neon.
+> Before the archive passes ~60 days, time a real `rebuild` and record the
+> number here; if it is already painful, the fix is batching the per-record
+> inserts (COPY / executemany), which is designed but not built. Known
+> liability, accepted 2026-08-19.
