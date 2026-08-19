@@ -24,8 +24,10 @@ EXIT_SYSTEMIC = 2
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="job-hunter ingestion")
 archive_app = typer.Typer(help="Inspect the raw archive")
 registry_app = typer.Typer(help="Inspect companies.toml")
+db_app = typer.Typer(help="Postgres store")
 app.add_typer(archive_app, name="archive")
 app.add_typer(registry_app, name="registry")
+app.add_typer(db_app, name="db")
 
 
 # Indirections so tests can substitute a mock transport and a fixed clock.
@@ -42,6 +44,19 @@ def _settings() -> Settings:
         return Settings.load()
     except ConfigError as e:
         typer.echo(f"config error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+
+
+def _conn(settings: Settings) -> Any:
+    from jobhunter.store import db as _db
+
+    try:
+        return _db.connect(settings.require_database_url())
+    except ConfigError as e:
+        typer.echo(f"config error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+    except Exception as e:  # psycopg.OperationalError and friends
+        typer.echo(f"database error: {e}")
         raise typer.Exit(EXIT_SYSTEMIC) from e
 
 
@@ -192,6 +207,43 @@ def registry_check(as_json: bool = typer.Option(False, "--json")) -> None:
         as_json,
         f"ok: {len(reg.boards)} boards, revision {reg.revision[:12]}",
     )
+
+
+@db_app.command("init")
+def db_init(as_json: bool = typer.Option(False, "--json")) -> None:
+    """Create the jobhunter schema and tables (idempotent)."""
+    from jobhunter.store import db as _db
+
+    settings = _settings()
+    conn = _conn(settings)
+    try:
+        _db.init(conn)
+        conn.commit()
+        payload = {"schema": _db.SCHEMA, "schema_version": _db.stored_schema_version(conn)}
+    finally:
+        conn.close()
+    _emit(
+        payload,
+        as_json,
+        f"schema {payload['schema']} ready, version {payload['schema_version']}",
+    )
+
+
+@db_app.command("version")
+def db_version(as_json: bool = typer.Option(False, "--json")) -> None:
+    """Print the code's schema version and the database's; exit 2 on mismatch."""
+    from jobhunter.store import db as _db
+
+    settings = _settings()
+    conn = _conn(settings)
+    try:
+        stored = _db.stored_schema_version(conn) if _db.schema_exists(conn, _db.SCHEMA) else None
+    finally:
+        conn.close()
+    payload = {"code": _db.SCHEMA_VERSION, "db": stored, "match": stored == _db.SCHEMA_VERSION}
+    _emit(payload, as_json, f"code {payload['code']}  db {stored or 'absent'}")
+    if not payload["match"]:
+        raise typer.Exit(EXIT_SYSTEMIC)
 
 
 if __name__ == "__main__":
