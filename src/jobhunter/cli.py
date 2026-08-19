@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import json
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from typing import Any
 
 import typer
@@ -22,6 +23,8 @@ from jobhunter.store import db as _db
 from jobhunter.timeutil import iso, utcnow
 
 EXIT_SYSTEMIC = 2
+
+_SINCE = re.compile(r"^(\d+)([mhd])$")
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="job-hunter ingestion")
 archive_app = typer.Typer(help="Inspect the raw archive")
@@ -73,6 +76,16 @@ def _store(settings: Settings) -> ArchiveStore:
 
 def _emit(obj: Any, as_json: bool, human: str) -> None:
     typer.echo(json.dumps(obj, indent=None) if as_json else human)
+
+
+def _parse_since(value: str) -> timedelta:
+    m = _SINCE.match(value.strip())
+    if not m:
+        raise typer.BadParameter("use Nm, Nh or Nd, e.g. 24h")
+    n, unit = int(m.group(1)), m.group(2)
+    if unit == "m":
+        return timedelta(minutes=n)
+    return timedelta(hours=n) if unit == "h" else timedelta(days=n)
 
 
 def _split_board(value: str | None) -> tuple[str | None, str | None]:
@@ -169,8 +182,70 @@ def ingest(as_json: bool = typer.Option(False, "--json")) -> None:
 
 
 @app.command()
+def rebuild(as_json: bool = typer.Option(False, "--json")) -> None:
+    """Rebuild the store from the whole archive into a fresh schema and swap it live."""
+    from jobhunter.rebuild import rebuild as _rebuild
+
+    settings = _settings()
+    store = _store(settings)
+    try:
+        s = _rebuild(store, settings.require_database_url(), drop_ratio=settings.drop_ratio,
+                     schema=_schema)
+    except ConfigError as e:
+        typer.echo(f"config error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+    except ArchiveError as e:
+        typer.echo(f"archive error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+    except RuntimeError as e:  # another writer holds the advisory lock; not an error
+        typer.echo(f"{e}; nothing rebuilt")
+        return
+    except Exception as e:
+        typer.echo(f"database error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+    _emit({"ingested": s.ingested, "skipped": s.skipped, "work_schema": s.work_schema,
+           "swapped": s.swapped},
+          as_json, f"rebuilt {s.ingested} attempts into {s.work_schema}; swapped live")
+
+
+@app.command()
+def report(
+    since: str = typer.Option("24h", "--since", help="Window: Nm, Nh or Nd"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Opened / changed / closed / reopened postings in the window."""
+    from jobhunter.store.queries import events_since
+
+    settings = _settings()
+    window = _parse_since(since)
+    conn = _conn(settings, schema=_schema)
+    try:
+        events = events_since(conn, _now() - window)
+    except Exception as e:
+        typer.echo(f"database error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+    finally:
+        conn.close()
+    rows = [
+        {"kind": e["kind"], "uid": e["uid"], "at": iso(e["at"]), "title": e["title"],
+         "company": e["company"], "url": e["url"],
+         "closed_between": [iso(e["closed_lower_at"]), iso(e["closed_upper_at"])]
+         if e["closed_lower_at"] else None}
+        for e in events
+    ]
+    counts = {k: sum(r["kind"] == k for r in rows) for k in ("opened", "changed", "closed",
+                                                            "reopened")}
+    human = [f"since {since}: " + ", ".join(f"{v} {k}" for k, v in counts.items())]
+    for r in rows:
+        human.append(
+            f"  {r['kind']:8} {r['company'] or '-':18} {r['title'] or '-'}  {r['url'] or ''}"
+        )
+    _emit({"since": since, "counts": counts, "events": rows}, as_json, "\n".join(human))
+
+
+@app.command()
 def status(as_json: bool = typer.Option(False, "--json")) -> None:
-    """Per-board fetch health from the archive."""
+    """Per-board fetch health from the archive, plus store health when a DB is configured."""
     settings = _settings()
     store = _store(settings)
     try:
@@ -194,17 +269,51 @@ def status(as_json: bool = typer.Option(False, "--json")) -> None:
             "error": m.error if m else None,
         })
     untracked = sorted(set(latest) - {b.key for b in registry.boards})
-    human = ["board                            last attempt          transport   status  records"]
+    payload: dict[str, Any] = {"boards": rows, "untracked": untracked}
+    db_error = _merge_store_health(settings, rows) if settings.database_url else None
+    show_db = settings.database_url is not None and db_error is None
+    if settings.database_url:
+        payload["db_error"] = db_error
+    header = "board                            last attempt          transport   status  records"
+    human = [header + ("  health    open" if show_db else "")]
     for r in rows:
-        human.append(
+        line = (
             f"{r['board']:32} {r['last_attempt'] or 'never':21} "
             f"{r['last_transport'] or '-':11} {r['http_status'] or '-':>6}  "
-            f"{r['record_count'] if r['record_count'] is not None else '-'}"
-            + (f"  {r['error']}" if r["error"] else "")
+            f"{r['record_count'] if r['record_count'] is not None else '-':>7}"
         )
+        if show_db:
+            line += f"  {r['health'] or '-':8} {r['open']:>5}"
+        if r["error"]:
+            line += f"  {r['error']}"
+        human.append(line)
+    if db_error:
+        human.append(f"db error: {db_error} (archive health above is still current)")
     if untracked:
         human.append(f"not in registry but present in archive: {', '.join(untracked)}")
-    _emit({"boards": rows, "untracked": untracked}, as_json, "\n".join(human))
+    _emit(payload, as_json, "\n".join(human))
+
+
+def _merge_store_health(settings: Settings, rows: list[dict[str, Any]]) -> str | None:
+    """Add `health`/`open` to each row from the store; return the error if it is unreachable."""
+    from jobhunter.store.queries import board_health, open_counts
+
+    try:
+        conn = _db.connect(settings.require_database_url(), schema=_schema)
+    except Exception as e:  # status is a report: an unreachable DB is noted, never fatal
+        return f"{type(e).__name__}: {e}"
+    try:
+        health = board_health(conn)
+        opens = open_counts(conn)
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+    finally:
+        conn.close()
+    for r in rows:
+        h = health.get(r["board"])
+        r["health"] = h["health"] if h else None
+        r["open"] = opens.get(r["board"], 0)
+    return None
 
 
 @archive_app.command("ls")
@@ -250,6 +359,29 @@ def registry_check(as_json: bool = typer.Option(False, "--json")) -> None:
         as_json,
         f"ok: {len(reg.boards)} boards, revision {reg.revision[:12]}",
     )
+
+
+@registry_app.command("list")
+def registry_list(as_json: bool = typer.Option(False, "--json")) -> None:
+    """Board membership history (panel)."""
+    from jobhunter.store.queries import panel_rows
+
+    settings = _settings()
+    conn = _conn(settings, schema=_schema)
+    try:
+        rows = panel_rows(conn)
+    except Exception as e:
+        typer.echo(f"database error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+    finally:
+        conn.close()
+    items = [{"board": f"{r['source']}:{r['board']}", "company": r["company"],
+              "added_at": iso(r["added_at"]),
+              "removed_at": iso(r["removed_at"]) if r["removed_at"] else None,
+              "registry_revision": r["registry_revision"]} for r in rows]
+    human = [f"{i['board']:32} {i['company']:20} {i['added_at']}  {i['removed_at'] or 'open'}"
+             for i in items]
+    _emit(items, as_json, "\n".join(human) or "(no panel rows)")
 
 
 @db_app.command("init")

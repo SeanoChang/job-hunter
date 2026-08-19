@@ -49,6 +49,9 @@ def pg() -> Iterator[psycopg.Connection[dict[str, Any]]]:
         yield conn
     finally:
         conn.rollback()
-        conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        # `rebuild` builds in "<schema>_new" and leaves "<schema>_previous" behind after the
+        # swap; both belong to this test and must go with it.
+        for name in (schema, f"{schema}_new", f"{schema}_previous"):
+            conn.execute(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
         conn.commit()
         conn.close()
