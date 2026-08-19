@@ -45,3 +45,20 @@ def test_rebuild_builds_in_work_schema_and_swaps(
         check.commit()
     finally:
         check.close()
+
+
+def test_lock_contention_is_a_distinct_exception(
+    tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    import pytest
+
+    from jobhunter.rebuild import LockHeld
+
+    store = LocalFS(tmp_path)
+    target = pg.execute("SELECT current_schema() AS s").fetchone()["s"]
+    assert db.try_lock(pg)
+    try:
+        with pytest.raises(LockHeld):
+            rebuild(store, TEST_DSN, drop_ratio=0.5, schema=target, work_schema=f"{target}_new")
+    finally:
+        db.unlock(pg)

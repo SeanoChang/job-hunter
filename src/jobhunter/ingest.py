@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from jobhunter.archive.base import ArchiveStore
-from jobhunter.archive.manifests import all_sorted_by_time
+from jobhunter.archive.keys import ATTEMPTS_PREFIX, parse_attempt_key
+from jobhunter.models import AttemptManifest
 from jobhunter.store import db
 from jobhunter.store.db import Conn
 from jobhunter.store.lifecycle import Ingestor
@@ -28,23 +30,43 @@ def replay_pending(conn: Conn, store: ArchiveStore, *, drop_ratio: float = 0.5) 
     last_at_raw = db.get_meta(conn, "last_ingested_at")
     last_at = parse_iso(last_at_raw) if last_at_raw else None
     last_id = db.get_meta(conn, "last_ingested_attempt")
-    ing = Ingestor(conn, store, drop_ratio=drop_ratio)
     out = ReplaySummary()
-    for m in all_sorted_by_time(store):
-        # Strictly older attempts are behind the watermark; the watermark attempt itself is
-        # done. Siblings sharing its instant (one run, several boards) are still candidates —
-        # a crash mid-run can leave them uningested.
-        if last_at is not None and (m.started_at < last_at or m.attempt_id == last_id):
-            if m.attempt_id != last_id:
-                known = conn.execute(
-                    "SELECT 1 FROM fetch_attempts WHERE attempt_id = %s", (m.attempt_id,)
-                ).fetchone()
-                if known is None:
-                    out.gaps.append(m.attempt_id)
+
+    # Decide everything from KEYS first: the manifest key encodes (source, board,
+    # started_at), so no body fetch is needed behind the watermark (spec cost note:
+    # a GET per historical manifest per daily run would grow without bound).
+    old_keys: list[str] = []
+    pending: list[tuple[Any, str]] = []  # (started_at, key)
+    for key in store.list(ATTEMPTS_PREFIX):
+        parsed = parse_attempt_key(key)
+        if parsed is None:
             continue
+        _, _, started_at = parsed
+        if last_at is not None and (started_at < last_at or key == last_id):
+            if key != last_id:
+                old_keys.append(key)
+            continue
+        pending.append((started_at, key))
+
+    if old_keys:
+        known = {
+            r["attempt_id"]
+            for r in conn.execute(
+                "SELECT attempt_id FROM fetch_attempts WHERE attempt_id = ANY(%s)", (old_keys,)
+            ).fetchall()
+        }
+        out.gaps = sorted(k for k in old_keys if k not in known)
+
+    ing = Ingestor(conn, store, drop_ratio=drop_ratio)
+    for _, key in sorted(pending):
+        m = AttemptManifest.from_json(store.get(key))
         if ing.ingest(m) is None:
             out.skipped += 1
         else:
             out.ingested += 1
             out.last_attempt = m.attempt_id
+        # One transaction per attempt: bounds subtransaction depth on long replays and
+        # makes a crash resume cleanly at the watermark.
+        conn.commit()
+    conn.commit()  # close the read-only transaction opened by get_meta when nothing was pending
     return out

@@ -11,6 +11,10 @@ from jobhunter.ingest import replay_pending
 from jobhunter.store import db
 
 
+class LockHeld(RuntimeError):
+    """Another writer holds the advisory lock; nothing was rebuilt."""
+
+
 @dataclass(slots=True)
 class RebuildSummary:
     ingested: int
@@ -32,7 +36,7 @@ def rebuild(
     conn = db.connect(dsn, schema=work)
     try:
         if not db.try_lock(conn):
-            raise RuntimeError("already running (advisory lock held)")
+            raise LockHeld("already running (advisory lock held)")
         try:
             with conn.transaction():
                 conn.execute(
