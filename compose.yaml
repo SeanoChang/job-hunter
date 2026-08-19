@@ -32,5 +32,19 @@ services:
       AWS_SECRET_ACCESS_KEY: minio12345
       AWS_DEFAULT_REGION: us-east-1
     command: ["status"]
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: jobhunter
+      POSTGRES_PASSWORD: jobhunter
+      POSTGRES_DB: jobhunter
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobhunter -d jobhunter"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes: ["pg-data:/var/lib/postgresql/data"]
 volumes:
   minio-data: {}
+  pg-data: {}

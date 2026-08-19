@@ -1,14 +1,17 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
+import psycopg
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from jobhunter import cli
 from jobhunter.http import Fetcher
-from tests.conftest import fixture_bytes
+from tests.conftest import TEST_DSN, fixture_bytes
 
 runner = CliRunner()
 
@@ -31,10 +34,18 @@ def _fake_ats(req: httpx.Request) -> httpx.Response:
 
 
 @pytest.fixture
-def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pg: psycopg.Connection[dict[str, Any]],
+) -> Path:
     (tmp_path / "companies.toml").write_text(REG)
     monkeypatch.setenv("JOB_HUNTER_ARCHIVE_URL", f"file://{tmp_path / 'archive'}")
     monkeypatch.setenv("JOB_HUNTER_REGISTRY", str(tmp_path / "companies.toml"))
+    monkeypatch.setenv("JOB_HUNTER_DATABASE_URL", TEST_DSN)
+    row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert row is not None
+    monkeypatch.setattr(cli, "_schema", str(row["s"]))
     monkeypatch.setattr(cli, "_make_fetcher", lambda: Fetcher(
         httpx.Client(transport=httpx.MockTransport(_fake_ats)), sleep=lambda s: None))
     monkeypatch.setattr(cli, "_now", lambda: datetime(2026, 8, 18, 6, tzinfo=UTC))
@@ -129,3 +140,73 @@ def test_fetch_all_envelope_failures_is_systemic(
     r = runner.invoke(cli.app, ["fetch", "--json"])
     assert r.exit_code == 2
     assert json.loads(r.stdout)["counts"]["envelope_error"] == 2
+
+
+def test_fetch_requires_database_url_and_ingest_command(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("JOB_HUNTER_DATABASE_URL", raising=False)
+    r = runner.invoke(cli.app, ["fetch"])
+    assert r.exit_code == 2 and "JOB_HUNTER_DATABASE_URL" in r.stdout
+    monkeypatch.setenv("JOB_HUNTER_DATABASE_URL", "postgresql://nobody:x@127.0.0.1:1/none")
+    r = runner.invoke(cli.app, ["fetch", "--json"])
+    assert r.exit_code == 2
+    assert json.loads(r.stdout)["db_error"]
+    r = runner.invoke(cli.app, ["ingest"])
+    assert r.exit_code == 2 and "database error" in r.stdout
+
+
+def test_report_and_registry_list_and_rebuild(env: Path) -> None:
+    assert runner.invoke(cli.app, ["fetch"]).exit_code == 0
+    r = runner.invoke(cli.app, ["report", "--since", "1d", "--json"])
+    assert r.exit_code == 0
+    data = json.loads(r.stdout)
+    assert data["counts"]["opened"] == 1 and data["events"][0]["kind"] == "opened"
+    r = runner.invoke(cli.app, ["registry", "list", "--json"])
+    assert r.exit_code == 0
+    assert {row["board"] for row in json.loads(r.stdout)} == {
+        "greenhouse:anthropic", "lever:palantir"
+    }
+    r = runner.invoke(cli.app, ["rebuild", "--json"])
+    assert r.exit_code == 0, r.stdout
+    assert json.loads(r.stdout)["swapped"] is True
+    r = runner.invoke(cli.app, ["status", "--json"])
+    rows = {row["board"]: row for row in json.loads(r.stdout)["boards"]}
+    assert rows["greenhouse:anthropic"]["health"] == "ok"
+    assert rows["greenhouse:anthropic"]["open"] == 1
+
+
+def test_report_since_parsing() -> None:
+    from jobhunter.cli import _parse_since
+
+    assert _parse_since("24h").total_seconds() == 86400
+    assert _parse_since("2d").total_seconds() == 172800
+    assert _parse_since("30m").total_seconds() == 1800
+    with pytest.raises(typer.BadParameter):
+        _parse_since("soon")
+
+
+def test_lock_held_branches_honour_json(env: Path, pg: psycopg.Connection[dict[str, Any]]) -> None:
+    from jobhunter.store import db as _db
+
+    assert _db.try_lock(pg)
+    try:
+        for args in (["ingest", "--json"], ["rebuild", "--json"], ["fetch", "--json"]):
+            r = runner.invoke(cli.app, args)
+            assert r.exit_code == 0, (args, r.stdout)
+            data = json.loads(r.stdout)
+            assert data.get("lock_held") is True
+    finally:
+        _db.unlock(pg)
+
+
+def test_db_version_on_half_created_schema_is_systemic(
+    env: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    schema = pg.execute("SELECT current_schema() AS s").fetchone()["s"]
+    pg.execute("DROP TABLE schema_meta")
+    pg.commit()
+    r = runner.invoke(cli.app, ["db", "version", "--json"])
+    assert r.exit_code == 2
+    assert json.loads(r.stdout)["db"] is None
+    assert schema  # silence unused warning
