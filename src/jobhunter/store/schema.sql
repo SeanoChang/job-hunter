@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS fetch_attempts (
 CREATE INDEX IF NOT EXISTS ix_attempts_board_time ON fetch_attempts (source, board, started_at);
 
 CREATE TABLE IF NOT EXISTS posting_versions (
-  version_hash      TEXT PRIMARY KEY,
+  version_hash      TEXT NOT NULL,              -- content identity, may be shared by postings
   version_hash_v    INTEGER NOT NULL,
   uid               TEXT NOT NULL,
   source            TEXT NOT NULL,
@@ -43,17 +43,19 @@ CREATE TABLE IF NOT EXISTS posting_versions (
   url               TEXT,
   apply_url         TEXT,
   source_created_at TIMESTAMPTZ,
-  first_seen_attempt TEXT NOT NULL REFERENCES fetch_attempts (attempt_id)
+  first_seen_attempt TEXT NOT NULL REFERENCES fetch_attempts (attempt_id),
+  PRIMARY KEY (uid, version_hash)               -- one row per posting per content version
 );
-CREATE INDEX IF NOT EXISTS ix_versions_uid ON posting_versions (uid);
+CREATE INDEX IF NOT EXISTS ix_versions_hash ON posting_versions (version_hash);
 
 CREATE TABLE IF NOT EXISTS documents (
-  document_hash      TEXT PRIMARY KEY,
-  version_hash       TEXT NOT NULL REFERENCES posting_versions (version_hash),
+  version_hash       TEXT NOT NULL,             -- content identity of the source version
   normalizer_version TEXT NOT NULL,
+  document_hash      TEXT NOT NULL,             -- sha256(markdown); shared when texts coincide
   markdown           TEXT NOT NULL,
-  UNIQUE (version_hash, normalizer_version)
+  PRIMARY KEY (version_hash, normalizer_version)
 );
+CREATE INDEX IF NOT EXISTS ix_documents_hash ON documents (document_hash);
 
 -- derived -----------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS presence (

@@ -55,7 +55,9 @@ def apply_snapshot(conn: Conn, boards: Iterable[Board], at: datetime, revision: 
         b = wanted[key]
         conn.execute(
             "INSERT INTO panel (source, board, company, added_at, removed_at, registry_revision) "
-            "VALUES (%s, %s, %s, %s, NULL, %s)",
+            "VALUES (%s, %s, %s, %s, NULL, %s) "
+            "ON CONFLICT (source, board, added_at) DO UPDATE SET removed_at = NULL, "
+            "company = EXCLUDED.company, registry_revision = EXCLUDED.registry_revision",
             (b.source, b.board, b.company, at, revision),
         )
         delta.added.append(key)

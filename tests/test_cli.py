@@ -184,3 +184,29 @@ def test_report_since_parsing() -> None:
     assert _parse_since("30m").total_seconds() == 1800
     with pytest.raises(typer.BadParameter):
         _parse_since("soon")
+
+
+def test_lock_held_branches_honour_json(env: Path, pg: psycopg.Connection[dict[str, Any]]) -> None:
+    from jobhunter.store import db as _db
+
+    assert _db.try_lock(pg)
+    try:
+        for args in (["ingest", "--json"], ["rebuild", "--json"], ["fetch", "--json"]):
+            r = runner.invoke(cli.app, args)
+            assert r.exit_code == 0, (args, r.stdout)
+            data = json.loads(r.stdout)
+            assert data.get("lock_held") is True
+    finally:
+        _db.unlock(pg)
+
+
+def test_db_version_on_half_created_schema_is_systemic(
+    env: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    schema = pg.execute("SELECT current_schema() AS s").fetchone()["s"]
+    pg.execute("DROP TABLE schema_meta")
+    pg.commit()
+    r = runner.invoke(cli.app, ["db", "version", "--json"])
+    assert r.exit_code == 2
+    assert json.loads(r.stdout)["db"] is None
+    assert schema  # silence unused warning

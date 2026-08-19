@@ -8,6 +8,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
+import psycopg
 import typer
 
 from jobhunter import __version__
@@ -160,7 +161,8 @@ def ingest(as_json: bool = typer.Option(False, "--json")) -> None:
     conn = _conn(settings, schema=_schema)
     try:
         if not _db.try_lock(conn):
-            typer.echo("already running (advisory lock held)")
+            _emit({"lock_held": True, "ingested": 0, "skipped": 0, "last_attempt": None}, as_json,
+                  "already running (advisory lock held); nothing ingested")
             return
         _db.init(conn, _schema)
         conn.commit()
@@ -198,7 +200,8 @@ def rebuild(as_json: bool = typer.Option(False, "--json")) -> None:
         typer.echo(f"archive error: {e}")
         raise typer.Exit(EXIT_SYSTEMIC) from e
     except RuntimeError as e:  # another writer holds the advisory lock; not an error
-        typer.echo(f"{e}; nothing rebuilt")
+        _emit({"lock_held": True, "ingested": 0, "skipped": 0, "swapped": False}, as_json,
+              f"{e}; nothing rebuilt")
         return
     except Exception as e:
         typer.echo(f"database error: {e}")
@@ -388,9 +391,9 @@ def registry_list(as_json: bool = typer.Option(False, "--json")) -> None:
 def db_init(as_json: bool = typer.Option(False, "--json")) -> None:
     """Create the jobhunter schema and tables (idempotent)."""
     settings = _settings()
-    conn = _conn(settings)
+    conn = _conn(settings, schema=_schema)
     try:
-        _db.init(conn)
+        _db.init(conn, _schema)
         conn.commit()
         payload = {"schema": _db.SCHEMA, "schema_version": _db.stored_schema_version(conn)}
     finally:
@@ -406,9 +409,15 @@ def db_init(as_json: bool = typer.Option(False, "--json")) -> None:
 def db_version(as_json: bool = typer.Option(False, "--json")) -> None:
     """Print the code's schema version and the database's; exit 2 on mismatch."""
     settings = _settings()
-    conn = _conn(settings)
+    conn = _conn(settings, schema=_schema)
     try:
-        stored = _db.stored_schema_version(conn) if _db.schema_exists(conn, _db.SCHEMA) else None
+        stored = None
+        if _db.schema_exists(conn, _schema):
+            try:
+                stored = _db.stored_schema_version(conn)
+            except psycopg.errors.UndefinedTable:  # half-created schema: no schema_meta yet
+                conn.rollback()
+                stored = None
     finally:
         conn.close()
     payload = {"code": _db.SCHEMA_VERSION, "db": stored, "match": stored == _db.SCHEMA_VERSION}

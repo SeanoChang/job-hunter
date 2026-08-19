@@ -37,3 +37,19 @@ def test_queries(tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]) -> None
     h = board_health(pg)["ashby:ramp"]
     assert h["health"] == "ok" and h["observed_count"] == 1
     assert open_counts(pg) == {"ashby:ramp": 1}
+
+
+def test_events_join_is_scoped_by_uid(
+    tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    store = LocalFS(tmp_path)
+    rev = write_registry(store, [Board("Ramp", "ashby", "ramp")])
+    t0 = datetime(2026, 8, 18, 6, tzinfo=UTC)
+    same = "<p>same</p>"
+    Ingestor(pg, store).ingest(make_manifest(
+        store, "ashby", "ramp", t0,
+        board_payload("ashby", [ab_record("x", "Same", same), ab_record("y", "Same", same)]),
+        registry_revision=rev))
+    pg.commit()
+    ev = {e["uid"]: e for e in events_since(pg, t0 - timedelta(hours=1))}
+    assert ev["ab:ramp:x"]["url"].endswith("/x") and ev["ab:ramp:y"]["url"].endswith("/y")

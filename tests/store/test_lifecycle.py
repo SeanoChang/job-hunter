@@ -324,3 +324,37 @@ def test_source_updated_at_is_refreshed(
     updated = q(pg, "SELECT source_updated_at FROM postings")[0]["source_updated_at"]
     assert updated == datetime(2026, 8, 9, tzinfo=UTC)
     assert q(pg, "SELECT count(*) AS n FROM posting_versions")[0]["n"] == 1
+
+
+def test_two_postings_with_identical_content_keep_two_version_rows(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    same = "<p>same body</p>"
+    body = board_payload("greenhouse", [gh_record(1, "Same", same), gh_record(2, "Same", same)])
+    r = Ingestor(pg, store).ingest(make_manifest(store, "greenhouse", "anthropic", day(0), body,
+                                                 registry_revision=rev))
+    pg.commit()
+    assert r is not None and r.new_versions == 2 and r.new_documents == 1
+    vs = q(pg, "SELECT uid, version_hash, url FROM posting_versions ORDER BY uid")
+    assert [v["uid"] for v in vs] == ["gh:anthropic:1", "gh:anthropic:2"]
+    assert vs[0]["version_hash"] == vs[1]["version_hash"]  # content identity is shared
+    assert vs[0]["url"] != vs[1]["url"]  # but each posting keeps its own row
+    assert q(pg, "SELECT count(*) AS n FROM documents")[0]["n"] == 1  # one canonical text
+
+
+def test_versions_differing_only_in_metadata_each_get_a_document(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    body = board_payload("greenhouse", [
+        gh_record(1, "T", "<p>same body</p>", location={"name": "SF"}),
+        gh_record(2, "T", "<p>same body</p>", location={"name": "NYC"}),
+    ])
+    r = Ingestor(pg, store).ingest(make_manifest(store, "greenhouse", "anthropic", day(0), body,
+                                                 registry_revision=rev))
+    pg.commit()
+    assert r is not None and r.new_versions == 2 and r.new_documents == 2
+    docs = q(pg, "SELECT version_hash, document_hash FROM documents")
+    assert len(docs) == 2 and docs[0]["document_hash"] == docs[1]["document_hash"]
+    joined = q(pg, "SELECT count(*) AS n FROM posting_versions v JOIN documents d "
+                   "ON d.version_hash = v.version_hash AND d.normalizer_version = 'md/1'")
+    assert joined[0]["n"] == 2  # no version is left without a document
