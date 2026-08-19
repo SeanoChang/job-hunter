@@ -1,4 +1,4 @@
-"""One run: registry -> fetch every board -> archive manifest + blob. No database here."""
+"""One run: registry -> fetch every board -> archive manifest + blob -> ingest into the store."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+
+import psycopg
 
 from jobhunter import __version__
 from jobhunter.archive import ArchiveError, ArchiveStore, open_store
@@ -21,6 +23,8 @@ from jobhunter.models import AttemptManifest, Board
 from jobhunter.registry import load as load_registry
 from jobhunter.sources import get_source
 from jobhunter.sources.base import EnvelopeError, Source
+from jobhunter.store import db as _db
+from jobhunter.store.lifecycle import Ingestor
 from jobhunter.timeutil import iso, utcnow
 
 
@@ -51,6 +55,9 @@ class RunSummary:
     finished_at: datetime
     registry_revision: str
     outcomes: list[BoardOutcome]
+    ingested: int = 0
+    db_error: str | None = None
+    lock_held: bool = False
 
     def counts(self) -> dict[str, int]:
         ok = sum(is_healthy(o.manifest) for o in self.outcomes)
@@ -74,6 +81,9 @@ class RunSummary:
             "finished_at": iso(self.finished_at),
             "registry_revision": self.registry_revision,
             "counts": self.counts(),
+            "ingested": self.ingested,
+            "db_error": self.db_error,
+            "lock_held": self.lock_held,
             "boards": [
                 {
                     "board": o.board.key,
@@ -154,18 +164,38 @@ def run(
     dry_run: bool = False,
     now: Callable[[], datetime] = utcnow,
     concurrency: int = 4,
+    ingest: bool = True,
+    schema: str = _db.SCHEMA,
 ) -> RunSummary:
     store = store or open_store(settings.archive_url)
-    own_fetcher = fetcher is None
-    fetcher = fetcher or Fetcher()
     started = now()
     run_id = f"{iso(started).replace('-', '').replace(':', '')}-{secrets.token_hex(3)}"
     registry = load_registry(settings.registry_path)
-    if not dry_run:
-        store.put(registry_key(registry.revision), registry.snapshot_json())
     boards = [b for b in registry.boards if only is None or b.key == only]
     if only is not None and not boards:
         raise UnknownBoardError(f"board {only!r} is not in the registry")
+
+    conn: _db.Conn | None = None
+    db_error: str | None = None
+    if ingest and not dry_run:
+        dsn = settings.require_database_url()  # ConfigError propagates: the spec makes it required
+        try:
+            conn = _db.connect(dsn, schema=schema)
+            if not _db.try_lock(conn):
+                conn.close()
+                return RunSummary(run_id, started, now(), registry.revision, [], lock_held=True)
+            _db.init(conn, schema)
+            conn.commit()
+        except (psycopg.Error, OSError) as e:
+            db_error = f"{type(e).__name__}: {e}"
+            if conn is not None:
+                conn.close()
+            conn = None
+
+    own_fetcher = fetcher is None
+    fetcher = fetcher or Fetcher()
+    if not dry_run:
+        store.put(registry_key(registry.revision), registry.snapshot_json())
 
     def one(board: Board) -> BoardOutcome:
         return fetch_board(
@@ -179,7 +209,26 @@ def run(
     finally:
         if own_fetcher:
             fetcher.close()
+
+    ingested = 0
+    if conn is not None:
+        try:
+            ing = Ingestor(conn, store, drop_ratio=settings.drop_ratio)
+            for o in sorted(outcomes, key=lambda o: (o.manifest.started_at, o.manifest.attempt_id)):
+                if ing.ingest(o.manifest) is not None:
+                    ingested += 1
+            conn.commit()
+        except (psycopg.Error, OSError) as e:
+            # Each attempt is its own committed transaction (Ingestor.ingest); the rollback
+            # only discards the failed one, so `ingested` keeps counting what landed.
+            conn.rollback()
+            db_error = f"{type(e).__name__}: {e}"
+        finally:
+            try:
+                _db.unlock(conn)
+            finally:
+                conn.close()
     return RunSummary(
-        run_id=run_id, started_at=started, finished_at=now(),
-        registry_revision=registry.revision, outcomes=outcomes,
+        run_id=run_id, started_at=started, finished_at=now(), registry_revision=registry.revision,
+        outcomes=outcomes, ingested=ingested, db_error=db_error,
     )
