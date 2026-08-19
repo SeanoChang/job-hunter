@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS fetch_attempts (
   error             TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_attempts_board_time ON fetch_attempts (source, board, started_at);
+CREATE INDEX IF NOT EXISTS ix_attempts_run ON fetch_attempts (run_id);
 
 CREATE TABLE IF NOT EXISTS posting_versions (
   version_hash      TEXT NOT NULL,              -- content identity, may be shared by postings

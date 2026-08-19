@@ -485,17 +485,20 @@ stateDiagram-v2
    the attempt with `health = error` and stop. Otherwise get the blob and call
    `source.parse`. An `EnvelopeError` → `health = error`, stop. No presence is
    touched for an `error` attempt and no reconcile happens.
-3. **Per record, isolated.** Let `prev` be the most recent attempt for
-   `(source, board)` with `health != error`. For each `RawRecord`: if
-   `source_id` is `None`, count it in `unidentifiable_count` and continue. Else
-   normalise; on `NormalizeError` the record is present with
+3. **Per record, isolated.** Two distinct "previous" attempts are used: `prev`
+   is the most recent attempt for `(source, board)` with `health != error` and
+   feeds only the drop guard (step 4); `prev_any` is the most recent attempt of
+   any health and governs presence continuity — an `error` attempt is an
+   unobserved gap, so an interval never extends across one. For each
+   `RawRecord`: if `source_id` is `None`, count it in `unidentifiable_count` and
+   continue. Else normalise; on `NormalizeError` the record is present with
    `parse_status = failed` and no version; on success compute `version_hash`,
    `INSERT … ON CONFLICT DO NOTHING` the version (with
    `first_seen_attempt = this`), write `versions/<ab>/<version_hash>.html.gz` if
    absent, compute the document under `NORMALIZER_VERSION` and insert it
    likewise, and the record is present with `parse_status = ok`. Then
    **presence**: let `cur` be the `presence` row for `uid` with the greatest
-   `last_at`. If `cur` exists and `cur.last_attempt = prev.attempt_id` and
+   `last_at`. If `cur` exists and `cur.last_attempt = prev_any.attempt_id` and
    `cur.version_hash` and `cur.parse_status` equal this record's → extend it
    (`last_attempt = this`, `last_at`, `runs + 1`); otherwise insert a new
    interval starting at this attempt. A second record with an already-seen
@@ -693,7 +696,8 @@ answer. Postgres stands.
   lost; the interval widens.
 - **Database unreachable, archive fine** — manifests and blobs are still
   written; ingest is skipped; exit 2. `job-hunter ingest` replays them on the
-  next run. Neon scale-to-zero cold start is seconds and is retried.
+  next run. Neon scale-to-zero cold start is seconds and is bounded by a 30 s
+  connect timeout.
 - **Two runs overlap** — the second finds the advisory lock held and exits 0
   with "already running".
 - **DB lost, corrupt, or moved to another host** — `rebuild` from the archive

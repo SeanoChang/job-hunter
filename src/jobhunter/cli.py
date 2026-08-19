@@ -199,6 +199,7 @@ def ingest(as_json: bool = typer.Option(False, "--json")) -> None:
 @app.command()
 def rebuild(as_json: bool = typer.Option(False, "--json")) -> None:
     """Rebuild the store from the whole archive into a fresh schema and swap it live."""
+    from jobhunter.rebuild import LockHeld
     from jobhunter.rebuild import rebuild as _rebuild
 
     settings = _settings()
@@ -212,7 +213,7 @@ def rebuild(as_json: bool = typer.Option(False, "--json")) -> None:
     except ArchiveError as e:
         typer.echo(f"archive error: {e}")
         raise typer.Exit(EXIT_SYSTEMIC) from e
-    except RuntimeError as e:  # another writer holds the advisory lock; not an error
+    except LockHeld as e:  # another writer holds the advisory lock; not an error
         _emit({"lock_held": True, "ingested": 0, "skipped": 0, "swapped": False}, as_json,
               f"{e}; nothing rebuilt")
         return
@@ -408,7 +409,7 @@ def db_init(as_json: bool = typer.Option(False, "--json")) -> None:
     try:
         _db.init(conn, _schema)
         conn.commit()
-        payload = {"schema": _db.SCHEMA, "schema_version": _db.stored_schema_version(conn)}
+        payload = {"schema": _schema, "schema_version": _db.stored_schema_version(conn)}
     finally:
         conn.close()
     _emit(
