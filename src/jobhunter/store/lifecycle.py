@@ -273,12 +273,84 @@ class Ingestor:
             )
 
     def _transitions(
-        self, _seen: dict[str, _Seen], _m: AttemptManifest, _res: AttemptResult
+        self, seen: dict[str, _Seen], m: AttemptManifest, res: AttemptResult
     ) -> None:
-        return  # Task 6
+        for s in seen.values():
+            row = self.conn.execute(
+                "SELECT status, current_version_hash FROM postings WHERE uid = %s FOR UPDATE",
+                (s.uid,),
+            ).fetchone()
+            if row is None:
+                self.conn.execute(
+                    "INSERT INTO postings (uid, source, board, source_id, status, "
+                    "current_version_hash, version_count, reopen_count, first_seen_attempt, "
+                    "first_seen_at, last_seen_attempt, last_seen_at, source_updated_at) "
+                    "VALUES (%s,%s,%s,%s,'open',%s,%s,0,%s,%s,%s,%s,%s)",
+                    (s.uid, m.source, m.board, s.source_id, s.version_hash,
+                     1 if s.version_hash else 0, m.attempt_id, m.started_at, m.attempt_id,
+                     m.started_at, s.source_updated_at),
+                )
+                self._event("opened", s.uid, m, None, s.version_hash)
+                res.opened += 1
+                continue
+            cur_vh = row["current_version_hash"]
+            version_changed = s.version_hash is not None and s.version_hash != cur_vh
+            if row["status"] == "closed":
+                self.conn.execute(
+                    "UPDATE postings SET status = 'open', reopen_count = reopen_count + 1, "
+                    "closed_lower_at = NULL, closed_upper_at = NULL, closed_by_attempt = NULL, "
+                    "last_seen_attempt = %s, last_seen_at = %s, "
+                    "current_version_hash = COALESCE(%s, current_version_hash), "
+                    "version_count = version_count + %s, "
+                    "source_updated_at = COALESCE(%s, source_updated_at) WHERE uid = %s",
+                    (m.attempt_id, m.started_at, s.version_hash, 1 if version_changed else 0,
+                     s.source_updated_at, s.uid),
+                )
+                self._event("reopened", s.uid, m, cur_vh, s.version_hash or cur_vh)
+                res.reopened += 1
+            elif version_changed:
+                self.conn.execute(
+                    "UPDATE postings SET current_version_hash = %s, "
+                    "version_count = version_count + 1, "
+                    "last_seen_attempt = %s, last_seen_at = %s, "
+                    "source_updated_at = COALESCE(%s, source_updated_at) WHERE uid = %s",
+                    (s.version_hash, m.attempt_id, m.started_at, s.source_updated_at, s.uid),
+                )
+                self._event("changed", s.uid, m, cur_vh, s.version_hash)
+                res.changed += 1
+            else:
+                self.conn.execute(
+                    "UPDATE postings SET last_seen_attempt = %s, last_seen_at = %s, "
+                    "source_updated_at = COALESCE(%s, source_updated_at) WHERE uid = %s",
+                    (m.attempt_id, m.started_at, s.source_updated_at, s.uid),
+                )
 
-    def _reconcile(self, _m: AttemptManifest, _res: AttemptResult) -> None:
-        return  # Task 6
+    def _reconcile(self, m: AttemptManifest, res: AttemptResult) -> None:
+        rows = self.conn.execute(
+            "UPDATE postings SET status = 'closed', closed_lower_at = last_seen_at, "
+            "closed_upper_at = %s, closed_by_attempt = %s "
+            "WHERE source = %s AND board = %s AND status = 'open' "
+            "AND uid NOT IN (SELECT uid FROM presence WHERE last_attempt = %s) "
+            "RETURNING uid, current_version_hash, closed_lower_at, closed_upper_at",
+            (m.started_at, m.attempt_id, m.source, m.board, m.attempt_id),
+        ).fetchall()
+        for r in sorted(rows, key=lambda r: str(r["uid"])):
+            self.conn.execute(
+                "INSERT INTO posting_events (uid, kind, attempt_id, at, from_version, to_version, "
+                "closed_lower_at, closed_upper_at) VALUES (%s,'closed',%s,%s,%s,NULL,%s,%s)",
+                (r["uid"], m.attempt_id, m.started_at, r["current_version_hash"],
+                 r["closed_lower_at"], r["closed_upper_at"]),
+            )
+            res.closed += 1
+
+    def _event(
+        self, kind: str, uid: str, m: AttemptManifest, from_v: str | None, to_v: str | None
+    ) -> None:
+        self.conn.execute(
+            "INSERT INTO posting_events (uid, kind, attempt_id, at, from_version, to_version) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (uid, kind, m.attempt_id, m.started_at, from_v, to_v),
+        )
 
     def _upsert_run(self, run_id: str) -> None:
         self.conn.execute(

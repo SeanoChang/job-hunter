@@ -193,3 +193,134 @@ def test_idempotent_and_out_of_order(
         ing.ingest(m0)
     pg.commit()
     assert q(pg, "SELECT count(*) AS n FROM fetch_attempts")[0]["n"] == 1
+
+
+def _events(pg: psycopg.Connection[dict[str, Any]]) -> list[tuple[str, str]]:
+    rows = q(pg, "SELECT kind, uid FROM posting_events ORDER BY event_id")
+    return [(e["kind"], e["uid"]) for e in rows]
+
+
+def test_open_change_close_reopen(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    ing = Ingestor(pg, store)
+    v1 = board_payload("ashby", [ab_record("x", "T", "<p>t</p>"), ab_record("y", "U", "<p>u</p>")])
+    v2 = board_payload(
+        "ashby", [ab_record("x", "T v2", "<p>t</p>"), ab_record("y", "U", "<p>u</p>")]
+    )
+    v3 = board_payload("ashby", [ab_record("x", "T v2", "<p>t</p>")])
+    v4 = board_payload(
+        "ashby", [ab_record("x", "T v2", "<p>t</p>"), ab_record("y", "U v2", "<p>u</p>")]
+    )
+    results = []
+    for n, body in enumerate([v1, v2, v3, v4]):
+        r = ing.ingest(make_manifest(store, "ashby", "ramp", day(n), body, registry_revision=rev))
+        assert r is not None
+        results.append((r.opened, r.changed, r.closed, r.reopened))
+    pg.commit()
+    assert results == [(2, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)]
+    assert _events(pg) == [
+        ("opened", "ab:ramp:x"), ("opened", "ab:ramp:y"),
+        ("changed", "ab:ramp:x"), ("closed", "ab:ramp:y"), ("reopened", "ab:ramp:y"),
+    ]
+    x = q(pg, "SELECT * FROM postings WHERE uid = 'ab:ramp:x'")[0]
+    assert x["status"] == "open" and x["version_count"] == 2 and x["reopen_count"] == 0
+    assert x["first_seen_at"] == day(0) and x["last_seen_at"] == day(3)
+    y = q(pg, "SELECT * FROM postings WHERE uid = 'ab:ramp:y'")[0]
+    assert y["status"] == "open" and y["reopen_count"] == 1 and y["version_count"] == 2
+    assert y["closed_lower_at"] is None and y["closed_by_attempt"] is None
+    closed = q(pg, "SELECT * FROM posting_events WHERE kind = 'closed'")[0]
+    assert closed["closed_lower_at"] == day(1) and closed["closed_upper_at"] == day(2)
+    reopened = q(pg, "SELECT * FROM posting_events WHERE kind = 'reopened'")[0]
+    assert reopened["from_version"] != reopened["to_version"]
+    changed = q(pg, "SELECT * FROM posting_events WHERE kind = 'changed'")[0]
+    assert changed["from_version"] and changed["to_version"] and changed["at"] == day(1)
+
+
+def test_suspect_drop_defers_closures_and_1_to_0_closes_next_run(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    ing = Ingestor(pg, store)
+    one = board_payload("lever", [lv_record("a", "A", "<p>a</p>")])
+    empty = board_payload("lever", [])
+    r0 = ing.ingest(make_manifest(store, "lever", "palantir", day(0), one, registry_revision=rev))
+    r1 = ing.ingest(make_manifest(store, "lever", "palantir", day(1), empty, registry_revision=rev))
+    r2 = ing.ingest(make_manifest(store, "lever", "palantir", day(2), empty, registry_revision=rev))
+    pg.commit()
+    assert r0 and r1 and r2
+    assert (r1.health, r1.closed) == ("suspect_drop", 0)
+    assert (r2.health, r2.closed) == ("ok", 1)
+    p = q(pg, "SELECT * FROM postings")[0]
+    assert p["status"] == "closed" and p["closed_lower_at"] == day(0)
+    assert p["closed_upper_at"] == day(2)
+    assert p["closed_by_attempt"] == r2.attempt_id
+
+
+def test_partial_payload_defers_then_closes_with_true_lower_bound(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    ing = Ingestor(pg, store)
+    ids = [str(i) for i in range(10)]
+    full = board_payload("lever", [lv_record(i, "T", "<p>x</p>") for i in ids])
+    third = board_payload("lever", [lv_record(i, "T", "<p>x</p>") for i in ids[:3]])
+    ing.ingest(make_manifest(store, "lever", "palantir", day(0), full, registry_revision=rev))
+    r1 = ing.ingest(make_manifest(store, "lever", "palantir", day(1), third, registry_revision=rev))
+    r2 = ing.ingest(make_manifest(store, "lever", "palantir", day(2), full, registry_revision=rev))
+    pg.commit()
+    assert r1 and r1.health == "suspect_drop" and r1.closed == 0
+    assert r2 and r2.health == "ok" and r2.closed == 0 and r2.reopened == 0
+    assert q(pg, "SELECT count(*) AS n FROM postings WHERE status = 'open'")[0]["n"] == 10
+
+
+def test_failed_parse_keeps_posting_open(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    ing = Ingestor(pg, store)
+    good = board_payload("greenhouse", [gh_record(1, "A", "<p>a</p>")])
+    broken = board_payload("greenhouse", [{"id": 1, "content": "x"}])  # no title -> NormalizeError
+    ing.ingest(make_manifest(store, "greenhouse", "anthropic", day(0), good, registry_revision=rev))
+    r = ing.ingest(
+        make_manifest(store, "greenhouse", "anthropic", day(1), broken, registry_revision=rev)
+    )
+    pg.commit()
+    assert r and r.closed == 0 and r.failed_count == 1
+    p = q(pg, "SELECT status, last_seen_at, current_version_hash FROM postings")[0]
+    assert p["status"] == "open" and p["last_seen_at"] == day(1) and p["current_version_hash"]
+
+
+def test_error_attempt_touches_nothing(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    ing = Ingestor(pg, store)
+    good = board_payload("greenhouse", [gh_record(1, "A", "<p>a</p>")])
+    ing.ingest(make_manifest(store, "greenhouse", "anthropic", day(0), good, registry_revision=rev))
+    r = ing.ingest(make_manifest(store, "greenhouse", "anthropic", day(1), None,
+                                 transport="timeout", http_status=None,
+                                 registry_revision=rev))
+    pg.commit()
+    assert r and r.health == "error"
+    p = q(pg, "SELECT status, last_seen_at FROM postings")[0]
+    assert p["status"] == "open" and p["last_seen_at"] == day(0)
+    runs = q(pg, "SELECT boards_total, boards_ok, boards_error FROM runs")[0]
+    assert (runs["boards_total"], runs["boards_ok"], runs["boards_error"]) == (2, 1, 1)
+
+
+def test_source_updated_at_is_refreshed(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    ing = Ingestor(pg, store)
+    a = board_payload(
+        "greenhouse", [gh_record(1, "A", "<p>a</p>", updated_at="2026-08-01T00:00:00Z")]
+    )
+    b = board_payload(
+        "greenhouse", [gh_record(1, "A", "<p>a</p>", updated_at="2026-08-09T00:00:00Z")]
+    )
+    ing.ingest(make_manifest(store, "greenhouse", "anthropic", day(0), a, registry_revision=rev))
+    r = ing.ingest(
+        make_manifest(store, "greenhouse", "anthropic", day(1), b, registry_revision=rev)
+    )
+    pg.commit()
+    assert r and r.changed == 0  # updated_at is metadata, not identity
+    updated = q(pg, "SELECT source_updated_at FROM postings")[0]["source_updated_at"]
+    assert updated == datetime(2026, 8, 9, tzinfo=UTC)
+    assert q(pg, "SELECT count(*) AS n FROM posting_versions")[0]["n"] == 1
