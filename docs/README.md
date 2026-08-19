@@ -69,13 +69,27 @@ All still current as research; none define the design.
 - `2026-08-08-labor-market-analytics.md` — versioned company panel for credible
   analytics.
 
+## Code
+
+`src/jobhunter/` — the ingestion layer, built to
+`2026-08-18-ingestion-layer-spec.md` in two increments, both shipped:
+
+- `superpowers/plans/2026-08-18-ingestion-increment-1-archive.md` — registry,
+  the three ATS fetchers, the immutable archive (manifests + gzipped blobs on
+  local FS or S3/R2), `fetch`, `status`, `archive ls`, `registry check`.
+- `superpowers/plans/2026-08-18-ingestion-increment-2-store.md` — the Postgres
+  store: `version_hash`, the HTML→Markdown converter (L0, `md/1`), the company
+  panel, `Ingestor.ingest` with presence intervals, the drop guard and
+  interval-censored closes, `ingest`, `rebuild`, `report`, `registry list`,
+  `db init|version`.
+
+Not built yet: the demand-profile extractor (L2) and the concept linker.
+
 ## Prototype code
 
 `prototypes/parsing/` — the retired rule-based tier-1 parser, four fixtures, the
 24-bullet regression gold, the `claude -p --json-schema` structured-call wiring,
-and a dated judge run. Its README carries the superseded banner. The
-demand-profile extractor (L2), the HTML→Markdown step, and the linker are not
-built yet.
+and a dated judge run. Its README carries the superseded banner.
 
 ## Standing rulings (chronological, all still in force)
 

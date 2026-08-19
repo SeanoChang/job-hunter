@@ -33,12 +33,33 @@ ATS payload analysis lives in `docs/sources/`.
 
 ## Running the fetcher
 
+The fetcher writes every response to an immutable archive and then ingests the
+new manifests into a Postgres store, so both an archive URL and a database URL
+are required. A local Postgres comes from `docker compose up -d postgres`.
+
 ```bash
 uv sync
 export JOB_HUNTER_ARCHIVE_URL=file:///tmp/jh-archive   # or s3://bucket/prefix + AWS_* for R2
+export JOB_HUNTER_DATABASE_URL=postgresql://jobhunter:jobhunter@localhost:5432/jobhunter
+uv run job-hunter db init          # create the jobhunter schema (fetch does this too)
 uv run job-hunter registry check
-uv run job-hunter fetch
-uv run job-hunter status
+uv run job-hunter fetch            # archive every board, then ingest what is new
+uv run job-hunter status           # per-board fetch health + store health
 ```
 
-Deployment on R2 + GitHub Actions: `docs/runbooks/2026-08-18-deploy-fetcher.md`.
+Reading and repairing the store:
+
+```bash
+uv run job-hunter report --since 24h    # opened / changed / closed / reopened
+uv run job-hunter registry list         # board panel: when each board joined/left
+uv run job-hunter ingest                # replay archived manifests not yet ingested
+uv run job-hunter rebuild               # replay the whole archive into a fresh schema, swap
+uv run job-hunter db version            # code vs database schema version
+```
+
+Every command takes `--json`. `JOB_HUNTER_DROP_RATIO` (default `0.5`) sets the
+drop guard: a board returning less than that share of its previous count is
+`suspect_drop` and its postings are not closed on that attempt.
+
+Deployment on R2 + Neon + GitHub Actions:
+`docs/runbooks/2026-08-18-deploy-fetcher.md`.
