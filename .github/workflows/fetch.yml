@@ -15,7 +15,7 @@ defaults:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       # Third-party actions are pinned to commit SHAs (supply-chain). Tag shown for humans.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

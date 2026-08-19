@@ -19,3 +19,394 @@ company = "Ramp"
 source  = "ashby"
 board   = "ramp"
 country = "US"
+
+[[boards]]
+company = "Anrok"
+source  = "ashby"
+board   = "anrok"
+
+[[boards]]
+company = "Astronomer"
+source  = "ashby"
+board   = "astronomer"
+
+[[boards]]
+company = "Cursor"
+source  = "ashby"
+board   = "cursor"
+
+[[boards]]
+company = "Docker"
+source  = "ashby"
+board   = "docker"
+
+[[boards]]
+company = "ElevenLabs"
+source  = "ashby"
+board   = "elevenlabs"
+
+[[boards]]
+company = "Linear"
+source  = "ashby"
+board   = "linear"
+
+[[boards]]
+company = "Modal"
+source  = "ashby"
+board   = "modal"
+
+[[boards]]
+company = "OpenAI"
+source  = "ashby"
+board   = "openai"
+
+[[boards]]
+company = "Perplexity"
+source  = "ashby"
+board   = "perplexity"
+
+[[boards]]
+company = "Plaid"
+source  = "ashby"
+board   = "plaid"
+
+[[boards]]
+company = "PostHog"
+source  = "ashby"
+board   = "posthog"
+
+[[boards]]
+company = "Replit"
+source  = "ashby"
+board   = "replit"
+
+[[boards]]
+company = "Sierra"
+source  = "ashby"
+board   = "sierra"
+
+[[boards]]
+company = "Supabase"
+source  = "ashby"
+board   = "supabase"
+
+[[boards]]
+company = "Temporal"
+source  = "ashby"
+board   = "temporal"
+
+[[boards]]
+company = "Vanta"
+source  = "ashby"
+board   = "vanta"
+
+[[boards]]
+company = "Zapier"
+source  = "ashby"
+board   = "zapier"
+
+[[boards]]
+company = "Affirm"
+source  = "greenhouse"
+board   = "affirm"
+
+[[boards]]
+company = "Agoda"
+source  = "greenhouse"
+board   = "agoda"
+country = "SG"
+
+[[boards]]
+company = "Airbnb"
+source  = "greenhouse"
+board   = "airbnb"
+
+[[boards]]
+company = "Airtable"
+source  = "greenhouse"
+board   = "airtable"
+
+[[boards]]
+company = "Amplitude"
+source  = "greenhouse"
+board   = "amplitude"
+
+[[boards]]
+company = "Anduril"
+source  = "greenhouse"
+board   = "andurilindustries"
+
+[[boards]]
+company = "Appier"
+source  = "greenhouse"
+board   = "appier"
+country = "TW"
+
+[[boards]]
+company = "Asana"
+source  = "greenhouse"
+board   = "asana"
+
+[[boards]]
+company = "Attentive"
+source  = "greenhouse"
+board   = "attentive"
+
+[[boards]]
+company = "Brex"
+source  = "greenhouse"
+board   = "brex"
+
+[[boards]]
+company = "Carta"
+source  = "greenhouse"
+board   = "carta"
+
+[[boards]]
+company = "Checkr"
+source  = "greenhouse"
+board   = "checkr"
+
+[[boards]]
+company = "Chime"
+source  = "greenhouse"
+board   = "chime"
+
+[[boards]]
+company = "Cloudflare"
+source  = "greenhouse"
+board   = "cloudflare"
+
+[[boards]]
+company = "Coinbase"
+source  = "greenhouse"
+board   = "coinbase"
+
+[[boards]]
+company = "Databricks"
+source  = "greenhouse"
+board   = "databricks"
+
+[[boards]]
+company = "Datadog"
+source  = "greenhouse"
+board   = "datadog"
+
+[[boards]]
+company = "Discord"
+source  = "greenhouse"
+board   = "discord"
+
+[[boards]]
+company = "DoorDash"
+source  = "greenhouse"
+board   = "doordashusa"
+
+[[boards]]
+company = "Dropbox"
+source  = "greenhouse"
+board   = "dropbox"
+
+[[boards]]
+company = "Duolingo"
+source  = "greenhouse"
+board   = "duolingo"
+
+[[boards]]
+company = "Elastic"
+source  = "greenhouse"
+board   = "elastic"
+
+[[boards]]
+company = "Epic Games"
+source  = "greenhouse"
+board   = "epicgames"
+
+[[boards]]
+company = "Faire"
+source  = "greenhouse"
+board   = "faire"
+
+[[boards]]
+company = "Figma"
+source  = "greenhouse"
+board   = "figma"
+
+[[boards]]
+company = "Flexport"
+source  = "greenhouse"
+board   = "flexport"
+
+[[boards]]
+company = "GitLab"
+source  = "greenhouse"
+board   = "gitlab"
+
+[[boards]]
+company = "Gusto"
+source  = "greenhouse"
+board   = "gusto"
+
+[[boards]]
+company = "Instacart"
+source  = "greenhouse"
+board   = "instacart"
+
+[[boards]]
+company = "Intercom"
+source  = "greenhouse"
+board   = "intercom"
+
+[[boards]]
+company = "Lyft"
+source  = "greenhouse"
+board   = "lyft"
+
+[[boards]]
+company = "Mixpanel"
+source  = "greenhouse"
+board   = "mixpanel"
+
+[[boards]]
+company = "MongoDB"
+source  = "greenhouse"
+board   = "mongodb"
+
+[[boards]]
+company = "Monzo"
+source  = "greenhouse"
+board   = "monzo"
+country = "GB"
+
+[[boards]]
+company = "Nuro"
+source  = "greenhouse"
+board   = "nuro"
+
+[[boards]]
+company = "Okta"
+source  = "greenhouse"
+board   = "okta"
+
+[[boards]]
+company = "OKX"
+source  = "greenhouse"
+board   = "okx"
+country = "HK"
+
+[[boards]]
+company = "PagerDuty"
+source  = "greenhouse"
+board   = "pagerduty"
+
+[[boards]]
+company = "PayPay"
+source  = "greenhouse"
+board   = "paypay"
+country = "JP"
+
+[[boards]]
+company = "Pinterest"
+source  = "greenhouse"
+board   = "pinterest"
+
+[[boards]]
+company = "Postman"
+source  = "greenhouse"
+board   = "postman"
+
+[[boards]]
+company = "Reddit"
+source  = "greenhouse"
+board   = "reddit"
+
+[[boards]]
+company = "Robinhood"
+source  = "greenhouse"
+board   = "robinhood"
+
+[[boards]]
+company = "Roblox"
+source  = "greenhouse"
+board   = "roblox"
+
+[[boards]]
+company = "Samsara"
+source  = "greenhouse"
+board   = "samsara"
+
+[[boards]]
+company = "Scale AI"
+source  = "greenhouse"
+board   = "scaleai"
+
+[[boards]]
+company = "SoFi"
+source  = "greenhouse"
+board   = "sofi"
+
+[[boards]]
+company = "Squarespace"
+source  = "greenhouse"
+board   = "squarespace"
+
+[[boards]]
+company = "Stripe"
+source  = "greenhouse"
+board   = "stripe"
+
+[[boards]]
+company = "Twilio"
+source  = "greenhouse"
+board   = "twilio"
+
+[[boards]]
+company = "Vercel"
+source  = "greenhouse"
+board   = "vercel"
+
+[[boards]]
+company = "Waymo"
+source  = "greenhouse"
+board   = "waymo"
+
+[[boards]]
+company = "Wise"
+source  = "greenhouse"
+board   = "wise"
+country = "GB"
+
+[[boards]]
+company = "Animoca Brands"
+source  = "lever"
+board   = "animocabrands"
+country = "HK"
+
+[[boards]]
+company = "Crypto.com"
+source  = "lever"
+board   = "crypto"
+country = "SG"
+
+[[boards]]
+company = "Ninja Van"
+source  = "lever"
+board   = "ninjavan"
+country = "SG"
+
+[[boards]]
+company = "Nium"
+source  = "lever"
+board   = "nium"
+country = "SG"
+
+[[boards]]
+company = "Spotify"
+source  = "lever"
+board   = "spotify"
+country = "SE"
+
+[[boards]]
+company = "Zoox"
+source  = "lever"
+board   = "zoox"
