@@ -24,7 +24,7 @@ jobs:
           enable-cache: true
       - run: uv python install 3.12
       - run: uv sync --frozen --no-dev
-      # Secrets are scoped to the two steps that need them, never job-wide.
+      # Secrets are scoped to the steps that need them, never job-wide.
       - name: fetch
         env:
           JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
@@ -32,7 +32,18 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
+          JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
         run: uv run job-hunter fetch --json | tee summary.json
+      - name: ingest pending (repair path if a previous run archived but could not ingest)
+        if: always()
+        env:
+          JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
+          AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
+        run: uv run job-hunter ingest
       - name: status
         if: always()
         env:
@@ -41,6 +52,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
+          JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
         run: uv run job-hunter status
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
