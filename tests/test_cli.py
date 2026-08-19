@@ -52,8 +52,10 @@ def test_fetch_json_summary(env: Path) -> None:
     r = runner.invoke(cli.app, ["fetch", "--json"])
     assert r.exit_code == 0, r.stdout
     data = json.loads(r.stdout)
-    assert data["counts"] == {"boards": 2, "ok": 2, "http_error": 0, "transport_error": 0,
-                              "new_blobs": 2}
+    assert data["counts"] == {
+        "boards": 2, "ok": 2, "envelope_error": 0, "http_error": 0, "transport_error": 0,
+        "new_blobs": 2,
+    }
 
 
 def test_fetch_human_summary_and_status(env: Path) -> None:
@@ -109,3 +111,21 @@ def test_fetch_all_boards_failed_is_systemic(env: Path, monkeypatch: pytest.Monk
 def test_fetch_board_option_is_validated(env: Path) -> None:
     r = runner.invoke(cli.app, ["fetch", "--board", "anthropic"])
     assert r.exit_code == 2 and "source:board" in r.stdout
+
+
+def test_fetch_unregistered_board_is_systemic(env: Path) -> None:
+    r = runner.invoke(cli.app, ["fetch", "--board", "greenhouse:not-registered", "--dry-run"])
+    assert r.exit_code == 2 and "not-registered" in r.stdout
+
+
+def test_fetch_all_envelope_failures_is_systemic(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def html(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<html>maintenance</html>")
+
+    monkeypatch.setattr(cli, "_make_fetcher", lambda: Fetcher(
+        httpx.Client(transport=httpx.MockTransport(html)), sleep=lambda s: None))
+    r = runner.invoke(cli.app, ["fetch", "--json"])
+    assert r.exit_code == 2
+    assert json.loads(r.stdout)["counts"]["envelope_error"] == 2

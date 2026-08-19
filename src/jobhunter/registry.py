@@ -50,7 +50,7 @@ def _board(entry: Any, i: int) -> Board:
     board = entry.get("board")
     if not isinstance(company, str) or not company.strip():
         raise RegistryError(f"boards[{i}]: company must be a non-empty string")
-    if source not in VALID_SOURCES:
+    if not isinstance(source, str) or source not in VALID_SOURCES:
         raise RegistryError(f"boards[{i}]: unknown source {source!r}")
     if not isinstance(board, str) or not _BOARD_RE.fullmatch(board):
         raise RegistryError(f"boards[{i}]: board must match {_BOARD_RE.pattern}")

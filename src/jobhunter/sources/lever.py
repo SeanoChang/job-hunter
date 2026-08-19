@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import datetime
 from typing import Any
 
 from jobhunter.models import Board, Compensation, PostingVersion, RawRecord
@@ -61,10 +62,19 @@ class Lever:
             compensation=_salary(p.get("salaryRange")),
             url=opt_str(p.get("hostedUrl")),
             apply_url=opt_str(p.get("applyUrl")),
-            source_created_at=from_epoch_ms(created) if isinstance(created, int) else None,
+            source_created_at=_created_at(created),
             source_updated_at=None,
             description_html=_description(p),
         )
+
+
+def _created_at(v: Any) -> datetime | None:
+    if not isinstance(v, int) or isinstance(v, bool):
+        return None
+    try:
+        return from_epoch_ms(v)
+    except (OverflowError, OSError, ValueError) as e:
+        raise NormalizeError(f"bad createdAt {v!r}") from e
 
 
 def _salary(v: Any) -> Compensation | None:

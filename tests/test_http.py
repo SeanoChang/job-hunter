@@ -1,4 +1,5 @@
 import httpx
+import pytest
 
 from jobhunter.http import USER_AGENT, Fetcher
 
@@ -78,3 +79,43 @@ def test_retries_zero_still_makes_one_attempt() -> None:
 
     r = Fetcher(_client(h), retries=0, sleep=lambda s: None).fetch("https://x")
     assert r.transport == "ok"
+
+
+@pytest.mark.parametrize(
+    "exc_type", [httpx.ReadError, httpx.RemoteProtocolError, httpx.WriteError]
+)
+def test_transport_errors_are_retried(exc_type: type[httpx.TransportError]) -> None:
+    calls = {"n": 0}
+
+    def h(req: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise exc_type("flaky", request=req)
+        return httpx.Response(200, content=b"ok")
+
+    r = Fetcher(_client(h), retries=3, sleep=lambda s: None).fetch("https://x")
+    assert r.transport == "ok" and calls["n"] == 3
+
+
+def test_verdict_reflects_last_attempt_when_exception_precedes_response() -> None:
+    calls = {"n": 0}
+
+    def h(req: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ReadTimeout("slow", request=req)
+        return httpx.Response(503, content=b"unavailable")
+
+    r = Fetcher(_client(h), retries=2, sleep=lambda s: None).fetch("https://x")
+    assert r.transport == "http_error" and r.status == 503 and r.body == b"unavailable"
+
+
+def test_non_transport_http_error_is_not_retried() -> None:
+    calls = {"n": 0}
+
+    def h(req: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        raise httpx.TooManyRedirects("loop", request=req)
+
+    r = Fetcher(_client(h), retries=3, sleep=lambda s: None).fetch("https://x")
+    assert r.transport == "other" and calls["n"] == 1

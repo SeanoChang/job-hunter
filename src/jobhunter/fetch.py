@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from jobhunter import __version__
-from jobhunter.archive import ArchiveStore, open_store
+from jobhunter.archive import ArchiveError, ArchiveStore, open_store
 from jobhunter.archive.keys import attempt_key, blob_key, registry_key
 from jobhunter.archive.manifests import write_manifest
 from jobhunter.config import Settings
@@ -24,8 +24,17 @@ from jobhunter.sources.base import EnvelopeError, Source
 from jobhunter.timeutil import iso, utcnow
 
 
+class UnknownBoardError(ValueError):
+    """--board named a source:board that is not in the registry."""
+
+
 def gzip_bytes(data: bytes) -> bytes:
     return gzip.compress(data, mtime=0)
+
+
+def is_healthy(m: AttemptManifest) -> bool:
+    """A board counts as healthy only if the transport succeeded AND the body parsed."""
+    return m.transport == "ok" and m.error is None
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,13 +53,17 @@ class RunSummary:
     outcomes: list[BoardOutcome]
 
     def counts(self) -> dict[str, int]:
-        ok = sum(o.manifest.transport == "ok" for o in self.outcomes)
+        ok = sum(is_healthy(o.manifest) for o in self.outcomes)
+        envelope_error = sum(
+            o.manifest.transport == "ok" and o.manifest.error is not None for o in self.outcomes
+        )
         http_error = sum(o.manifest.transport == "http_error" for o in self.outcomes)
         return {
             "boards": len(self.outcomes),
             "ok": ok,
+            "envelope_error": envelope_error,
             "http_error": http_error,
-            "transport_error": len(self.outcomes) - ok - http_error,
+            "transport_error": len(self.outcomes) - ok - envelope_error - http_error,
             "new_blobs": sum(o.blob_new for o in self.outcomes),
         }
 
@@ -95,12 +108,16 @@ def fetch_board(
     blob_sha: str | None = None
     record_count: int | None = None
     blob_new = False
+    error = res.error
     if res.transport == "ok":
         blob_sha = sha256_hex(res.body)
         try:
             record_count = sum(1 for _ in source.parse(res.body))
-        except EnvelopeError:
+        except EnvelopeError as e:
+            # Transport was fine, the body is not what the source promises. The raw
+            # bytes are archived regardless; the manifest says loudly why it did not parse.
             record_count = None
+            error = f"envelope: {e}"
         if not dry_run:
             blob_new = store.put(blob_key(blob_sha), gzip_bytes(res.body))
     manifest = AttemptManifest(
@@ -119,10 +136,12 @@ def fetch_board(
         adapter_version=source.adapter_version,
         registry_revision=registry_revision,
         cli_version=__version__,
-        error=res.error,
+        error=error,
     )
-    if not dry_run:
-        write_manifest(store, manifest)
+    if not dry_run and not write_manifest(store, manifest):
+        # Manifests are write-once; a pre-existing key means two attempts for one board in
+        # the same second (or a replayed clock). Silence would hide an observation.
+        raise ArchiveError(f"manifest {manifest.attempt_id} already exists")
     return BoardOutcome(board=board, manifest=manifest, blob_new=blob_new)
 
 
@@ -145,6 +164,8 @@ def run(
     if not dry_run:
         store.put(registry_key(registry.revision), registry.snapshot_json())
     boards = [b for b in registry.boards if only is None or b.key == only]
+    if only is not None and not boards:
+        raise UnknownBoardError(f"board {only!r} is not in the registry")
 
     def one(board: Board) -> BoardOutcome:
         return fetch_board(

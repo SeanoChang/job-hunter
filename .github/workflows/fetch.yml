@@ -9,6 +9,9 @@ concurrency:
 permissions:
   contents: read
   actions: write # keepalive: re-enable this workflow so the 60-day idle rule cannot silence it
+defaults:
+  run:
+    shell: bash # GitHub runs explicit bash as `bash -eo pipefail`; the unspecified default has no pipefail
 jobs:
   fetch:
     runs-on: ubuntu-latest

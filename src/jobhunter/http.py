@@ -1,5 +1,5 @@
-"""One HTTP client for all sources: timeouts, bounded retries, size cap,
-honest transport verdicts."""
+"""One HTTP client for all sources: timeouts, bounded retries, size cap, honest transport
+verdicts."""
 
 from __future__ import annotations
 
@@ -36,6 +36,12 @@ def _classify(exc: Exception) -> str:
     return "other"
 
 
+def _retryable(exc: Exception) -> bool:
+    # Every transport-level failure (timeouts, connect/read/write errors, protocol errors,
+    # proxy errors) is worth another try; anything else (bad URL, redirect loop) is not.
+    return isinstance(exc, httpx.TransportError) and not isinstance(exc, httpx.UnsupportedProtocol)
+
+
 class Fetcher:
     def __init__(
         self,
@@ -56,9 +62,10 @@ class Fetcher:
         self._client.close()
 
     def fetch(self, url: str) -> FetchResult:
+        """GET url with bounded retries. The verdict always describes the LAST attempt."""
         t0 = time.monotonic()
-        last_exc: Exception | None = None
         last_resp: tuple[int, bytes] | None = None
+        last_exc: Exception | None = None
         for attempt in range(self._retries):
             if attempt:
                 self._sleep(self._backoff * (2 ** (attempt - 1)))
@@ -71,21 +78,18 @@ class Fetcher:
                     if 200 <= resp.status_code < 300:
                         return FetchResult(resp.status_code, body, time.monotonic() - t0,
                                            "ok", None)
-                    last_resp = (resp.status_code, body)
+                    last_resp, last_exc = (resp.status_code, body), None
                     if resp.status_code not in _RETRY_STATUSES:
                         break
             except httpx.HTTPError as e:
-                last_exc = e
-                if _classify(e) == "other":
+                last_resp, last_exc = None, e
+                if not _retryable(e):
                     break
         elapsed = time.monotonic() - t0
-        if last_resp is not None and (last_exc is None or last_resp[0] not in _RETRY_STATUSES):
-            return FetchResult(last_resp[0], last_resp[1], elapsed, "http_error",
-                               f"HTTP {last_resp[0]}")
         if last_exc is not None:
             return FetchResult(None, b"", elapsed, _classify(last_exc),
                                f"{type(last_exc).__name__}: {last_exc}")
-        assert last_resp is not None
+        assert last_resp is not None  # the loop ran at least once and did not raise
         return FetchResult(last_resp[0], last_resp[1], elapsed, "http_error",
                            f"HTTP {last_resp[0]}")
 
