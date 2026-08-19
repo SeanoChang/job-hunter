@@ -210,3 +210,33 @@ def test_db_version_on_half_created_schema_is_systemic(
     assert r.exit_code == 2
     assert json.loads(r.stdout)["db"] is None
     assert schema  # silence unused warning
+
+
+def test_ingest_exits_2_on_gap_manifests(
+    env: Path, tmp_path: Path, pg: psycopg.Connection[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from jobhunter.archive.local import LocalFS
+    from jobhunter.models import Board
+    from jobhunter.store.lifecycle import Ingestor
+    from tests.store.helpers import ab_record, board_payload, make_manifest, write_registry
+
+    archive_root = tmp_path / "gap-archive"
+    store = LocalFS(archive_root)
+    rev = write_registry(store, [Board("Ramp", "ashby", "ramp")])
+    t0 = datetime(2026, 8, 18, 6, tzinfo=UTC)
+    body = board_payload("ashby", [ab_record("x", "T", "<p>t</p>")])
+    ing = Ingestor(pg, store)
+    ing.ingest(make_manifest(store, "ashby", "ramp", t0, body, registry_revision=rev))
+    make_manifest(store, "ashby", "ramp", t0 + timedelta(days=1), body, registry_revision=rev)
+    m2 = make_manifest(store, "ashby", "ramp", t0 + timedelta(days=2), body,
+                       registry_revision=rev)
+    ing.ingest(m2)
+    pg.commit()
+    monkeypatch.setenv("JOB_HUNTER_ARCHIVE_URL", f"file://{archive_root}")
+    r = runner.invoke(cli.app, ["ingest", "--json"])
+    assert r.exit_code == 2
+    data = json.loads(r.stdout)
+    assert len(data["gaps"]) == 1 and "rebuild" in data["hint"]

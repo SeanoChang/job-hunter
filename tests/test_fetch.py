@@ -1,7 +1,7 @@
 import gzip
 import json
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -228,3 +228,33 @@ def test_ingest_failures_are_reported_not_raised(
         _db.unlock(conn)
     finally:
         conn.close()
+
+
+def test_run_drains_pending_manifests_before_its_own(
+    tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    """A manifest archived while the DB was down is replayed by the NEXT run, not lost."""
+    from tests.store.helpers import make_manifest
+
+    settings = replace(_settings(tmp_path), database_url=TEST_DSN)
+    schema = pg.execute("SELECT current_schema() AS s").fetchone()["s"]
+    t0 = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
+    s0 = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t0, schema=schema)
+    assert s0.db_error is None
+    # day 1: archive-only (the DB was down that day)
+    store = LocalFS(tmp_path / "archive")
+    rev = s0.registry_revision
+    body = fixture_bytes("ashby_board.json")
+    make_manifest(store, "ashby", "ramp", t0 + timedelta(days=1), body, registry_revision=rev)
+    # day 2: a normal run must drain day 1 before ingesting its own manifests
+    t2 = t0 + timedelta(days=2)
+    s2 = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t2, schema=schema)
+    assert s2.db_error is None and s2.replayed == 1 and s2.gaps == []
+    days = [r["started_at"].day for r in pg.execute(
+        "SELECT started_at FROM fetch_attempts WHERE board = 'ramp' ORDER BY started_at"
+    ).fetchall()]
+    assert days == [18, 19, 20]
+    runs_col = [r["runs"] for r in pg.execute(
+        "SELECT runs FROM presence WHERE uid LIKE 'ab:%' ORDER BY first_at"
+    ).fetchall()]
+    assert runs_col == [3]  # one continuous interval; no fabricated continuity

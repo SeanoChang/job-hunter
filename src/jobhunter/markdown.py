@@ -186,7 +186,10 @@ class _Converter(HTMLParser):
 def _tidy(md: str) -> str:
     md = unicodedata.normalize("NFKC", md)
     # empty emphasis produced by empty tags
-    md = md.replace("****", "").replace("**  **", "").replace("* *", "")
+    # Only the zero-width artifact of an empty inline tag is removable; anything wider
+    # (e.g. "**x** **y**") is real content — a blanket "* *" replace corrupted adjacent
+    # emphasis spans and broke text preservation (review 2026-08-19).
+    md = md.replace("****", "")
     lines = [ln.rstrip() for ln in md.split("\n")]
     out = "\n".join(lines)
     out = re.sub(r"\n{3,}", "\n\n", out)

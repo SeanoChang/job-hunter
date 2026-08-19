@@ -7,7 +7,7 @@ import gzip
 import secrets
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -20,6 +20,7 @@ from jobhunter.archive.manifests import write_manifest
 from jobhunter.config import Settings
 from jobhunter.hashing import sha256_hex
 from jobhunter.http import Fetcher
+from jobhunter.ingest import replay_pending
 from jobhunter.models import AttemptManifest, Board
 from jobhunter.registry import load as load_registry
 from jobhunter.sources import get_source
@@ -57,6 +58,8 @@ class RunSummary:
     registry_revision: str
     outcomes: list[BoardOutcome]
     ingested: int = 0
+    replayed: int = 0
+    gaps: list[str] = field(default_factory=list)
     db_error: str | None = None
     lock_held: bool = False
 
@@ -83,6 +86,8 @@ class RunSummary:
             "registry_revision": self.registry_revision,
             "counts": self.counts(),
             "ingested": self.ingested,
+            "replayed": self.replayed,
+            "gaps": self.gaps,
             "db_error": self.db_error,
             "lock_held": self.lock_held,
             "boards": [
@@ -193,6 +198,26 @@ def run(
                 conn.close()
             conn = None
 
+    replayed = 0
+    gaps: list[str] = []
+    if conn is not None:
+        # Drain manifests archived while the DB was unreachable BEFORE fetching, so the
+        # watermark never advances past an unreplayed attempt (spec §8 recovery path).
+        try:
+            pending = replay_pending(conn, store, drop_ratio=settings.drop_ratio)
+            replayed = pending.ingested
+            gaps = pending.gaps
+            conn.commit()
+        except (psycopg.Error, OSError, OutOfOrder, ArchiveError) as e:
+            with contextlib.suppress(Exception):
+                conn.rollback()
+            db_error = f"{type(e).__name__}: {e}"
+            with contextlib.suppress(Exception):
+                _db.unlock(conn)
+            with contextlib.suppress(Exception):
+                conn.close()
+            conn = None
+
     own_fetcher = fetcher is None
     fetcher = fetcher or Fetcher()
     if not dry_run:
@@ -235,5 +260,5 @@ def run(
                 conn.close()
     return RunSummary(
         run_id=run_id, started_at=started, finished_at=now(), registry_revision=registry.revision,
-        outcomes=outcomes, ingested=ingested, db_error=db_error,
+        outcomes=outcomes, ingested=ingested, replayed=replayed, gaps=gaps, db_error=db_error,
     )

@@ -139,6 +139,8 @@ def fetch(
     counts = summary.counts()
     lines = [f"run {summary.run_id} — {counts['ok']}/{counts['boards']} boards ok, "
              f"{counts['new_blobs']} new blobs, {summary.ingested} ingested"
+             + (f", {summary.replayed} replayed" if summary.replayed else "")
+             + (f", GAPS: {len(summary.gaps)} (run rebuild)" if summary.gaps else "")
              + (" (dry run)" if dry_run else "")]
     for o in summary.outcomes:
         m = o.manifest
@@ -179,8 +181,19 @@ def ingest(as_json: bool = typer.Option(False, "--json")) -> None:
         with contextlib.suppress(Exception):
             _db.unlock(conn)
         conn.close()
-    _emit({"ingested": s.ingested, "skipped": s.skipped, "last_attempt": s.last_attempt}, as_json,
-          f"ingested {s.ingested}, skipped {s.skipped}, last {s.last_attempt or '-'}")
+    hint = (
+        "archive has manifests behind the watermark that are missing from the store; "
+        "run `job-hunter rebuild` to repair"
+    ) if s.gaps else None
+    _emit(
+        {"ingested": s.ingested, "skipped": s.skipped, "last_attempt": s.last_attempt,
+         "gaps": s.gaps, "hint": hint},
+        as_json,
+        f"ingested {s.ingested}, skipped {s.skipped}, last {s.last_attempt or '-'}"
+        + (f"\nGAPS: {len(s.gaps)} manifest(s) missing from the store — {hint}" if s.gaps else ""),
+    )
+    if s.gaps:
+        raise typer.Exit(EXIT_SYSTEMIC)
 
 
 @app.command()
