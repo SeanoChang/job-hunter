@@ -86,3 +86,22 @@ def test_table_cells_do_not_glue() -> None:
 
 def test_source_nul_is_not_mistaken_for_br() -> None:
     assert to_markdown("<p>x\x00y</p>") == "x\x00y"
+
+
+@pytest.mark.parametrize(
+    "src,expected",
+    [
+        ("<p><b>x</b> <b>y</b></p>", "**x** **y**"),
+        ("<p><em>foo</em> <em>bar</em></p>", "*foo* *bar*"),
+        (
+            "<p><strong>Salary:</strong> <strong>competitive</strong></p>",
+            "**Salary:** **competitive**",
+        ),
+        ("<ul><li><b>A</b> <b>B</b></li></ul>", "- **A** **B**"),
+        ("<p><b></b>kept</p>", "kept"),
+    ],
+)
+def test_adjacent_emphasis_is_not_corrupted(src: str, expected: str) -> None:
+    md = to_markdown(src)
+    assert md == expected
+    assert strip_markdown(md) == visible_text(src)

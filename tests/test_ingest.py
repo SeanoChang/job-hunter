@@ -30,3 +30,26 @@ def test_replay_pending_is_incremental_and_idempotent(
     assert (s3.ingested, s3.skipped) == (0, 0)
     row = pg.execute("SELECT count(*) AS n FROM fetch_attempts").fetchone()
     assert row is not None and row["n"] == 3
+
+
+def test_gap_manifests_are_detected_not_silently_dropped(
+    tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    from jobhunter.store.lifecycle import Ingestor
+
+    store = LocalFS(tmp_path)
+    rev = write_registry(store, [Board("Ramp", "ashby", "ramp")])
+    t0 = datetime(2026, 8, 18, 6, tzinfo=UTC)
+    body = board_payload("ashby", [ab_record("x", "T", "<p>t</p>")])
+    ing = Ingestor(pg, store)
+    ing.ingest(make_manifest(store, "ashby", "ramp", t0, body, registry_revision=rev))
+    # day 1 is archived while the DB was down; day 2 advances the watermark past it
+    gap = make_manifest(store, "ashby", "ramp", t0 + timedelta(days=1), body, registry_revision=rev)
+    m2 = make_manifest(store, "ashby", "ramp", t0 + timedelta(days=2), body,
+                       registry_revision=rev)
+    ing.ingest(m2)
+    pg.commit()
+    s = replay_pending(pg, store)
+    pg.commit()
+    assert s.ingested == 0
+    assert s.gaps == [gap.attempt_id]  # loud, not silent: the store is missing this attempt
