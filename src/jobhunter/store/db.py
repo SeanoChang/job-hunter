@@ -9,6 +9,11 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
+
+class SchemaMismatch(RuntimeError):
+    """The database's stored schema_version differs from the code's; run `rebuild`."""
+
+
 SCHEMA = "jobhunter"
 SCHEMA_VERSION = "1"
 LOCK_KEY = 0x6A6F6268  # "jobh"
@@ -17,7 +22,7 @@ Conn = psycopg.Connection[dict[str, Any]]
 
 
 def connect(dsn: str, *, schema: str = SCHEMA) -> Conn:
-    conn = psycopg.connect(dsn, autocommit=False, row_factory=dict_row)
+    conn = psycopg.connect(dsn, autocommit=False, row_factory=dict_row, connect_timeout=30)
     conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
     conn.commit()
     return conn
@@ -35,23 +40,48 @@ def schema_exists(conn: Conn, schema: str) -> bool:
 
 
 def init(conn: Conn, schema: str = SCHEMA) -> None:
-    """Create the schema and all tables if absent; record schema_version. Idempotent."""
+    """Create the schema and all tables if absent; verify schema_version. Idempotent.
+
+    Raises SchemaMismatch when the schema already stores a different version — write
+    paths must refuse rather than silently extend an old shape (spec §6.2). On DDL
+    failure the ORIGINAL error propagates (the search_path restore is shielded so it
+    cannot mask it with InFailedSqlTransaction). Like all store helpers, the work
+    joins the caller's transaction; the caller commits.
+    """
+    import contextlib
+
     row = conn.execute("SHOW search_path").fetchone()
     previous_path = str(row["search_path"]) if row else "public"
-    with conn.transaction():
-        conn.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema)))
-        # Session-level SET, restored explicitly below: SET LOCAL would leak to the outer
-        # transaction when conn.transaction() is only a savepoint.
-        conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        try:
+    stored: str | None = None
+    ok = False
+    try:
+        with conn.transaction():
+            conn.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema)))
+            conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
             conn.execute(load_schema_sql())
             conn.execute(
                 "INSERT INTO schema_meta (key, value) VALUES ('schema_version', %s) "
                 "ON CONFLICT (key) DO NOTHING",
                 (SCHEMA_VERSION,),
             )
-        finally:
+            stored_row = conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+            ).fetchone()
+            stored = str(stored_row["value"]) if stored_row else None
+        ok = True
+    finally:
+        if not ok:
+            # Clear the aborted transaction so the restore (and the caller's next
+            # statement) is not answered with InFailedSqlTransaction.
+            with contextlib.suppress(psycopg.Error):
+                conn.rollback()
+        with contextlib.suppress(psycopg.Error):
             conn.execute(sql.SQL("SET search_path TO {}").format(sql.SQL(previous_path)))
+    if stored != SCHEMA_VERSION:
+        raise SchemaMismatch(
+            f"database schema_version {stored!r} != code {SCHEMA_VERSION!r}; "
+            "run `job-hunter rebuild`"
+        )
 
 
 def stored_schema_version(conn: Conn) -> str | None:

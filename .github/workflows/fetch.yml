@@ -25,6 +25,17 @@ jobs:
       - run: uv python install 3.12
       - run: uv sync --frozen --no-dev
       # Secrets are scoped to the steps that need them, never job-wide.
+      # Drain manifests a previous run archived but could not ingest BEFORE fetching, so
+      # the watermark never advances past them. Exits 2 on gap manifests (rebuild needed).
+      - name: ingest pending
+        env:
+          JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
+          AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
+        run: uv run job-hunter ingest
       - name: fetch
         env:
           JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
@@ -34,16 +45,6 @@ jobs:
           AWS_DEFAULT_REGION: auto
           JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
         run: uv run job-hunter fetch --json | tee summary.json
-      - name: ingest pending (repair path if a previous run archived but could not ingest)
-        if: always()
-        env:
-          JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
-          AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
-        run: uv run job-hunter ingest
       - name: status
         if: always()
         env:

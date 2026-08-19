@@ -88,8 +88,11 @@ class Ingestor:
         if db.get_meta(self.conn, "last_registry_revision") == m.registry_revision:
             return
         boards = self._boards(m.registry_revision)
-        if boards:  # a missing snapshot leaves the panel untouched rather than removing everything
-            apply_snapshot(self.conn, boards.values(), m.started_at, m.registry_revision)
+        if not boards:
+            # Missing snapshot: leave the panel untouched AND leave the watermark unset so a
+            # later attempt with the same revision applies it once the object exists.
+            return
+        apply_snapshot(self.conn, boards.values(), m.started_at, m.registry_revision)
         db.set_meta(self.conn, "last_registry_revision", m.registry_revision)
 
     def _board(self, m: AttemptManifest) -> Board:
@@ -163,12 +166,12 @@ class Ingestor:
         prev = self.conn.execute(
             "SELECT attempt_id, observed_count FROM fetch_attempts "
             "WHERE source = %s AND board = %s AND health <> 'error' "
-            "ORDER BY started_at DESC LIMIT 1",
+            "ORDER BY started_at DESC, attempt_id DESC LIMIT 1",
             (m.source, m.board),
         ).fetchone()
         prev_any = self.conn.execute(
             "SELECT attempt_id FROM fetch_attempts WHERE source = %s AND board = %s "
-            "ORDER BY started_at DESC LIMIT 1",
+            "ORDER BY started_at DESC, attempt_id DESC LIMIT 1",
             (m.source, m.board),
         ).fetchone()
         prev_any_id = prev_any["attempt_id"] if prev_any else None
@@ -237,6 +240,12 @@ class Ingestor:
         return inserted
 
     def _insert_document(self, pv: PostingVersion, vh: str) -> bool:
+        exists = self.conn.execute(
+            "SELECT 1 FROM documents WHERE version_hash = %s AND normalizer_version = %s",
+            (vh, self.normalizer_version),
+        ).fetchone()
+        if exists is not None:
+            return False  # conversion costs ~0.8 ms/record; never redo it on replays
         markdown = self.to_markdown(pv.description_html)
         dh = sha256_hex(markdown.encode("utf-8"))
         cur = self.conn.execute(
@@ -249,7 +258,7 @@ class Ingestor:
     def _presence(self, s: _Seen, m: AttemptManifest, prev_any_id: str | None) -> None:
         cur = self.conn.execute(
             "SELECT first_attempt, last_attempt, version_hash, parse_status FROM presence "
-            "WHERE uid = %s ORDER BY last_at DESC LIMIT 1",
+            "WHERE uid = %s ORDER BY last_at DESC, first_attempt DESC LIMIT 1",
             (s.uid,),
         ).fetchone()
         if (

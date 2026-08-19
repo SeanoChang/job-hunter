@@ -74,3 +74,39 @@ def test_swap_schema(pg: psycopg.Connection[dict[str, Any]]) -> None:
     assert row is not None and row["value"] == "new"
     pg.execute(f'DROP SCHEMA "{prev}" CASCADE')
     pg.commit()
+
+
+def test_init_surfaces_the_real_ddl_error(pg: psycopg.Connection[dict[str, Any]]) -> None:
+    """A DDL conflict must not be masked by InFailedSqlTransaction from the path restore."""
+    import pytest
+
+    from tests.conftest import TEST_DSN
+
+    schema = f"{_schema_of(pg)}_v"
+    other = db.connect(TEST_DSN, schema=schema)
+    try:
+        other.execute(
+            f'CREATE SCHEMA "{schema}"; CREATE VIEW "{schema}".presence AS SELECT 1 AS x'
+        )
+        other.commit()
+        with pytest.raises(psycopg.Error) as exc:
+            db.init(other, schema)
+        assert "presence" in str(exc.value)
+        assert not isinstance(exc.value, psycopg.errors.InFailedSqlTransaction)
+    finally:
+        other.rollback()
+        other.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        other.commit()
+        other.close()
+
+
+def test_init_refuses_schema_version_mismatch(pg: psycopg.Connection[dict[str, Any]]) -> None:
+    import pytest
+
+    from jobhunter.store.db import SchemaMismatch
+
+    db.set_meta(pg, "schema_version", "0")
+    pg.commit()
+    with pytest.raises(SchemaMismatch, match="0"):
+        db.init(pg, _schema_of(pg))
+    pg.rollback()

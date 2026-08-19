@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import UTC, datetime
 
 from jobhunter.timeutil import iso
 
 ATTEMPTS_PREFIX = "attempts/"
+_ATTEMPT_KEY_RE = re.compile(
+    r"^attempts/([^/]+)/([^/]+)/(\d{4})/(\d{2})/(\d{2})T(\d{2})(\d{2})(\d{2})Z\.json$"
+)
 
 
 def blob_key(sha256: str) -> str:
@@ -18,6 +22,19 @@ def attempt_key(source: str, board: str, started_at: datetime) -> str:
     y, m, rest = ts[0:4], ts[5:7], ts[8:]
     d, hms = rest[0:2], rest[3:11].replace(":", "")
     return f"{ATTEMPTS_PREFIX}{source}/{board}/{y}/{m}/{d}T{hms}Z.json"
+
+
+def parse_attempt_key(key: str) -> tuple[str, str, datetime] | None:
+    """Recover (source, board, started_at) from a manifest key; None for non-attempt keys.
+
+    The key encodes everything the replay watermark needs, so callers can filter
+    without fetching the manifest body (R2 GET per manifest was the daily cost).
+    """
+    m = _ATTEMPT_KEY_RE.match(key)
+    if not m:
+        return None
+    source, board, y, mo, d, hh, mm, ss = m.groups()
+    return source, board, datetime(int(y), int(mo), int(d), int(hh), int(mm), int(ss), tzinfo=UTC)
 
 
 def attempts_prefix(source: str | None = None, board: str | None = None) -> str:
