@@ -77,3 +77,9 @@ def test_board_with_trailing_newline_is_rejected(tmp_path: Path) -> None:
     bad = '[[boards]]\ncompany="X"\nsource="lever"\nboard="""x\n"""\n'
     with pytest.raises(RegistryError, match="board"):
         load(_write(tmp_path, bad))
+
+
+def test_source_must_be_a_string(tmp_path: Path) -> None:
+    bad = '[[boards]]\ncompany="X"\nsource=["lever"]\nboard="x"\n'
+    with pytest.raises(RegistryError, match="source"):
+        load(_write(tmp_path, bad))

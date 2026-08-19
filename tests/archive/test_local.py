@@ -52,3 +52,26 @@ def test_open_store_relative_file_url_resolves_under_cwd(
     assert isinstance(s, LocalFS)
     s.put("k", b"v")
     assert (tmp_path / "data" / "archive" / "k").read_bytes() == b"v"
+
+
+def test_concurrent_identical_puts_do_not_raise(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    s = LocalFS(tmp_path)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: s.put("blobs/x", b"[]"), range(16)))
+    assert any(results) and s.get("blobs/x") == b"[]"
+    assert list(s.list("blobs/")) == ["blobs/x"]
+
+
+def test_root_that_is_a_file_raises_archive_error(tmp_path: Path) -> None:
+    from jobhunter.archive import ArchiveError
+
+    f = tmp_path / "not-a-dir"
+    f.write_text("x")
+    with pytest.raises(ArchiveError):
+        open_store(f"file://{f}")
+    with pytest.raises(ArchiveError):
+        LocalFS(f).put("k", b"v")
+    with pytest.raises(ArchiveError):
+        list(LocalFS(f).list("attempts/"))

@@ -75,3 +75,12 @@ def test_salary_with_interval_none_yields_null_interval(boards: dict[str, Board]
     })
     pv = get_source("ashby").normalize(rec, boards["ashby"])
     assert pv.compensation == Compensation(10.0, 20.0, "USD", None)
+
+
+def test_bad_published_at_is_a_normalize_error(boards: dict[str, Board]) -> None:
+    from jobhunter.sources.base import NormalizeError
+
+    rec = RawRecord("w", 0, {"id": "w", "title": "T", "descriptionHtml": "<p>a</p>",
+                             "publishedAt": "not-a-date"})
+    with pytest.raises(NormalizeError):
+        get_source("ashby").normalize(rec, boards["ashby"])

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import datetime
 from typing import Any
 
 from jobhunter.models import Board, Compensation, PostingVersion, RawRecord
@@ -75,10 +76,19 @@ class Ashby:
             compensation=_salary(p.get("compensation")),
             url=opt_str(p.get("jobUrl")),
             apply_url=opt_str(p.get("applyUrl")),
-            source_created_at=parse_iso(published) if published else None,
+            source_created_at=_published_at(published),
             source_updated_at=None,
             description_html=desc,
         )
+
+
+def _published_at(v: str | None) -> datetime | None:
+    if v is None:
+        return None
+    try:
+        return parse_iso(v)
+    except ValueError as e:
+        raise NormalizeError(f"bad publishedAt {v!r}") from e
 
 
 def _salary(v: Any) -> Compensation | None:

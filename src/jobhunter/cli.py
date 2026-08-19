@@ -12,6 +12,7 @@ from jobhunter import __version__
 from jobhunter.archive import ArchiveError, ArchiveStore, open_store
 from jobhunter.archive.manifests import iter_manifests, latest_per_board
 from jobhunter.config import ConfigError, Settings
+from jobhunter.fetch import UnknownBoardError, is_healthy
 from jobhunter.fetch import run as fetch_run
 from jobhunter.http import Fetcher
 from jobhunter.registry import RegistryError
@@ -89,6 +90,9 @@ def fetch(
     except RegistryError as e:
         typer.echo(f"registry error: {e}")
         raise typer.Exit(EXIT_SYSTEMIC) from e
+    except UnknownBoardError as e:
+        typer.echo(f"error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
     except ArchiveError as e:
         typer.echo(f"archive error: {e}")
         raise typer.Exit(EXIT_SYSTEMIC) from e
@@ -99,7 +103,7 @@ def fetch(
              f"{counts['new_blobs']} new blobs" + (" (dry run)" if dry_run else "")]
     for o in summary.outcomes:
         m = o.manifest
-        detail = f"{m.record_count} records" if m.record_count is not None else (m.error or "")
+        detail = f"{m.record_count} records" if is_healthy(m) else (m.error or "")
         lines.append(f"  {o.board.key:32} {m.transport:11} {m.http_status or '-':>4}  {detail}")
     _emit(summary.to_dict(), as_json, "\n".join(lines))
     if counts["boards"] and counts["ok"] == 0:

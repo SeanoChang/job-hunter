@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+import pytest
 
 from jobhunter.archive.keys import blob_key, registry_key
 from jobhunter.archive.local import LocalFS
@@ -78,7 +79,10 @@ def test_run_writes_manifests_blobs_and_registry(tmp_path: Path) -> None:
     assert lv.record_count is None and lv.error == "HTTP 503"
 
     counts = summary.counts()
-    assert counts == {"boards": 3, "ok": 2, "http_error": 1, "transport_error": 0, "new_blobs": 2}
+    assert counts == {
+        "boards": 3, "ok": 2, "envelope_error": 0, "http_error": 1, "transport_error": 0,
+        "new_blobs": 2,
+    }
 
 
 def test_second_run_with_same_bodies_writes_no_new_blobs(tmp_path: Path) -> None:
@@ -118,3 +122,37 @@ def test_summary_to_dict_is_json_serialisable(tmp_path: Path) -> None:
     t = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
     s = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t)
     json.dumps(s.to_dict())
+
+
+def test_envelope_failure_is_recorded_as_error_and_not_counted_ok(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+
+    def h(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<html>maintenance</html>")
+
+    t = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
+    s = run(settings, fetcher=_fetcher(h), now=lambda: t, only="lever:palantir")
+    m = s.outcomes[0].manifest
+    assert m.transport == "ok" and m.record_count is None
+    assert m.error is not None and m.error.startswith("envelope:")
+    counts = s.counts()
+    assert counts["ok"] == 0 and counts["envelope_error"] == 1
+
+
+def test_unknown_board_raises(tmp_path: Path) -> None:
+    from jobhunter.fetch import UnknownBoardError
+
+    settings = _settings(tmp_path)
+    t = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
+    with pytest.raises(UnknownBoardError, match="greenhouse:nope"):
+        run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, only="greenhouse:nope")
+
+
+def test_manifest_key_collision_is_loud(tmp_path: Path) -> None:
+    from jobhunter.archive import ArchiveError
+
+    settings = _settings(tmp_path)
+    t = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
+    run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, only="ashby:ramp")
+    with pytest.raises(ArchiveError, match="already exists"):
+        run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, only="ashby:ramp")

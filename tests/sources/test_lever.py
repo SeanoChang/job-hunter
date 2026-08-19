@@ -64,3 +64,12 @@ def test_normalize_second_record_remote_and_salary(boards: dict[str, Board]) -> 
     assert pv.employment_type == "contract"
     assert pv.compensation == Compensation(100000, 150000, "USD", "per-year-salary")
     assert pv.description_html == "<p>Hi</p>"
+
+
+def test_absurd_created_at_is_a_normalize_error(boards: dict[str, Board]) -> None:
+    from jobhunter.models import RawRecord
+    from jobhunter.sources.base import NormalizeError
+
+    rec = RawRecord("z", 0, {"id": "z", "text": "T", "createdAt": 10**30})
+    with pytest.raises(NormalizeError):
+        get_source("lever").normalize(rec, boards["lever"])
