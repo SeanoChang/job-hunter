@@ -266,9 +266,12 @@ Primary path, one board, one day:
   `fetch_attempts.attempt_id`.
 - **posting** — `uid = {source}:{board}:{source_id}` with source prefixes `gh`,
   `lv`, `ab`; `postings.uid`.
-- **posting version** — `version_hash` v1, defined below; `posting_versions`.
-- **document** — `sha256(markdown)`, keyed by
-  `(version_hash, normalizer_version)`; `documents`.
+- **posting version** — `version_hash` v1, defined below, is a _content_
+  identity: two postings with byte-identical employer-visible content share it.
+  A `posting_versions` row is therefore keyed by `(uid, version_hash)`.
+- **document** — keyed by `(version_hash, normalizer_version)`;
+  `document_hash = sha256(markdown)` is the content identity extraction keys on
+  and may be shared by versions whose descriptions coincide.
 - **registry revision** — `sha256(canonical JSON of the sorted board list)`;
   carried by every manifest and by `panel`.
 
@@ -343,7 +346,7 @@ CREATE TABLE fetch_attempts (
 CREATE INDEX ix_attempts_board_time ON fetch_attempts (source, board, started_at);
 
 CREATE TABLE posting_versions (
-  version_hash      TEXT PRIMARY KEY,
+  version_hash      TEXT NOT NULL,              -- content identity; postings may share it
   version_hash_v    INTEGER NOT NULL,
   uid               TEXT NOT NULL,
   source            TEXT NOT NULL,
@@ -361,18 +364,20 @@ CREATE TABLE posting_versions (
   url               TEXT,
   apply_url         TEXT,
   source_created_at TIMESTAMPTZ,
-  first_seen_attempt TEXT NOT NULL REFERENCES fetch_attempts (attempt_id)
+  first_seen_attempt TEXT NOT NULL REFERENCES fetch_attempts (attempt_id),
+  PRIMARY KEY (uid, version_hash)               -- one row per posting per content version
   -- description_html lives at versions/<version_hash>.html.gz in the archive
 );
-CREATE INDEX ix_versions_uid ON posting_versions (uid);
+CREATE INDEX ix_versions_hash ON posting_versions (version_hash);
 
 CREATE TABLE documents (
-  document_hash      TEXT PRIMARY KEY,
-  version_hash       TEXT NOT NULL REFERENCES posting_versions (version_hash),
+  version_hash       TEXT NOT NULL,             -- content identity of the source version
   normalizer_version TEXT NOT NULL,
+  document_hash      TEXT NOT NULL,             -- sha256(markdown); shared when texts coincide
   markdown           TEXT NOT NULL,             -- TOAST-compressed by Postgres
-  UNIQUE (version_hash, normalizer_version)
+  PRIMARY KEY (version_hash, normalizer_version)
 );
+CREATE INDEX ix_documents_hash ON documents (document_hash);
 
 -- derived -----------------------------------------------------------------
 CREATE TABLE presence (                          -- run-length presence intervals
