@@ -1,11 +1,21 @@
-"""The one write path: archive manifest -> store (spec §5.4). One transaction per attempt."""
+"""The one write path: archive manifest -> store (spec §5.4). One transaction per attempt.
+
+Set-based on purpose. Every attempt costs a bounded number of statements (a handful of
+prefetches, then one statement per write group) instead of a per-record round trip: against
+a hosted Postgres the round trip, not the work, is the cost. The transaction plus the
+single-writer advisory lock make the read-then-compute-then-write shape race-free, so the
+classification (new version, new document, presence extend, opened/changed/closed/reopened)
+happens in Python against the prefetched state.
+"""
 
 from __future__ import annotations
 
 import gzip
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from psycopg.types.json import Jsonb
 
@@ -20,6 +30,9 @@ from jobhunter.store import db
 from jobhunter.store.db import Conn
 from jobhunter.store.panel import apply_snapshot, load_snapshot
 from jobhunter.timeutil import iso, parse_iso
+
+PUT_WORKERS = 8
+"""Parallel R2 puts per attempt. The archive is content-addressed, so the puts commute."""
 
 
 class OutOfOrder(Exception):
@@ -55,6 +68,138 @@ class _Seen:
     parse_status: str  # ok | failed
     pv: PostingVersion | None
     source_updated_at: datetime | None
+
+
+@dataclass(slots=True)
+class _Writes:
+    """Everything one attempt will write, grouped so each group costs one statement.
+
+    Row order inside `events` is payload order and is part of the contract: `event_id` is an
+    identity column, a rebuild must reproduce the incremental store row for row, and the
+    single ordered INSERT below assigns the ids in list order.
+    """
+
+    versions: list[tuple[Any, ...]] = field(default_factory=list)
+    puts: list[tuple[str, str]] = field(default_factory=list)  # (version_hash, description_html)
+    documents: list[tuple[Any, ...]] = field(default_factory=list)
+    presence_new: list[tuple[Any, ...]] = field(default_factory=list)
+    presence_extend: list[tuple[Any, ...]] = field(default_factory=list)
+    postings_new: list[tuple[Any, ...]] = field(default_factory=list)
+    postings_touch: list[tuple[Any, ...]] = field(default_factory=list)
+    postings_changed: list[tuple[Any, ...]] = field(default_factory=list)
+    postings_reopened: list[tuple[Any, ...]] = field(default_factory=list)
+    events: list[tuple[Any, ...]] = field(default_factory=list)
+
+
+# ---- batched statements. Values travel as one array per column (`unnest`), never as a
+# generated VALUES list: the row count then never touches Postgres' 65535 parameter ceiling.
+_KNOWN_VERSIONS = "SELECT uid, version_hash FROM posting_versions WHERE version_hash = ANY(%s)"
+
+_KNOWN_DOCUMENTS = (
+    "SELECT version_hash FROM documents WHERE normalizer_version = %s AND version_hash = ANY(%s)"
+)
+
+_LATEST_PRESENCE = (
+    "SELECT DISTINCT ON (uid) uid, first_attempt, last_attempt, version_hash, parse_status "
+    "FROM presence WHERE uid = ANY(%s) ORDER BY uid, last_at DESC, first_attempt DESC"
+)
+
+_LOCK_POSTINGS = (
+    "SELECT uid, status, current_version_hash FROM postings WHERE uid = ANY(%s) FOR UPDATE"
+)
+
+_INSERT_VERSIONS = """
+INSERT INTO posting_versions (version_hash, version_hash_v, uid, source, board, source_id, title,
+    company, locations, workplace_type, is_remote, department, team, employment_type,
+    compensation, url, apply_url, source_created_at, first_seen_attempt)
+SELECT * FROM unnest(%s::text[], %s::int[], %s::text[], %s::text[], %s::text[], %s::text[],
+    %s::text[], %s::text[], %s::jsonb[], %s::text[], %s::bool[], %s::text[], %s::text[],
+    %s::text[], %s::jsonb[], %s::text[], %s::text[], %s::timestamptz[], %s::text[])
+ON CONFLICT (uid, version_hash) DO NOTHING
+"""
+
+_INSERT_DOCUMENTS = """
+INSERT INTO documents (version_hash, normalizer_version, document_hash, markdown)
+SELECT version_hash, %s, document_hash, markdown
+FROM unnest(%s::text[], %s::text[], %s::text[]) AS t(version_hash, document_hash, markdown)
+ON CONFLICT (version_hash, normalizer_version) DO NOTHING
+"""
+
+_INSERT_PRESENCE = """
+INSERT INTO presence (uid, version_hash, parse_status, first_attempt, last_attempt,
+    first_at, last_at, runs)
+SELECT uid, version_hash, parse_status, %s, %s, %s, %s, 1
+FROM unnest(%s::text[], %s::text[], %s::text[]) AS t(uid, version_hash, parse_status)
+"""
+
+_EXTEND_PRESENCE = """
+UPDATE presence p SET last_attempt = %s, last_at = %s, runs = p.runs + 1
+FROM unnest(%s::text[], %s::text[]) AS t(uid, first_attempt)
+WHERE p.uid = t.uid AND p.first_attempt = t.first_attempt
+"""
+
+_INSERT_POSTINGS = """
+INSERT INTO postings (uid, source, board, source_id, status, current_version_hash, version_count,
+    reopen_count, first_seen_attempt, first_seen_at, last_seen_attempt, last_seen_at,
+    source_updated_at)
+SELECT uid, %s, %s, source_id, 'open', version_hash, version_count, 0, %s, %s, %s, %s,
+    source_updated_at
+FROM unnest(%s::text[], %s::text[], %s::text[], %s::int[], %s::timestamptz[])
+    AS t(uid, source_id, version_hash, version_count, source_updated_at)
+"""
+
+_TOUCH_POSTINGS = """
+UPDATE postings p SET last_seen_attempt = %s, last_seen_at = %s,
+    source_updated_at = COALESCE(t.source_updated_at, p.source_updated_at)
+FROM unnest(%s::text[], %s::timestamptz[]) AS t(uid, source_updated_at)
+WHERE p.uid = t.uid
+"""
+
+_CHANGE_POSTINGS = """
+UPDATE postings p SET current_version_hash = t.version_hash, version_count = p.version_count + 1,
+    last_seen_attempt = %s, last_seen_at = %s,
+    source_updated_at = COALESCE(t.source_updated_at, p.source_updated_at)
+FROM unnest(%s::text[], %s::text[], %s::timestamptz[])
+    AS t(uid, version_hash, source_updated_at)
+WHERE p.uid = t.uid
+"""
+
+_REOPEN_POSTINGS = """
+UPDATE postings p SET status = 'open', reopen_count = p.reopen_count + 1,
+    closed_lower_at = NULL, closed_upper_at = NULL, closed_by_attempt = NULL,
+    last_seen_attempt = %s, last_seen_at = %s,
+    current_version_hash = COALESCE(t.version_hash, p.current_version_hash),
+    version_count = p.version_count + t.bump,
+    source_updated_at = COALESCE(t.source_updated_at, p.source_updated_at)
+FROM unnest(%s::text[], %s::text[], %s::int[], %s::timestamptz[])
+    AS t(uid, version_hash, bump, source_updated_at)
+WHERE p.uid = t.uid
+"""
+
+_INSERT_EVENTS = """
+INSERT INTO posting_events (uid, kind, attempt_id, at, from_version, to_version)
+SELECT uid, kind, %s, %s, from_version, to_version
+FROM unnest(%s::text[], %s::text[], %s::text[], %s::text[])
+    WITH ORDINALITY AS t(uid, kind, from_version, to_version, ord)
+ORDER BY t.ord
+"""
+
+_CLOSE_POSTINGS = """
+UPDATE postings SET status = 'closed', closed_lower_at = last_seen_at,
+    closed_upper_at = %s, closed_by_attempt = %s
+WHERE source = %s AND board = %s AND status = 'open'
+  AND uid NOT IN (SELECT uid FROM presence WHERE last_attempt = %s)
+RETURNING uid, current_version_hash, closed_lower_at, closed_upper_at
+"""
+
+_INSERT_CLOSED_EVENTS = """
+INSERT INTO posting_events (uid, kind, attempt_id, at, from_version, to_version,
+    closed_lower_at, closed_upper_at)
+SELECT uid, 'closed', %s, %s, from_version, NULL, closed_lower_at, closed_upper_at
+FROM unnest(%s::text[], %s::text[], %s::timestamptz[], %s::timestamptz[])
+    WITH ORDINALITY AS t(uid, from_version, closed_lower_at, closed_upper_at, ord)
+ORDER BY t.ord
+"""
 
 
 class Ingestor:
@@ -179,19 +324,153 @@ class Ingestor:
         if prev_count is not None and res.observed_count < self.drop_ratio * prev_count:
             res.health = "suspect_drop"
 
-        # phase 2: writes
+        # phase 2: prefetch the state this attempt depends on, classify, then write in batches
         self._insert_attempt(m, res.health, res, prev_count, None)
-        for s in seen.values():
-            if s.pv is not None and s.version_hash is not None:
-                if self._insert_version(m, s.pv, s.version_hash):
-                    res.new_versions += 1
-                if self._insert_document(s.pv, s.version_hash):
-                    res.new_documents += 1
-            self._presence(s, m, prev_any_id)
-        self._transitions(seen, m, res)
+        w = self._plan(seen, m, prev_any_id)
+        res.new_versions = len(w.versions)
+        res.new_documents = len(w.documents)
+        res.opened = len(w.postings_new)
+        res.changed = len(w.postings_changed)
+        res.reopened = len(w.postings_reopened)
+        # Before the writes and inside the transaction: an attempt that later fails leaves only
+        # content-addressed objects behind, and Neon's transaction never waits on R2 latency.
+        self._archive_versions(w.puts)
+        self._write(w, m)
         if res.health == "ok":
             self._reconcile(m, res)
         return res
+
+    # ---- planning: one read per fact, then pure Python classification
+    def _plan(
+        self, seen: dict[str, _Seen], m: AttemptManifest, prev_any_id: str | None
+    ) -> _Writes:
+        w = _Writes()
+        if not seen:
+            return w
+        uids = [s.uid for s in seen.values()]
+        hashes = list({s.version_hash for s in seen.values() if s.version_hash is not None})
+        pairs: set[tuple[str, str]] = set()
+        known_hashes: set[str] = set()
+        known_docs: set[str] = set()
+        if hashes:
+            for row in self.conn.execute(_KNOWN_VERSIONS, (hashes,)).fetchall():
+                pairs.add((str(row["uid"]), str(row["version_hash"])))
+                known_hashes.add(str(row["version_hash"]))
+            known_docs = {
+                str(r["version_hash"])
+                for r in self.conn.execute(
+                    _KNOWN_DOCUMENTS, (self.normalizer_version, hashes)
+                ).fetchall()
+            }
+        presence = {
+            str(r["uid"]): r for r in self.conn.execute(_LATEST_PRESENCE, (uids,)).fetchall()
+        }
+        postings = {
+            str(r["uid"]): r for r in self.conn.execute(_LOCK_POSTINGS, (uids,)).fetchall()
+        }
+        for s in seen.values():
+            if s.pv is not None and s.version_hash is not None:
+                self._plan_version(w, m, s, s.pv, s.version_hash, pairs, known_hashes, known_docs)
+            self._plan_presence(w, s, presence.get(s.uid), prev_any_id)
+            self._plan_transition(w, s, postings.get(s.uid))
+        return w
+
+    def _plan_version(
+        self,
+        w: _Writes,
+        m: AttemptManifest,
+        s: _Seen,
+        pv: PostingVersion,
+        vh: str,
+        pairs: set[tuple[str, str]],
+        known_hashes: set[str],
+        known_docs: set[str],
+    ) -> None:
+        if (s.uid, vh) not in pairs:
+            pairs.add((s.uid, vh))
+            w.versions.append((
+                vh, VERSION_HASH_V, pv.uid, pv.source, pv.board, pv.source_id, pv.title,
+                pv.company, Jsonb(list(pv.locations)), pv.workplace_type, pv.is_remote,
+                pv.department, pv.team, pv.employment_type,
+                Jsonb({"min": pv.compensation.min, "max": pv.compensation.max,
+                       "currency": pv.compensation.currency,
+                       "interval": pv.compensation.interval}) if pv.compensation else None,
+                pv.url, pv.apply_url, pv.source_created_at, m.attempt_id,
+            ))
+            if vh not in known_hashes:
+                # Globally new content: the only case that owes the archive an object.
+                known_hashes.add(vh)
+                w.puts.append((vh, pv.description_html))
+        if vh not in known_docs:
+            known_docs.add(vh)
+            markdown = self.to_markdown(pv.description_html)  # ~0.8 ms; never redone on replays
+            w.documents.append((vh, sha256_hex(markdown.encode("utf-8")), markdown))
+
+    def _plan_presence(
+        self, w: _Writes, s: _Seen, cur: dict[str, Any] | None, prev_any_id: str | None
+    ) -> None:
+        if (
+            cur is not None
+            and prev_any_id is not None
+            and cur["last_attempt"] == prev_any_id
+            and cur["version_hash"] == s.version_hash
+            and cur["parse_status"] == s.parse_status
+        ):
+            w.presence_extend.append((s.uid, cur["first_attempt"]))
+        else:
+            w.presence_new.append((s.uid, s.version_hash, s.parse_status))
+
+    def _plan_transition(self, w: _Writes, s: _Seen, row: dict[str, Any] | None) -> None:
+        if row is None:
+            w.postings_new.append((
+                s.uid, s.source_id, s.version_hash, 1 if s.version_hash else 0, s.source_updated_at
+            ))
+            w.events.append((s.uid, "opened", None, s.version_hash))
+            return
+        cur_vh = row["current_version_hash"]
+        version_changed = s.version_hash is not None and s.version_hash != cur_vh
+        if row["status"] == "closed":
+            w.postings_reopened.append((
+                s.uid, s.version_hash, 1 if version_changed else 0, s.source_updated_at
+            ))
+            w.events.append((s.uid, "reopened", cur_vh, s.version_hash or cur_vh))
+        elif version_changed:
+            w.postings_changed.append((s.uid, s.version_hash, s.source_updated_at))
+            w.events.append((s.uid, "changed", cur_vh, s.version_hash))
+        else:
+            w.postings_touch.append((s.uid, s.source_updated_at))
+
+    # ---- writing
+    def _batch(self, query: str, rows: Sequence[tuple[Any, ...]], *scalars: Any) -> None:
+        """One statement for the whole group: scalars first, then one array per column."""
+        if not rows:
+            return
+        self.conn.execute(query, [*scalars, *(list(col) for col in zip(*rows, strict=True))])
+
+    def _write(self, w: _Writes, m: AttemptManifest) -> None:
+        at = (m.attempt_id, m.started_at)
+        self._batch(_INSERT_VERSIONS, w.versions)
+        self._batch(_INSERT_DOCUMENTS, w.documents, self.normalizer_version)
+        self._batch(_INSERT_PRESENCE, w.presence_new, m.attempt_id, *at, m.started_at)
+        self._batch(_EXTEND_PRESENCE, w.presence_extend, *at)
+        self._batch(_INSERT_POSTINGS, w.postings_new, m.source, m.board, *at, *at)
+        self._batch(_TOUCH_POSTINGS, w.postings_touch, *at)
+        self._batch(_CHANGE_POSTINGS, w.postings_changed, *at)
+        self._batch(_REOPEN_POSTINGS, w.postings_reopened, *at)
+        self._batch(_INSERT_EVENTS, w.events, *at)
+
+    def _archive_versions(self, puts: Sequence[tuple[str, str]]) -> None:
+        if len(puts) <= 1:
+            for vh, html in puts:
+                self._put_version(vh, html)
+            return
+        with ThreadPoolExecutor(max_workers=PUT_WORKERS) as pool:
+            futures = [pool.submit(self._put_version, vh, html) for vh, html in puts]
+            for f in futures:
+                f.result()  # a failed put must abort the attempt, not be swallowed
+
+    def _put_version(self, vh: str, html: str) -> None:
+        self.store.put(version_key(vh), gzip.compress(html.encode("utf-8"), mtime=0))
 
     def _insert_attempt(
         self,
@@ -216,150 +495,21 @@ class Ingestor:
              Jsonb(res.warnings) if res.warnings else None, error),
         )
 
-    def _insert_version(self, m: AttemptManifest, pv: PostingVersion, vh: str) -> bool:
-        cur = self.conn.execute(
-            "INSERT INTO posting_versions (version_hash, version_hash_v, uid, source, board, "
-            "source_id, title, company, locations, workplace_type, is_remote, department, team, "
-            "employment_type, "
-            "compensation, url, apply_url, source_created_at, first_seen_attempt) VALUES "
-            "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
-            "ON CONFLICT (uid, version_hash) DO NOTHING",
-            (vh, VERSION_HASH_V, pv.uid, pv.source, pv.board, pv.source_id, pv.title, pv.company,
-             Jsonb(list(pv.locations)), pv.workplace_type, pv.is_remote, pv.department, pv.team,
-             pv.employment_type,
-             Jsonb({"min": pv.compensation.min, "max": pv.compensation.max,
-                    "currency": pv.compensation.currency, "interval": pv.compensation.interval})
-             if pv.compensation else None,
-             pv.url, pv.apply_url, pv.source_created_at, m.attempt_id),
-        )
-        inserted = cur.rowcount == 1
-        if inserted:
-            self.store.put(
-                version_key(vh), gzip.compress(pv.description_html.encode("utf-8"), mtime=0)
-            )
-        return inserted
-
-    def _insert_document(self, pv: PostingVersion, vh: str) -> bool:
-        exists = self.conn.execute(
-            "SELECT 1 FROM documents WHERE version_hash = %s AND normalizer_version = %s",
-            (vh, self.normalizer_version),
-        ).fetchone()
-        if exists is not None:
-            return False  # conversion costs ~0.8 ms/record; never redo it on replays
-        markdown = self.to_markdown(pv.description_html)
-        dh = sha256_hex(markdown.encode("utf-8"))
-        cur = self.conn.execute(
-            "INSERT INTO documents (version_hash, normalizer_version, document_hash, markdown) "
-            "VALUES (%s, %s, %s, %s) ON CONFLICT (version_hash, normalizer_version) DO NOTHING",
-            (vh, self.normalizer_version, dh, markdown),
-        )
-        return cur.rowcount == 1
-
-    def _presence(self, s: _Seen, m: AttemptManifest, prev_any_id: str | None) -> None:
-        cur = self.conn.execute(
-            "SELECT first_attempt, last_attempt, version_hash, parse_status FROM presence "
-            "WHERE uid = %s ORDER BY last_at DESC, first_attempt DESC LIMIT 1",
-            (s.uid,),
-        ).fetchone()
-        if (
-            cur is not None
-            and prev_any_id is not None
-            and cur["last_attempt"] == prev_any_id
-            and cur["version_hash"] == s.version_hash
-            and cur["parse_status"] == s.parse_status
-        ):
-            self.conn.execute(
-                "UPDATE presence SET last_attempt = %s, last_at = %s, runs = runs + 1 "
-                "WHERE uid = %s AND first_attempt = %s",
-                (m.attempt_id, m.started_at, s.uid, cur["first_attempt"]),
-            )
-        else:
-            self.conn.execute(
-                "INSERT INTO presence (uid, version_hash, parse_status, first_attempt, "
-                "last_attempt, first_at, last_at, runs) VALUES (%s,%s,%s,%s,%s,%s,%s,1)",
-                (s.uid, s.version_hash, s.parse_status, m.attempt_id, m.attempt_id,
-                 m.started_at, m.started_at),
-            )
-
-    def _transitions(
-        self, seen: dict[str, _Seen], m: AttemptManifest, res: AttemptResult
-    ) -> None:
-        for s in seen.values():
-            row = self.conn.execute(
-                "SELECT status, current_version_hash FROM postings WHERE uid = %s FOR UPDATE",
-                (s.uid,),
-            ).fetchone()
-            if row is None:
-                self.conn.execute(
-                    "INSERT INTO postings (uid, source, board, source_id, status, "
-                    "current_version_hash, version_count, reopen_count, first_seen_attempt, "
-                    "first_seen_at, last_seen_attempt, last_seen_at, source_updated_at) "
-                    "VALUES (%s,%s,%s,%s,'open',%s,%s,0,%s,%s,%s,%s,%s)",
-                    (s.uid, m.source, m.board, s.source_id, s.version_hash,
-                     1 if s.version_hash else 0, m.attempt_id, m.started_at, m.attempt_id,
-                     m.started_at, s.source_updated_at),
-                )
-                self._event("opened", s.uid, m, None, s.version_hash)
-                res.opened += 1
-                continue
-            cur_vh = row["current_version_hash"]
-            version_changed = s.version_hash is not None and s.version_hash != cur_vh
-            if row["status"] == "closed":
-                self.conn.execute(
-                    "UPDATE postings SET status = 'open', reopen_count = reopen_count + 1, "
-                    "closed_lower_at = NULL, closed_upper_at = NULL, closed_by_attempt = NULL, "
-                    "last_seen_attempt = %s, last_seen_at = %s, "
-                    "current_version_hash = COALESCE(%s, current_version_hash), "
-                    "version_count = version_count + %s, "
-                    "source_updated_at = COALESCE(%s, source_updated_at) WHERE uid = %s",
-                    (m.attempt_id, m.started_at, s.version_hash, 1 if version_changed else 0,
-                     s.source_updated_at, s.uid),
-                )
-                self._event("reopened", s.uid, m, cur_vh, s.version_hash or cur_vh)
-                res.reopened += 1
-            elif version_changed:
-                self.conn.execute(
-                    "UPDATE postings SET current_version_hash = %s, "
-                    "version_count = version_count + 1, "
-                    "last_seen_attempt = %s, last_seen_at = %s, "
-                    "source_updated_at = COALESCE(%s, source_updated_at) WHERE uid = %s",
-                    (s.version_hash, m.attempt_id, m.started_at, s.source_updated_at, s.uid),
-                )
-                self._event("changed", s.uid, m, cur_vh, s.version_hash)
-                res.changed += 1
-            else:
-                self.conn.execute(
-                    "UPDATE postings SET last_seen_attempt = %s, last_seen_at = %s, "
-                    "source_updated_at = COALESCE(%s, source_updated_at) WHERE uid = %s",
-                    (m.attempt_id, m.started_at, s.source_updated_at, s.uid),
-                )
-
     def _reconcile(self, m: AttemptManifest, res: AttemptResult) -> None:
         rows = self.conn.execute(
-            "UPDATE postings SET status = 'closed', closed_lower_at = last_seen_at, "
-            "closed_upper_at = %s, closed_by_attempt = %s "
-            "WHERE source = %s AND board = %s AND status = 'open' "
-            "AND uid NOT IN (SELECT uid FROM presence WHERE last_attempt = %s) "
-            "RETURNING uid, current_version_hash, closed_lower_at, closed_upper_at",
+            _CLOSE_POSTINGS,
             (m.started_at, m.attempt_id, m.source, m.board, m.attempt_id),
         ).fetchall()
-        for r in sorted(rows, key=lambda r: str(r["uid"])):
-            self.conn.execute(
-                "INSERT INTO posting_events (uid, kind, attempt_id, at, from_version, to_version, "
-                "closed_lower_at, closed_upper_at) VALUES (%s,'closed',%s,%s,%s,NULL,%s,%s)",
-                (r["uid"], m.attempt_id, m.started_at, r["current_version_hash"],
-                 r["closed_lower_at"], r["closed_upper_at"]),
-            )
-            res.closed += 1
-
-    def _event(
-        self, kind: str, uid: str, m: AttemptManifest, from_v: str | None, to_v: str | None
-    ) -> None:
-        self.conn.execute(
-            "INSERT INTO posting_events (uid, kind, attempt_id, at, from_version, to_version) "
-            "VALUES (%s,%s,%s,%s,%s,%s)",
-            (uid, kind, m.attempt_id, m.started_at, from_v, to_v),
+        closed = sorted(
+            (
+                (str(r["uid"]), r["current_version_hash"], r["closed_lower_at"],
+                 r["closed_upper_at"])
+                for r in rows
+            ),
+            key=lambda r: r[0],
         )
+        self._batch(_INSERT_CLOSED_EVENTS, closed, m.attempt_id, m.started_at)
+        res.closed = len(closed)
 
     def _upsert_run(self, run_id: str) -> None:
         self.conn.execute(

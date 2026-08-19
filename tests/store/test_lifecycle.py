@@ -1,3 +1,4 @@
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -407,3 +408,141 @@ def test_registry_watermark_not_set_when_snapshot_missing(
     ing2.ingest(make_manifest(store, "ashby", "ramp", day(1), body, registry_revision="missing"))
     pg.commit()
     assert q(pg, "SELECT count(*) AS n FROM panel")[0]["n"] == 1
+
+
+class _CountingConn:
+    """The real connection, plus a tally of the statements an ingest issues through it."""
+
+    def __init__(self, conn: psycopg.Connection[dict[str, Any]]) -> None:
+        self._conn = conn
+        self.statements: list[str] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conn, name)
+
+    def execute(self, query: Any, params: Any = None, **kw: Any) -> Any:
+        self.statements.append(" ".join(str(query).split())[:80])
+        return self._conn.execute(query, params, **kw)
+
+    def executemany(self, query: Any, params_seq: Any, **kw: Any) -> Any:
+        self.statements.append(" ".join(str(query).split())[:80])
+        return self._conn.executemany(query, params_seq, **kw)
+
+    def reset(self) -> None:
+        self.statements.clear()
+
+
+def test_attempt_costs_a_bounded_number_of_statements(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    """Statements per attempt must not grow with the record count (a round trip is ~1 ms
+    locally and ~10 ms to Neon; 918 records once cost 16.5 minutes)."""
+    conn = _CountingConn(pg)
+    ing = Ingestor(conn, store)  # type: ignore[arg-type]
+    # Warm-up on another board: the panel snapshot and its watermark are then already applied,
+    # so what is measured below is the record path alone.
+    ing.ingest(make_manifest(store, "lever", "palantir", day(0), board_payload("lever", []),
+                             registry_revision=rev))
+    hundred = [gh_record(i, f"T{i}", f"<p>body {i}</p>") for i in range(100)]
+    edited = [gh_record(i, f"T{i} v2", f"<p>body {i}</p>") for i in range(100)]
+    costs = {}
+    for n, (label, recs) in enumerate(
+        [("new", hundred), ("unchanged", hundred), ("changed", edited)], start=1
+    ):
+        conn.reset()
+        r = ing.ingest(make_manifest(store, "greenhouse", "anthropic", day(n),
+                                     board_payload("greenhouse", recs), registry_revision=rev))
+        assert r is not None and r.health == "ok" and r.observed_count == 100
+        costs[label] = (len(conn.statements), list(conn.statements))
+    pg.commit()
+    assert q(pg, "SELECT count(*) AS n FROM postings WHERE status = 'open'")[0]["n"] == 100
+    assert q(pg, "SELECT count(*) AS n FROM posting_versions")[0]["n"] == 200
+    for label, (n, issued) in costs.items():
+        assert n <= 25, f"{label} attempt of 100 records issued {n} statements: {issued}"
+
+
+class _RecordingStore:
+    """LocalFS, plus a record of the version-HTML puts and proof they run concurrently."""
+
+    def __init__(self, inner: LocalFS) -> None:
+        self._inner = inner
+        self._lock = threading.Lock()
+        self._barrier: threading.Barrier | None = None
+        self.version_puts: list[str] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def expect_parallel(self, n: int) -> None:
+        """Make the next n version puts block until all n are in flight (0 disarms)."""
+        self._barrier = threading.Barrier(n, timeout=10) if n else None
+
+    def put(self, key: str, data: bytes) -> bool:
+        if key.startswith("versions/"):
+            with self._lock:
+                self.version_puts.append(key)
+            if self._barrier is not None:
+                self._barrier.wait()  # BrokenBarrierError if the puts are serialised
+        return self._inner.put(key, data)
+
+
+def test_version_html_is_put_once_per_globally_new_hash_and_in_parallel(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    rec = _RecordingStore(store)
+    # ids 4 and 5 differ only in id/url, which are not part of the version identity
+    five = [gh_record(1, "A", "<p>a</p>"), gh_record(2, "B", "<p>b</p>"),
+            gh_record(3, "C", "<p>c</p>"), gh_record(4, "D", "<p>d</p>"),
+            gh_record(5, "D", "<p>d</p>")]
+    ing = Ingestor(pg, rec)  # type: ignore[arg-type]
+    rec.expect_parallel(4)  # the four globally-new hashes must be in flight together
+    r0 = ing.ingest(make_manifest(store, "greenhouse", "anthropic", day(0),
+                                  board_payload("greenhouse", five), registry_revision=rev))
+    rec.expect_parallel(0)
+    assert r0 is not None and r0.new_versions == 5 and r0.new_documents == 4
+    hashes = {v["version_hash"] for v in q(pg, "SELECT version_hash FROM posting_versions")}
+    assert len(hashes) == 4
+    assert sorted(rec.version_puts) == sorted(version_key(h) for h in hashes)
+
+    # nothing new: no put at all, not even an existence check
+    rec.version_puts.clear()
+    r1 = ing.ingest(make_manifest(store, "greenhouse", "anthropic", day(1),
+                                  board_payload("greenhouse", five), registry_revision=rev))
+    assert r1 is not None and r1.new_versions == 0
+    assert rec.version_puts == []
+
+    # one edited record: exactly one put, for its hash alone
+    edited = [*five[:4], gh_record(5, "D2", "<p>d</p>")]
+    r2 = ing.ingest(make_manifest(store, "greenhouse", "anthropic", day(2),
+                                  board_payload("greenhouse", edited), registry_revision=rev))
+    pg.commit()
+    assert r2 is not None and r2.new_versions == 1 and r2.changed == 1
+    new_hash = q(pg, "SELECT current_version_hash AS h FROM postings WHERE uid='gh:anthropic:5'")
+    assert rec.version_puts == [version_key(new_hash[0]["h"])]
+
+
+def test_event_order_is_payload_order_then_closed_events_by_uid(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    """Batched writes must not reorder events: event_id order is part of the store contract
+    (a rebuild has to reproduce it row for row)."""
+    ing = Ingestor(pg, store)
+    def gh(i: int, title: str) -> dict[str, Any]:
+        return gh_record(i, title, f"<p>body {i}</p>")
+
+    d0 = [gh(3, "C"), gh(1, "A"), gh(2, "B"), gh(5, "E"), gh(4, "D")]
+    d1 = [gh(5, "E2"), gh(3, "C"), gh(1, "A2")]          # 2 and 4 disappear -> closed
+    d2 = [gh(1, "A2"), gh(5, "E2"), gh(4, "D"), gh(3, "C"), gh(2, "B")]  # 4 and 2 come back
+    for n, recs in enumerate([d0, d1, d2]):
+        r = ing.ingest(make_manifest(store, "greenhouse", "anthropic", day(n),
+                                     board_payload("greenhouse", recs), registry_revision=rev))
+        assert r is not None and r.health == "ok"
+    pg.commit()
+    u = "gh:anthropic:"
+    assert _events(pg) == [
+        ("opened", f"{u}3"), ("opened", f"{u}1"), ("opened", f"{u}2"), ("opened", f"{u}5"),
+        ("opened", f"{u}4"),
+        ("changed", f"{u}5"), ("changed", f"{u}1"),      # payload order, not uid order
+        ("closed", f"{u}2"), ("closed", f"{u}4"),        # reconcile closes in uid order
+        ("reopened", f"{u}4"), ("reopened", f"{u}2"),    # payload order again
+    ]
