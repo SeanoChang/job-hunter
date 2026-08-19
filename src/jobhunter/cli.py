@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from datetime import datetime
 from typing import Any
@@ -17,6 +18,7 @@ from jobhunter.fetch import run as fetch_run
 from jobhunter.http import Fetcher
 from jobhunter.registry import RegistryError
 from jobhunter.registry import load as load_registry
+from jobhunter.store import db as _db
 from jobhunter.timeutil import iso, utcnow
 
 EXIT_SYSTEMIC = 2
@@ -30,7 +32,10 @@ app.add_typer(registry_app, name="registry")
 app.add_typer(db_app, name="db")
 
 
-# Indirections so tests can substitute a mock transport and a fixed clock.
+# Indirections so tests can substitute a mock transport, a fixed clock and a throwaway schema.
+_schema: str = _db.SCHEMA
+
+
 def _make_fetcher() -> Fetcher:
     return Fetcher()
 
@@ -47,11 +52,9 @@ def _settings() -> Settings:
         raise typer.Exit(EXIT_SYSTEMIC) from e
 
 
-def _conn(settings: Settings) -> Any:
-    from jobhunter.store import db as _db
-
+def _conn(settings: Settings, schema: str = _db.SCHEMA) -> _db.Conn:
     try:
-        return _db.connect(settings.require_database_url())
+        return _db.connect(settings.require_database_url(), schema=schema)
     except ConfigError as e:
         typer.echo(f"config error: {e}")
         raise typer.Exit(EXIT_SYSTEMIC) from e
@@ -101,7 +104,10 @@ def fetch(
     fetcher = _make_fetcher()
     try:
         summary = fetch_run(settings, store=store, fetcher=fetcher, only=board,
-                            dry_run=dry_run, now=_now)
+                            dry_run=dry_run, now=_now, schema=_schema)
+    except ConfigError as e:
+        typer.echo(f"config error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
     except RegistryError as e:
         typer.echo(f"registry error: {e}")
         raise typer.Exit(EXIT_SYSTEMIC) from e
@@ -113,16 +119,53 @@ def fetch(
         raise typer.Exit(EXIT_SYSTEMIC) from e
     finally:
         fetcher.close()
+    if summary.lock_held:
+        _emit(summary.to_dict(), as_json, "already running (advisory lock held); nothing fetched")
+        return
     counts = summary.counts()
     lines = [f"run {summary.run_id} — {counts['ok']}/{counts['boards']} boards ok, "
-             f"{counts['new_blobs']} new blobs" + (" (dry run)" if dry_run else "")]
+             f"{counts['new_blobs']} new blobs, {summary.ingested} ingested"
+             + (" (dry run)" if dry_run else "")]
     for o in summary.outcomes:
         m = o.manifest
         detail = f"{m.record_count} records" if is_healthy(m) else (m.error or "")
         lines.append(f"  {o.board.key:32} {m.transport:11} {m.http_status or '-':>4}  {detail}")
+    if summary.db_error:
+        lines.append(f"db error: {summary.db_error} (the archive was still written)")
     _emit(summary.to_dict(), as_json, "\n".join(lines))
-    if counts["boards"] and counts["ok"] == 0:
+    if summary.db_error or (counts["boards"] and counts["ok"] == 0):
         raise typer.Exit(EXIT_SYSTEMIC)
+
+
+@app.command()
+def ingest(as_json: bool = typer.Option(False, "--json")) -> None:
+    """Replay archive manifests newer than the last ingested one into the store."""
+    from jobhunter.ingest import replay_pending
+
+    settings = _settings()
+    store = _store(settings)
+    conn = _conn(settings, schema=_schema)
+    try:
+        if not _db.try_lock(conn):
+            typer.echo("already running (advisory lock held)")
+            return
+        _db.init(conn, _schema)
+        conn.commit()
+        s = replay_pending(conn, store, drop_ratio=settings.drop_ratio)
+        conn.commit()
+    except ArchiveError as e:
+        typer.echo(f"archive error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+    except Exception as e:  # psycopg errors, OutOfOrder
+        typer.echo(f"database error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+    finally:
+        # Unlocking a dead connection must not mask the error that killed it.
+        with contextlib.suppress(Exception):
+            _db.unlock(conn)
+        conn.close()
+    _emit({"ingested": s.ingested, "skipped": s.skipped, "last_attempt": s.last_attempt}, as_json,
+          f"ingested {s.ingested}, skipped {s.skipped}, last {s.last_attempt or '-'}")
 
 
 @app.command()
@@ -212,8 +255,6 @@ def registry_check(as_json: bool = typer.Option(False, "--json")) -> None:
 @db_app.command("init")
 def db_init(as_json: bool = typer.Option(False, "--json")) -> None:
     """Create the jobhunter schema and tables (idempotent)."""
-    from jobhunter.store import db as _db
-
     settings = _settings()
     conn = _conn(settings)
     try:
@@ -232,8 +273,6 @@ def db_init(as_json: bool = typer.Option(False, "--json")) -> None:
 @db_app.command("version")
 def db_version(as_json: bool = typer.Option(False, "--json")) -> None:
     """Print the code's schema version and the database's; exit 2 on mismatch."""
-    from jobhunter.store import db as _db
-
     settings = _settings()
     conn = _conn(settings)
     try:

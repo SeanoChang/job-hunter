@@ -1,9 +1,12 @@
 import gzip
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
+import psycopg
 import pytest
 
 from jobhunter.archive.keys import blob_key, registry_key
@@ -12,7 +15,7 @@ from jobhunter.archive.manifests import iter_manifests
 from jobhunter.config import Settings
 from jobhunter.fetch import gzip_bytes, run
 from jobhunter.http import Fetcher
-from tests.conftest import fixture_bytes
+from tests.conftest import TEST_DSN, fixture_bytes
 
 REG = """
 [[boards]]
@@ -57,7 +60,7 @@ def test_gzip_bytes_is_deterministic() -> None:
 def test_run_writes_manifests_blobs_and_registry(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     t = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
-    summary = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t)
+    summary = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, ingest=False)
     store = LocalFS(tmp_path / "archive")
 
     assert store.exists(registry_key(summary.registry_revision))
@@ -89,8 +92,8 @@ def test_second_run_with_same_bodies_writes_no_new_blobs(tmp_path: Path) -> None
     settings = _settings(tmp_path)
     t1 = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
     t2 = datetime(2026, 8, 19, 6, 0, 0, tzinfo=UTC)
-    run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t1)
-    s2 = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t2)
+    run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t1, ingest=False)
+    s2 = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t2, ingest=False)
     assert s2.counts()["new_blobs"] == 0
     store = LocalFS(tmp_path / "archive")
     assert len(list(iter_manifests(store, "greenhouse", "anthropic"))) == 2
@@ -112,7 +115,7 @@ def test_envelope_failure_still_archives_blob_with_null_record_count(tmp_path: P
         return httpx.Response(200, content=b"<html>maintenance</html>")
 
     t = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
-    s = run(settings, fetcher=_fetcher(h), now=lambda: t, only="lever:palantir")
+    s = run(settings, fetcher=_fetcher(h), now=lambda: t, only="lever:palantir", ingest=False)
     m = s.outcomes[0].manifest
     assert m.transport == "ok" and m.record_count is None and m.blob_sha256
 
@@ -120,7 +123,7 @@ def test_envelope_failure_still_archives_blob_with_null_record_count(tmp_path: P
 def test_summary_to_dict_is_json_serialisable(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     t = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
-    s = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t)
+    s = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, ingest=False)
     json.dumps(s.to_dict())
 
 
@@ -131,7 +134,7 @@ def test_envelope_failure_is_recorded_as_error_and_not_counted_ok(tmp_path: Path
         return httpx.Response(200, content=b"<html>maintenance</html>")
 
     t = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
-    s = run(settings, fetcher=_fetcher(h), now=lambda: t, only="lever:palantir")
+    s = run(settings, fetcher=_fetcher(h), now=lambda: t, only="lever:palantir", ingest=False)
     m = s.outcomes[0].manifest
     assert m.transport == "ok" and m.record_count is None
     assert m.error is not None and m.error.startswith("envelope:")
@@ -145,7 +148,8 @@ def test_unknown_board_raises(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     t = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
     with pytest.raises(UnknownBoardError, match="greenhouse:nope"):
-        run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, only="greenhouse:nope")
+        run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, only="greenhouse:nope",
+            ingest=False)
 
 
 def test_manifest_key_collision_is_loud(tmp_path: Path) -> None:
@@ -153,6 +157,51 @@ def test_manifest_key_collision_is_loud(tmp_path: Path) -> None:
 
     settings = _settings(tmp_path)
     t = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
-    run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, only="ashby:ramp")
+    run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, only="ashby:ramp", ingest=False)
     with pytest.raises(ArchiveError, match="already exists"):
-        run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, only="ashby:ramp")
+        run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, only="ashby:ramp",
+            ingest=False)
+
+
+def test_run_ingests_into_db(tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]) -> None:
+    settings = replace(_settings(tmp_path), database_url=TEST_DSN)
+    t = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
+    row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert row is not None
+    schema = str(row["s"])
+    summary = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, schema=schema)
+    assert summary.db_error is None and summary.ingested == 3 and not summary.lock_held
+    n = pg.execute("SELECT count(*) AS n FROM fetch_attempts").fetchone()
+    assert n is not None and n["n"] == 3
+    healths = {
+        r["board"]: r["health"] for r in pg.execute("SELECT board, health FROM fetch_attempts")
+    }
+    assert healths == {"anthropic": "ok", "ramp": "ok", "palantir": "error"}
+    postings = pg.execute("SELECT count(*) AS n FROM postings").fetchone()
+    assert postings is not None and postings["n"] == 2
+
+
+def test_run_archives_even_when_db_is_down(tmp_path: Path) -> None:
+    settings = replace(_settings(tmp_path), database_url="postgresql://nobody:x@127.0.0.1:1/none")
+    t = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
+    summary = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t)
+    assert summary.db_error and summary.ingested == 0
+    assert len(list(iter_manifests(LocalFS(tmp_path / "archive")))) == 3
+
+
+def test_run_returns_lock_held_when_another_run_holds_it(
+    tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    from jobhunter.store import db as _db
+
+    settings = replace(_settings(tmp_path), database_url=TEST_DSN)
+    row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert row is not None
+    schema = str(row["s"])
+    assert _db.try_lock(pg)
+    try:
+        t = datetime(2026, 8, 18, 6, 0, 0, tzinfo=UTC)
+        summary = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, schema=schema)
+        assert summary.lock_held and summary.outcomes == []
+    finally:
+        _db.unlock(pg)
