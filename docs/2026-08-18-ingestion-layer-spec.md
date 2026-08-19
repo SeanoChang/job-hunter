@@ -299,10 +299,13 @@ means "recompute on rebuild", never "everything changed today".
 
 Manifest fields: `attempt_id`, `run_id`, `source`, `board`, `started_at`,
 `finished_at` (UTC ISO-8601), `url`, `http_status` (or `null`), `transport`
-(`ok | timeout | dns | tls | http_error | too_large`), `blob_sha256` (or
-`null`), `payload_bytes`, `record_count` (or `null`), `adapter_version`,
-`registry_revision`, `cli_version`, `error` (or `null`). Manifests are never
-edited or deleted; blobs and version objects are never deleted.
+(`ok | timeout | dns | tls | connect | http_error | too_large | other`),
+`blob_sha256` (or `null`), `payload_bytes`, `record_count` (or `null`),
+`adapter_version`, `registry_revision`, `cli_version`, `error` (or `null`; an
+HTTP-200 body that fails the source's envelope check keeps `transport = ok` and
+sets `error = "envelope: …"` — a board is healthy only when `transport = ok` and
+`error` is `null`). Manifests are never edited or deleted; blobs and version
+objects are never deleted.
 
 ### 5.3 Store schema
 
