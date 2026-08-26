@@ -1,0 +1,117 @@
+{
+  "document": {
+    "document_hash": "b2ed8977e1a8b4a75c59b82ebd76577ec008a6b4e9cd18e68011275e27702eb1",
+    "normalizer_version": "md/1"
+  },
+  "facts": {
+    "experience_months": {
+      "min": 36,
+      "max": 60,
+      "scope": null,
+      "anchor": {
+        "text": "3-5 years",
+        "span": [
+          24,
+          33
+        ],
+        "occurrence": 0
+      }
+    },
+    "compensation": [],
+    "deadline": null,
+    "boilerplate_spans": []
+  },
+  "demand_profile": {
+    "areas": [
+      {
+        "id": "a1",
+        "name": "バックエンド開発",
+        "kind": "technical",
+        "importance": "required",
+        "level": null,
+        "claims": [
+          {
+            "id": "c1",
+            "quote": {
+              "text": "Pythonでの開発経験 3-5 years",
+              "span": [
+                11,
+                33
+              ],
+              "occurrence": 0
+            },
+            "importance": "required",
+            "level": null,
+            "level_evidence": null,
+            "negated": false,
+            "threshold": null,
+            "qualifiers": [],
+            "evidence_sources": []
+          },
+          {
+            "id": "c2",
+            "quote": {
+              "text": "分散システムの運用経験",
+              "span": [
+                36,
+                47
+              ],
+              "occurrence": 0
+            },
+            "importance": "required",
+            "level": null,
+            "level_evidence": null,
+            "negated": false,
+            "threshold": null,
+            "qualifiers": [],
+            "evidence_sources": []
+          },
+          {
+            "id": "c3",
+            "quote": {
+              "text": "Kubernetesの経験",
+              "span": [
+                71,
+                84
+              ],
+              "occurrence": 0
+            },
+            "importance": "preferred",
+            "level": null,
+            "level_evidence": null,
+            "negated": false,
+            "threshold": null,
+            "qualifiers": [],
+            "evidence_sources": []
+          }
+        ],
+        "context": [],
+        "structure": {
+          "op": "AND",
+          "of": [
+            "c1",
+            "c2",
+            "c3"
+          ]
+        },
+        "mentions": [
+          "Python",
+          "Kubernetes"
+        ],
+        "description": {
+          "text": null,
+          "synthesis": "none",
+          "run": null
+        }
+      }
+    ],
+    "interview_evaluated": []
+  },
+  "extraction": {
+    "model": "golden-fixture",
+    "prompt_version": "demand-profile/v1",
+    "schema_version": "1",
+    "validator_version": "1",
+    "at": "2026-08-26T00:00:00Z"
+  }
+}
