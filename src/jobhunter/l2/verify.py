@@ -18,28 +18,34 @@ from jobhunter.l2.transforms import TRANSFORMS, VALIDATOR_VERSION
 from jobhunter.markdown import block_intervals
 
 
-def iter_quote_objects(extraction: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]]:
+def iter_quote_objects(extraction: dict[str, Any]) -> Iterator[tuple[str, str, dict[str, Any]]]:
+    """Yield (path, kind, quote) for every quote object; kind is structured, never
+    re-parsed from the display path (model-supplied ids may contain anything)."""
     facts = extraction.get("facts", {})
-    for kind in ("experience_months", "deadline"):
-        item = facts.get(kind)
+    for fact_kind in ("experience_months", "deadline"):
+        item = facts.get(fact_kind)
         if item is not None:
-            yield f"facts.{kind}.anchor", item["anchor"]
+            yield f"facts.{fact_kind}.anchor", "anchor", item["anchor"]
     for i, comp in enumerate(facts.get("compensation") or []):
-        yield f"facts.compensation[{i}].anchor", comp["anchor"]
+        yield f"facts.compensation[{i}].anchor", "anchor", comp["anchor"]
     for i, bp in enumerate(facts.get("boilerplate_spans") or []):
-        yield f"facts.boilerplate_spans[{i}]", bp
+        yield f"facts.boilerplate_spans[{i}]", "boilerplate", bp
     for area in extraction.get("demand_profile", {}).get("areas", []):
         aid = area.get("id", "?")
         for claim in area.get("claims", []):
-            yield f"areas[{aid}].claims[{claim.get('id', '?')}].quote", claim["quote"]
+            yield f"areas[{aid}].claims[{claim.get('id', '?')}].quote", "claim", claim["quote"]
         for i, ctx in enumerate(area.get("context") or []):
-            yield f"areas[{aid}].context[{i}]", ctx
+            yield f"areas[{aid}].context[{i}]", "context", ctx
 
 
 def _check_attribution(extraction: dict[str, Any], md: str, report: Report) -> None:
     n = len(md)
-    for path, q in iter_quote_objects(extraction):
+    for path, _kind, q in iter_quote_objects(extraction):
         s, e = q["span"]
+        if type(s) is not int or type(e) is not int:
+            # draft 2020-12 "integer" accepts 5.0; slicing with it would crash
+            report.error("attribution", path, "span_type", span=[s, e])
+            continue
         if not 0 <= s < e <= n:
             report.error("attribution", path, "span_bounds", span=[s, e], doc_len=n)
             continue
@@ -60,11 +66,13 @@ def _check_attribution(extraction: dict[str, Any], md: str, report: Report) -> N
 
 def _check_block_bounds(extraction: dict[str, Any], md: str, report: Report) -> None:
     blocks = block_intervals(md)
-    for path, q in iter_quote_objects(extraction):
+    for path, _kind, q in iter_quote_objects(extraction):
         if "\n" in q["text"]:
             report.error("block_bounds", path, "newline_in_quote")
             continue
         s, e = q["span"]
+        if type(s) is not int or type(e) is not int:
+            continue  # attribution already reported span_type
         if not any(bs <= s and e <= be for bs, be in blocks):
             report.error("block_bounds", path, "crosses_block_boundary", span=[s, e])
 
@@ -74,22 +82,30 @@ _MAX_DEPTH = 5
 
 def _walk_structure(
     node: object, depth: int, leaves: list[str], report: Report, path: str
-) -> None:
+) -> bool:
+    """Collect leaf claim ids; True when truncated at the depth cap (leaf checks
+    would then report phantom defects over the missing leaves)."""
     if isinstance(node, str):
         leaves.append(node)
-        return
+        return False
     assert isinstance(node, dict)  # schema-guaranteed past the schema check
     if depth > _MAX_DEPTH:
         report.error("structure", path, "depth_exceeded", max_depth=_MAX_DEPTH)
-        return
+        return True
+    truncated = False
     for child in node["of"]:
-        _walk_structure(child, depth + 1, leaves, report, path)
+        truncated = _walk_structure(child, depth + 1, leaves, report, path) or truncated
+    return truncated
 
 
 def _check_structure(extraction: dict[str, Any], report: Report) -> None:
     profile = extraction["demand_profile"]
     area_ids: set[str] = set()
     all_claim_ids: list[str] = []
+    area_id_list = [a["id"] for a in profile["areas"]]
+    dup_areas = sorted({a for a in area_id_list if area_id_list.count(a) > 1})
+    if dup_areas:
+        report.error("structure", "<document>", "duplicate_area_id", ids=dup_areas)
     for area in profile["areas"]:
         aid = area["id"]
         area_ids.add(aid)
@@ -106,7 +122,9 @@ def _check_structure(extraction: dict[str, Any], report: Report) -> None:
         if structure is None:
             continue
         leaves: list[str] = []
-        _walk_structure(structure, 1, leaves, report, path)
+        truncated = _walk_structure(structure, 1, leaves, report, path)
+        if truncated:
+            continue  # leaf set incomplete: reference checks would report phantoms
         for leaf in leaves:
             if leaf not in ids_here:
                 report.error("structure", path, "unknown_claim_id", claim_id=leaf)
@@ -189,11 +207,9 @@ def _check_overlap(extraction: dict[str, Any], report: Report) -> None:
 
 
 def _check_quote_shape(extraction: dict[str, Any], report: Report) -> None:
-    for path, q in iter_quote_objects(extraction):
+    for path, kind, q in iter_quote_objects(extraction):
         length = len(q["text"])
-        is_claim = ".claims[" in path
-        is_anchor = path.endswith(".anchor")
-        if is_claim:
+        if kind == "claim":
             if length < 5:
                 report.error("quote_shape", path, "quote_too_short", length=length)
             elif length < 15:
@@ -202,7 +218,7 @@ def _check_quote_shape(extraction: dict[str, Any], report: Report) -> None:
                 report.error("quote_shape", path, "quote_too_long", length=length)
             elif length > 280:
                 report.warn("quote_shape", path, "quote_long", length=length)
-        elif is_anchor and length < 2:
+        elif kind == "anchor" and length < 2:
             report.error("quote_shape", path, "anchor_too_short", length=length)
 
 
@@ -229,32 +245,50 @@ def _check_descriptions(extraction: dict[str, Any], report: Report) -> None:
         # synthesis == "llm": judged, not machine-checked (spec §3.4)
 
 
-def _union_size(spans: list[tuple[int, int]]) -> int:
-    total, prev_end = 0, -1
+def _merge_intervals(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
     for s, e in sorted(spans):
-        s = max(s, prev_end)
+        if merged and s <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def _clamped_spans(quotes: list[dict[str, Any]], n: int) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    for q in quotes:
+        s, e = int(q["span"][0]), int(q["span"][1])
+        s, e = max(0, min(s, n)), max(0, min(e, n))
         if e > s:
-            total += e - s
-        prev_end = max(prev_end, e)
-    return total
+            out.append((s, e))
+    return out
 
 
 def _compute_coverage(extraction: dict[str, Any], md: str, report: Report) -> None:
+    """claim_char_coverage stays in [0, 1]: spans are clamped to the document,
+    boilerplate is excluded from the numerator, and an empty denominator is 0.0."""
+    n = len(md)
     areas = extraction["demand_profile"]["areas"]
-    claim_spans = [
-        (int(c["quote"]["span"][0]), int(c["quote"]["span"][1])) for a in areas for c in a["claims"]
-    ]
-    ctx_spans = [(int(q["span"][0]), int(q["span"][1])) for a in areas for q in a["context"]]
-    boiler = [
-        (int(q["span"][0]), int(q["span"][1]))
-        for q in extraction["facts"].get("boilerplate_spans") or []
-    ]
-    denominator = len(md) - _union_size(boiler)
-    coverage = _union_size(claim_spans + ctx_spans) / denominator if denominator else 0.0
+    claim_quotes = [c["quote"] for a in areas for c in a["claims"]]
+    ctx_quotes = [q for a in areas for q in a["context"]]
+    boiler = _merge_intervals(
+        _clamped_spans(extraction["facts"].get("boilerplate_spans") or [], n)
+    )
+    covered = 0
+    for s, e in _merge_intervals(_clamped_spans(claim_quotes + ctx_quotes, n)):
+        segment = e - s
+        for bs, be in boiler:
+            lo, hi = max(s, bs), min(e, be)
+            if hi > lo:
+                segment -= hi - lo
+        covered += segment
+    denominator = n - sum(e - s for s, e in boiler)
+    coverage = covered / denominator if denominator > 0 else 0.0
     report.metrics.update(
         {
             "n_areas": len(areas),
-            "n_claims": len(claim_spans),
+            "n_claims": len(claim_quotes),
             "claim_char_coverage": round(coverage, 4),
         }
     )

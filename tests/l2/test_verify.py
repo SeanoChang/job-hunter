@@ -172,3 +172,89 @@ def test_coverage_metrics() -> None:
     covered = (c1[1] - c1[0]) + (c2[1] - c2[0])
     denominator = len(DOC_MD) - (boiler[1] - boiler[0])
     assert report.metrics["claim_char_coverage"] == round(covered / denominator, 4)
+
+
+def test_duplicate_area_ids_rejected() -> None:
+    rec = minimal_record()
+    rec["demand_profile"]["areas"].append(
+        {
+            "id": "a1",
+            "name": "Dup",
+            "kind": "technical",
+            "importance": "preferred",
+            "level": None,
+            "claims": [
+                {
+                    "id": "c9",
+                    "quote": make_quote("distributed systems"),
+                    "importance": "preferred",
+                    "level": None,
+                    "level_evidence": None,
+                    "negated": False,
+                    "threshold": None,
+                    "qualifiers": [],
+                    "evidence_sources": [],
+                }
+            ],
+            "context": [],
+            "structure": None,
+            "mentions": [],
+            "description": {"text": None, "synthesis": "none", "run": None},
+        }
+    )
+    report = verify(rec, DOC_MD)
+    assert "duplicate_area_id" in codes(report, "structure")
+
+
+def test_float_span_is_finding_not_crash() -> None:
+    rec = minimal_record()
+    quote = rec["demand_profile"]["areas"][0]["claims"][0]["quote"]
+    quote["span"] = [float(quote["span"][0]), quote["span"][1]]
+    report = verify(rec, DOC_MD)  # must not raise
+    assert "span_type" in codes(report, "attribution")
+
+
+def test_area_id_resembling_claim_path_not_misclassified() -> None:
+    rec = minimal_record()
+    area = rec["demand_profile"]["areas"][0]
+    area["id"] = "x.claims[y"
+    area["context"] = [make_quote("YOE")]  # 3 codepoints: claim rules would error, context has none
+    report = verify(rec, DOC_MD)
+    assert codes(report, "quote_shape") == []
+
+
+def test_depth_cap_suppresses_secondary_structure_findings() -> None:
+    rec = minimal_record()
+    node: dict[str, object] = {"op": "AND", "of": ["c1", "c2"]}
+    for _ in range(6):
+        node = {"op": "OR", "of": [node, "c1"]}
+    rec["demand_profile"]["areas"][0]["structure"] = node
+    report = verify(rec, DOC_MD)
+    cs = codes(report, "structure")
+    assert "depth_exceeded" in cs
+    assert "claim_reference_count" not in cs
+    assert "unknown_claim_id" not in cs
+
+
+def test_coverage_excludes_boilerplate_overlap_and_stays_bounded() -> None:
+    rec = minimal_record()
+    rec["demand_profile"]["areas"][0]["context"] = [make_quote("Equal opportunity employer.")]
+    report = verify(rec, DOC_MD)
+    assert report.status == "pass"
+    c1 = make_quote("**Python** and distributed systems")["span"]
+    c2 = make_quote("0-2 YOE preferred")["span"]
+    boiler = make_quote("Equal opportunity employer.")["span"]
+    covered = (c1[1] - c1[0]) + (c2[1] - c2[0])  # context inside boilerplate adds nothing
+    denominator = len(DOC_MD) - (boiler[1] - boiler[0])
+    cov = report.metrics["claim_char_coverage"]
+    assert cov == round(covered / denominator, 4)
+    assert isinstance(cov, float) and 0.0 <= cov <= 1.0
+
+
+def test_coverage_denominator_guard() -> None:
+    rec = minimal_record()
+    rec["facts"]["boilerplate_spans"] = [
+        {"text": "Equal opportunity employer.", "span": [0, 9999], "occurrence": 0}
+    ]
+    report = verify(rec, DOC_MD)  # attribution fails, but metrics must stay sane
+    assert report.metrics["claim_char_coverage"] == 0.0
