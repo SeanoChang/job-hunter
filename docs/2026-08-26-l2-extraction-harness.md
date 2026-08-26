@@ -268,6 +268,16 @@ recorded `model` is copied from response metadata. Consequences:
 5. k-samples that observed different models are not repeats; agreement is
    computed only among attempts sharing the full tuple.
 
+**The escalation ladder rides the same identity rules.**
+`JOB_HUNTER_L2_MODEL_CANDIDATES` is an ordered ladder (cheap → strong): a
+document that exhausts one rung's content attempts moves to the next rung
+within the same run (4.4). Every rung's attempts are archived under the
+model that served them; a success is a normal row under the succeeding
+rung's tuple, and glob satisfaction makes the document count as done. The
+ladder config is hashed (`ladder_hash` over the ordered candidate ids plus
+prompt/schema/validator versions, via `hashing.py`) and recorded on the
+run — it becomes the series key when aggregates span rungs (5.2).
+
 ### 4.2 Archive layout
 
 All under the `extractions/` prefix reserved by the ingestion spec; all
@@ -352,7 +362,8 @@ stateDiagram-v2
   in_flight --> pending: model_rejected (5 consecutive abort the run)
   in_flight --> validated: verifier pass + k-policy satisfied
   in_flight --> needs_review: verifier pass, k-agreement below threshold
-  in_flight --> quarantined: attempt 3 still failing, or over_budget
+  in_flight --> in_flight: rung exhausted, next ladder candidate (fresh attempts)
+  in_flight --> quarantined: ladder exhausted, or over_budget
   validated --> needs_review: refuter verdict (auto, demote-only)
   validated --> needs_review: human flag
   needs_review --> validated: HUMAN accept only
@@ -380,6 +391,19 @@ with one retry" as disqualifying, so one repair retry is the designed norm
 and a second catches the common residue; past that, a failing document is
 signal for prompt iteration, recorded as `quarantined` data. The dollar cap
 bounds worst-case spend independently.
+
+**Tiered escalation (ruled 2026-08-26).** When `MODEL_CANDIDATES` lists
+more than one id, rung exhaustion escalates instead of quarantining: the
+next candidate gets its own 3 fresh error-fed attempts, in the same run,
+against the same caps (`MAX_USD` counts every rung). Quarantine happens
+only when the ladder is exhausted, with the per-rung history in
+`error_detail`. Boundaries: k-samples never cross rungs (agreement is
+per-tuple); the scheduled ladder tops out at a cheap paid rung — a
+document that fails even that is prompt-iteration signal for a supervised
+session, never a premium-priced auto-retry; and escalation is intra-run
+only, so the queue stays absence-based (a crash mid-ladder leaves archived
+attempts, no status row — the document simply re-enters pending and the
+catch-up scan replays the provenance).
 
 **Promotion is human-only.** `needs_review → validated` happens only via
 `extract review accept`. The refuter and any LLM judge may *demote* or
@@ -518,6 +542,68 @@ functions composed in order, one LLM call implementing all six today)
 delivers separability by itself, and reinterpreting the `model` field needs
 its own ruling when it becomes real.
 
+### 4.8 Human review pipeline
+
+The inbox is a query, the evidence is already archived, and the decision
+is an event — what remains is making inspection cheap enough to be a
+weekly habit (projected volume: ~1–3% of documents → 10–40 items/week;
+human attention is the scarcest resource in the system).
+
+- **`extract review list`** — the inbox: `needs_review` and `quarantined`
+  rows with reason, age and flags, oldest first.
+- **`extract review show <doc>`** — the dossier: canonical markdown with
+  claim spans annotated inline (claim id and importance in the margin),
+  the areas/claims table, why-it's-here (which k-samples disagreed on
+  what, refuter rationale, anomaly flags), and the attempt history with
+  costs. `--json` emits the dossier structurally; `--html` writes a
+  self-contained local HTML file with highlighted spans — no server, no
+  external assets.
+- **`extract review next`** — the loop: dossier → verdict prompt
+  (accept / reject / retry / flag / skip) → event appended → next item.
+  `reject` requires `--note`; rejection reasons are eval data.
+- **`extract review label <doc>`** — gold-labeling mode, the same surface
+  with the opposite display rule: it shows **only the document**, never
+  the model's extraction — gold labels are authored from the text alone
+  (the parsing direction's gold rule), and seeing the model's answer
+  while labeling is contamination. Labels land as append-only gold rows
+  keyed by `document_hash`.
+- **Agent-mediated review is allowed:** the owner's agent may pull the
+  dossier, present it, and execute the verdict the owner states; the
+  event's actor field records it. Autonomous accepts remain forbidden —
+  promotion is a human decision executed through whatever hands are
+  convenient (4.4).
+
+Storage recap: decisions append to `extractions/reviews/` before any
+derived row moves; the inbox and dossier are derived on demand; nothing
+about review lives in mutable state.
+
+### 4.9 Attention alerts
+
+The dead-man's switch (durability doc §3.1) answers "did it run?";
+nothing yet answers "should I look?". A second best-effort webhook does:
+`JOB_HUNTER_ALERT_URL`, POSTed **at most once per run** with a compact
+digest — Slack-incoming-webhook-compatible `{"text": …}`, which also
+covers Discord and ntfy.sh — unset = disabled, and a delivery failure
+never fails the run. A digest is sent only when at least one condition
+holds:
+
+| condition | why it deserves a push |
+| --- | --- |
+| new `needs_review` / `quarantined` items this run | the review inbox grew |
+| oldest inbox item older than `JOB_HUNTER_L2_REVIEW_AGE_ALERT` (14 d) | the human-absent soft failure gets a nag instead of silence |
+| circuit-breaker abort (`model_rejected` ×5) or run exit 2 | scheduled extraction is not producing |
+| `throttled` above threshold, or batch stopped early on `MAX_USD` | throughput silently capped |
+| escalation-rate spike vs trailing mean | the cheap rung degraded, or the corpus hardened (4.4) |
+| canary failure on a version bump | a bad bump caught before it spreads |
+| `db_size_bytes` crossing the 350 MB budget | the storage decision is due |
+| weekly `consolidate` completed | one line: drift verdict, audit-queue size, memo id |
+
+One digest per run, never per event — alert fatigue kills the channel,
+and `status` remains the pull-based source of truth for everything the
+digest summarizes. This extends the durability doc's monitoring non-goal
+by exactly one POST: liveness ping, storage size, and now attention
+digests — still no monitoring infrastructure.
+
 ## 5. Drift control and consolidation
 
 ### 5.1 Why this architecture cannot drift by accumulation
@@ -550,7 +636,10 @@ What actually threatens trend validity, in order of magnitude at this scale:
 
 **Rule:** every aggregate is computed within one engine tuple, and every
 published statistic carries three homogeneity keys — engine tuple, panel
-spec, registry revision. There is no cross-tuple view; analytics queries
+spec, registry revision. When the escalation ladder is in force (4.4),
+documents self-select rungs by difficulty, so no single rung's tuple is an
+unbiased sample of the corpus — series that span rungs key on the recorded
+`ladder_hash` instead of a single tuple. There is no cross-tuple view; analytics queries
 take the tuple as a required parameter. A published number is therefore
 re-derivable by anyone later: rerun the measure at the pinned keys over a
 store that is itself rebuildable from the archive.
@@ -577,8 +666,10 @@ only**, writes only append-only artifacts under `consolidation/<date>/`:
 1. **Drift report:** per-tuple quality aggregates (verifier retry rate,
    areas/claims distributions, importance mix, **level-null rate** — a
    falling null rate means the model started guessing, a direct
-   null-over-guess health check), k-agreement trends, panel-composition
-   changes in the window, series-break table.
+   null-over-guess health check), k-agreement trends, the ladder
+   escalation rate per rung (a rising rate means the cheap rung degraded
+   or the corpus hardened), panel-composition changes in the window,
+   series-break table.
 2. **Audit queue → gold growth:** sample ~20 recent extractions (uniform +
    highest-disagreement + newest boards) for **independent human
    labeling** — labels authored from the text, never by editing model
@@ -819,12 +910,17 @@ Environment (via `config.py`, the only env reader):
   `ANTHROPIC_API_KEY` for `api`.
 - `JOB_HUNTER_L2_MODELS` — accepted observed-model globs, comma-separated
   (e.g. `z-ai/glm-5.2*`).
-- `JOB_HUNTER_L2_MODEL_CANDIDATES` — ordered model ids tried at request
-  time against the configured endpoint; a model-not-found falls through to
-  the next (free models vanish abruptly). Each id that serves yields its
-  own tuple.
+- `JOB_HUNTER_L2_MODEL_CANDIDATES` — the ordered ladder (cheap → strong),
+  tried in order on model-not-found **and** on content-attempt exhaustion
+  (4.4). Each id that serves yields its own tuple; the ladder config is
+  hashed for the series key (5.2).
 - `JOB_HUNTER_L2_MAX_DOCS` (300), `JOB_HUNTER_L2_MAX_USD` (5.00),
   `JOB_HUNTER_L2_CONCURRENCY` (2), `JOB_HUNTER_L2_AUDIT_MOD` (20).
+- `JOB_HUNTER_ALERT_URL` — attention-digest webhook (4.9),
+  Slack-incoming-webhook compatible; best-effort; unset = disabled.
+  Distinct from `JOB_HUNTER_PING_URL` (liveness).
+- `JOB_HUNTER_L2_REVIEW_AGE_ALERT` — days before the inbox-age nag
+  (default 14).
 
 Commands (Typer sub-apps; `--json` everywhere; exit `0` normal, `2`
 systemic, plus `verify`'s documented exit `1`):
@@ -833,7 +929,8 @@ systemic, plus `verify`'s documented exit `1`):
 | --- | --- |
 | `extract [--max-docs N] [--max-usd X] [--doc HASH] [--dry-run]` | lock, catch-up scan, drain queue under caps |
 | `verify [DOC_HASH] [--all \| --since 7d] [--from-archive]` | recompute every check over archived attempts; no LLM; exit 1 on findings |
-| `extract review list \| accept \| reject \| retry \| flag` | human verbs; archive event first, then derived row; takes the extract lock |
+| `extract review list \| show \| next \| accept \| reject \| retry \| flag` | inbox, dossier (`--json`, `--html` self-contained highlighted-span page), interactive loop, decision verbs; archive event first, then derived row; takes the extract lock |
+| `extract review label <doc>` | gold-labeling mode: shows the document only, never model output; labels append to gold |
 | `extract rebuild` | truncate derived, replay attempts + reviews; LLM never called |
 | `consolidate [--dry-run]` | weekly checkpoint (5.3) |
 | `q … / propose … / curate …` | agent access layer (6.3) |
@@ -852,7 +949,8 @@ systemic, plus `verify`'s documented exit `1`):
 | Document too long | `over_budget` quarantine | human decision; truncation policy would be a `prompt_version` change |
 | k-sample disagreement | `needs_review` + agreement report | human review; the rate is itself the repeatability metric |
 | Refuter goes noisy | refute-rate spike (alarm) | verdicts are demote-only; human re-validation; refuter prompt fixed and versioned |
-| Human unavailable for weeks | review-queue age in `status` | soft failure by design: extraction continues, aggregates grow slower; quarantine auto re-grants on `prompt_version` bump |
+| Human unavailable for weeks | review-queue age in `status`; webhook nag after 14 d (4.9) | soft failure by design: extraction continues, aggregates grow slower; quarantine auto re-grants on `prompt_version` bump |
+| Alert webhook down or misconfigured | — (best-effort by design) | `status` remains the pull-based truth; fix the URL |
 | Normalizer bump mid-corpus | — | 3.5 transition rule: rebuild materializes documents for all normalizer versions with archived extractions until parity |
 | DB lost / host move | — | `extract rebuild` from archive against the new DSN |
 | Neon storage pressure | `db_size_bytes` vs the 350 MB trigger | move `profile` bodies to archive, keep claim rows indexed |
@@ -901,6 +999,25 @@ Owner rulings, 2026-08-26:
   quote-or-context rule for `evidence_substrings`, `verify` exit-code 1.
 - **Minimal monitoring spine now**; sentinel panel, bridge CIs and
   balanced-panel machinery dormant until a first trend is published.
+
+Second-round rulings, same day:
+
+- **Tiered escalation ladder adopted** — `MODEL_CANDIDATES` doubles as the
+  failure-escalation ladder (intra-run, fresh attempts per rung,
+  quarantine only after exhaustion), with the guardrail that
+  difficulty-selected rungs bias per-tuple series, so spanning aggregates
+  key on `ladder_hash`. Rejected: escalating inside one rung's reprompt
+  dialogue (mixed-engine attempts under one tuple), and auto-retry into
+  premium-priced models.
+- **Human review pipeline: CLI + dossier** — inbox as query, `show` with
+  `--json`/`--html`, the `next` loop, human-only decision verbs, and gold
+  labeling isolated in a document-only view (the contamination rule).
+  Rejected for now: a TUI/web review app — projected volume does not
+  justify it.
+- **Attention alerts via generic webhook** — one digest per run on
+  attention-worthy conditions; extends the durability doc's monitoring
+  non-goal by exactly one POST. Rejected: per-event notifications (alert
+  fatigue kills the channel) and any monitoring stack.
 
 Panel/critique reconciliations adopted as design:
 
@@ -953,3 +1070,5 @@ Panel/critique reconciliations adopted as design:
 > schedulable that can die vs one more step in a 60-minute budget).
 > Trend publication scope — the homogeneity keys ship with the first
 > aggregate verb; a public trends surface is a later product decision.
+> Alert-digest thresholds (escalation-spike window, throttled threshold)
+> are priors to calibrate after the first month of scheduled runs.
