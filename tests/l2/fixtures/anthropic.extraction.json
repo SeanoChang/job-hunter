@@ -10,7 +10,7 @@
         "min": 300000,
         "max": 405000,
         "currency": "USD",
-        "period": "year",
+        "period": null,
         "condition": null,
         "anchor": {
           "text": "$300,000—$405,000 USD",
