@@ -9,6 +9,13 @@ def utcnow() -> datetime:
     return datetime.now(UTC).replace(microsecond=0)
 
 
+def utcnow_precise() -> datetime:
+    """Full microsecond precision. L2 extraction events use this: the state fold
+    orders attempts and review verbs chronologically, and second-granularity
+    would make a retry and the attempt answering it indistinguishable."""
+    return datetime.now(UTC)
+
+
 def iso(dt: datetime) -> str:
     if dt.tzinfo is None:  # naive means UTC everywhere in this codebase, same as parse_iso
         dt = dt.replace(tzinfo=UTC)

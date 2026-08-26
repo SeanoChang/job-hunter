@@ -131,8 +131,8 @@ def test_attempts_and_reviews_for(pg: Conn) -> None:
         document_hash=a.document_hash, model="z-ai/glm-5.2:free", **CONFIG,
         verb="flag", payload=None, actor="human", at="2026-08-28T00:00:00Z",
     )
-    attempts = extraction.attempts_for(pg, a.document_hash)
+    attempts = extraction.attempts_for(pg, a.document_hash, **CONFIG)
     assert len(attempts) == 1 and attempts[0].outcome == "ok"
     assert attempts[0].attempt_key == a.attempt_key
-    reviews = extraction.reviews_for(pg, a.document_hash)
+    reviews = extraction.reviews_for(pg, a.document_hash, **CONFIG)
     assert len(reviews) == 1 and reviews[0].verb == "flag"

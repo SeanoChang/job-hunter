@@ -60,6 +60,7 @@ def version_key(version_hash: str) -> str:
 
 X_PREFIX = "extractions/"
 X_ATTEMPTS_PREFIX = "extractions/attempts/"
+X_REVIEWS_PREFIX = "extractions/reviews/"
 _X_ATTEMPT_KEY_RE = re.compile(
     r"^extractions/attempts/(\d{4})/(\d{2})/(\d{2})T(\d{2})(\d{2})(\d{2})Z"
     r"-([0-9a-f]{12})-s(\d+)a(\d+)\.json\.gz$"
@@ -93,7 +94,8 @@ def parse_x_attempt_key(key: str) -> tuple[datetime, str, int, int] | None:
     return at, dochash12, int(slot), int(no)
 
 
-def x_review_key(at: datetime, document_hash: str, verb: str) -> str:
-    # verb in the leaf: successive verbs on one document within a second must
-    # not collide (an idempotent same-verb duplicate is the only residual case)
-    return f"{X_PREFIX}reviews/{_x_stamp(at)}-{document_hash[:12]}-{verb}.json"
+def x_review_key(at: datetime, document_hash: str, verb: str, seq: int) -> str:
+    # seq is the per-document review ordinal: utcnow() is second-granular, so
+    # same-second verbs need an order the fold can reproduce from the event
+    # alone (key sort == seq order == fold order, live and in replay)
+    return f"{X_PREFIX}reviews/{_x_stamp(at)}-{document_hash[:12]}-{seq:04d}-{verb}.json"

@@ -87,3 +87,31 @@ def test_accept_from_quarantine_is_ignored() -> None:
 
 def test_flag_on_pending_is_ignored() -> None:
     assert derive_state([], [Review("flag", "2026-08-28T00:00:00Z")], GLOBS).status is None
+
+
+def test_retry_then_later_ok_revalidates() -> None:
+    fail = _attempt(outcome="attribution_failed", attempt_no=3, ladder_exhausted=True,
+                    observed_model=None)
+    retry = Review("retry", "2026-08-28T00:00:00Z")
+    later_ok = _attempt(
+        attempt_key="extractions/attempts/2026/08/29T000000Z-abcdefabcdef-s1a1.json.gz",
+        started_at="2026-08-29T00:00:00Z",
+    )
+    state = derive_state([fail, later_ok], [retry], GLOBS)
+    assert state.status == "validated" and state.chosen_attempt == later_ok.attempt_key
+
+
+def test_rejected_keeps_chosen_attempt() -> None:
+    ok = _attempt()
+    state = derive_state([ok], [Review("reject", "2026-08-28T00:00:00Z")], GLOBS)
+    assert state.status == "rejected" and state.chosen_attempt == ok.attempt_key
+
+
+def test_same_timestamp_review_tiebreak_is_deterministic() -> None:
+    ok = _attempt()
+    flag = Review("flag", "2026-08-28T00:00:00Z", key="a-flag")
+    accept = Review("accept", "2026-08-28T00:00:00Z", key="b-accept")
+    forward = derive_state([ok], [flag, accept], GLOBS)
+    backward = derive_state([ok], [accept, flag], GLOBS)
+    assert forward == backward  # key order decides, input order does not
+    assert forward.status == "validated"  # flag (a-) folds before accept (b-)

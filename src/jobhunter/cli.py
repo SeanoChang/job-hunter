@@ -134,7 +134,12 @@ def _load_stored_extraction(document_hash: str) -> tuple[dict[str, Any], str]:
     if row is None:
         typer.echo(f"error: no extraction with a chosen attempt for {document_hash}", err=True)
         raise typer.Exit(EXIT_SYSTEMIC)
-    attempt = from_bytes(store.get(row["chosen_attempt"]))
+    try:
+        attempt = from_bytes(store.get(row["chosen_attempt"]))
+    except (KeyError, OSError, ValueError, EOFError, ArchiveError) as exc:
+        # missing object, unreachable backend, or corrupt gzip/JSON: systemic
+        typer.echo(f"error: cannot load {row['chosen_attempt']}: {exc!r}", err=True)
+        raise typer.Exit(EXIT_SYSTEMIC) from exc
     if attempt.record is None:
         typer.echo("error: chosen attempt carries no record", err=True)
         raise typer.Exit(EXIT_SYSTEMIC)
@@ -525,7 +530,11 @@ def db_init(as_json: bool = typer.Option(False, "--json")) -> None:
     settings = _settings()
     conn = _conn(settings, schema=_schema)
     try:
-        _db.init(conn, _schema)
+        try:
+            _db.init(conn, _schema)
+        except _db.SchemaMismatch as e:
+            typer.echo(f"schema error: {e}")
+            raise typer.Exit(EXIT_SYSTEMIC) from e
         conn.commit()
         payload = {"schema": _schema, "schema_version": _db.stored_schema_version(conn)}
     finally:
@@ -616,6 +625,8 @@ def extract_run(
     store = _store(settings)
     conn = _conn(settings, schema=_schema)
     try:
+        _db.init(conn, _schema)
+        conn.commit()
         summary = l2_runner.run(
             settings, conn, store,
             engine=_make_engine(settings),
@@ -626,6 +637,9 @@ def extract_run(
         conn.commit()
     except ArchiveError as e:
         typer.echo(f"archive error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+    except (psycopg.Error, _db.SchemaMismatch, ValueError) as e:
+        typer.echo(f"database error: {e}")
         raise typer.Exit(EXIT_SYSTEMIC) from e
     finally:
         conn.close()
@@ -679,8 +693,8 @@ def extract_rebuild(as_json: bool = typer.Option(False, "--json")) -> None:
 
 def _review_verb(verb: str, doc: str, note: str | None, as_json: bool) -> None:
     from jobhunter.archive.keys import x_review_key
-    from jobhunter.l2.state import derive_state
     from jobhunter.store import extraction as xstore
+    from jobhunter.timeutil import utcnow_precise
 
     settings = _settings()
     store = _store(settings)
@@ -696,9 +710,13 @@ def _review_verb(verb: str, doc: str, note: str | None, as_json: bool) -> None:
         if row is None:
             typer.echo(f"no extraction row for {doc}")
             raise typer.Exit(EXIT_SYSTEMIC)
-        at = _now()
+        at = utcnow_precise()  # the fold orders review verbs against attempts
+        n = conn.execute(
+            "SELECT count(*) AS n FROM extraction_reviews WHERE document_hash=%s", (doc,)
+        ).fetchone()
+        seq = int(n["n"] if n else 0) + 1
         event: dict[str, Any] = {
-            "review_key": x_review_key(at, doc, verb),
+            "review_key": x_review_key(at, doc, verb, seq),
             "document_hash": doc,
             "model": row["model"],
             "prompt_version": row["prompt_version"],
@@ -707,18 +725,16 @@ def _review_verb(verb: str, doc: str, note: str | None, as_json: bool) -> None:
             "verb": verb,
             "payload": {"note": note} if note else None,
             "actor": "human",
-            "at": iso(at),
+            "at": at.isoformat(),
         }
         store.put(event["review_key"], json.dumps(event, ensure_ascii=False).encode("utf-8"))
         xstore.record_review(conn, **event)
-        state = derive_state(
-            xstore.attempts_for(conn, doc), xstore.reviews_for(conn, doc), settings.l2_models
-        )
-        xstore.update_status(
-            conn, document_hash=doc, model=row["model"],
+        from jobhunter.l2.runner import settle
+
+        state = settle(
+            conn, store, doc, settings.l2_models, iso(_now()),
             prompt_version=row["prompt_version"], schema_version=row["schema_version"],
-            validator_version=row["validator_version"], state=state,
-            reviewed_by="human", updated_at=iso(_now()),
+            validator_version=row["validator_version"],
         )
         conn.commit()
     finally:

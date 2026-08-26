@@ -290,7 +290,7 @@ crash-heal catch-up scan can list "keys newer than watermark" directly
   prompts/<prompt_version>.txt        # rendered template, write-once
   schemas/<schema_version>.json       # emit + record schema, write-once
   attempts/<YYYY>/<MM>/<DD>T<HHMMSS>Z-<dochash12>-s<slot>a<no>.json.gz
-  reviews/<YYYY>/<MM>/<DD>T<HHMMSS>Z-<dochash12>-<verb>.json
+  reviews/<YYYY>/<MM>/<DD>T<HHMMSS>Z-<dochash12>-<seq>-<verb>.json
 consolidation/<YYYY-MM-DD>/…          # section 5.3 products
 memos/<YYYY-MM-DD>-<topic>-<sha8>.json
 proposals/refutations/<UTC-ts>-<sha8>.json
@@ -908,8 +908,10 @@ Environment (via `config.py`, the only env reader):
 - `JOB_HUNTER_L2_BASE_URL`, `JOB_HUNTER_L2_API_KEY` — endpoint for
   `openai-compat` (OpenRouter/Cloudflare/vLLM/ollama all conform);
   `ANTHROPIC_API_KEY` for `api`.
-- `JOB_HUNTER_L2_MODELS` — accepted observed-model globs, comma-separated
-  (e.g. `z-ai/glm-5.2*`).
+- `JOB_HUNTER_L2_MODELS` — accepted observed-model globs (`*`/`?` only),
+  comma-separated (e.g. `z-ai/glm-5.2*`). Defaults to the candidate list —
+  strict by default; widening to `*` is an explicit operator choice. An
+  explicitly empty value is a config error, never a silent wildcard.
 - `JOB_HUNTER_L2_MODEL_CANDIDATES` — the ordered ladder (cheap → strong),
   tried in order on model-not-found **and** on content-attempt exhaustion
   (4.4). Each id that serves yields its own tuple; the ladder config is

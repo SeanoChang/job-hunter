@@ -29,13 +29,10 @@ class Settings:
     l2_max_usd: float = 5.0
 
     def require_l2(self) -> None:
-        if self.l2_engine == "openai-compat" and (
-            not self.l2_base_url or not self.l2_model_candidates
-        ):
-            raise ConfigError(
-                "engine openai-compat needs JOB_HUNTER_L2_BASE_URL and "
-                "JOB_HUNTER_L2_MODEL_CANDIDATES"
-            )
+        if not self.l2_model_candidates:
+            raise ConfigError("JOB_HUNTER_L2_MODEL_CANDIDATES is required for extraction")
+        if self.l2_engine == "openai-compat" and not self.l2_base_url:
+            raise ConfigError("engine openai-compat needs JOB_HUNTER_L2_BASE_URL")
 
     def require_database_url(self) -> str:
         if not self.database_url:
@@ -66,12 +63,22 @@ class Settings:
         if engine not in ("openai-compat", "claude-cli"):
             raise ConfigError(f"JOB_HUNTER_L2_ENGINE must be openai-compat or claude-cli: {engine}")
 
-        def _csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+        def _csv(name: str) -> tuple[str, ...] | None:
             raw = e.get(name)
             if raw is None:
-                return default
+                return None
             parts = tuple(p.strip() for p in raw.split(",") if p.strip())
-            return parts or default
+            if not parts:
+                raise ConfigError(f"{name} must not be empty when set")
+            return parts
+
+        candidates = _csv("JOB_HUNTER_L2_MODEL_CANDIDATES") or ()
+        # default acceptance = exactly what was requested; a provider silently
+        # rerouting then fails the observed-model gate unless the operator
+        # explicitly widens JOB_HUNTER_L2_MODELS (e.g. to *)
+        models = _csv("JOB_HUNTER_L2_MODELS")
+        if models is None:
+            models = candidates or ("*",)
 
         try:
             l2_max_docs = int(e.get("JOB_HUNTER_L2_MAX_DOCS", "300"))
@@ -90,8 +97,8 @@ class Settings:
             l2_engine=engine,
             l2_base_url=e.get("JOB_HUNTER_L2_BASE_URL") or None,
             l2_api_key=e.get("JOB_HUNTER_L2_API_KEY") or None,
-            l2_models=_csv("JOB_HUNTER_L2_MODELS", ("*",)),
-            l2_model_candidates=_csv("JOB_HUNTER_L2_MODEL_CANDIDATES", ()),
+            l2_models=models,
+            l2_model_candidates=candidates,
             l2_max_docs=l2_max_docs,
             l2_max_usd=l2_max_usd,
         )

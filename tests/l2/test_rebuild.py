@@ -10,9 +10,8 @@ from jobhunter.archive.base import ArchiveStore
 from jobhunter.archive.keys import x_review_key
 from jobhunter.l2.rebuild import rebuild_extractions
 from jobhunter.l2.runner import run
-from jobhunter.l2.state import derive_state
 from jobhunter.store import extraction
-from jobhunter.timeutil import utcnow
+from jobhunter.timeutil import utcnow_precise
 from tests.l2.test_runner import DH, GOOD, FakeEngine, _seed_doc, _settings, store  # noqa: F401
 
 Conn = psycopg.Connection[dict[str, Any]]
@@ -40,11 +39,11 @@ def test_rebuild_reproduces_incremental_state(
     assert summary.validated == 1
 
     # a human flag, archived first like the CLI does, then applied
-    at = utcnow()
+    at = utcnow_precise()
     row = pg.execute("SELECT * FROM extractions").fetchone()
     assert row is not None
     event = {
-        "review_key": x_review_key(at, DH, "flag"),
+        "review_key": x_review_key(at, DH, "flag", 1),
         "document_hash": DH,
         "model": row["model"],
         "prompt_version": row["prompt_version"],
@@ -57,15 +56,14 @@ def test_rebuild_reproduces_incremental_state(
     }
     store.put(event["review_key"], json.dumps(event).encode("utf-8"))
     extraction.record_review(pg, **event)
-    state = derive_state(
-        extraction.attempts_for(pg, DH), extraction.reviews_for(pg, DH), settings.l2_models
+    from jobhunter.l2.runner import settle
+
+    state = settle(
+        pg, store, DH, settings.l2_models, at.isoformat(),
+        prompt_version=row["prompt_version"], schema_version=row["schema_version"],
+        validator_version=row["validator_version"],
     )
     assert state.status == "needs_review"
-    extraction.update_status(
-        pg, document_hash=DH, model=row["model"], prompt_version=row["prompt_version"],
-        schema_version=row["schema_version"], validator_version=row["validator_version"],
-        state=state, reviewed_by="human", updated_at=at.isoformat(),
-    )
     pg.commit()
 
     before = _dump(pg)
