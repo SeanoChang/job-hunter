@@ -55,11 +55,11 @@
         "quote": { "$ref": "#/$defs/quote" },
         "importance": { "$ref": "#/$defs/importance" },
         "level": { "$ref": "#/$defs/level" },
-        "level_evidence": { "type": ["string", "null"] },
+        "level_evidence": { "type": ["string", "null"], "minLength": 1 },
         "negated": { "type": "boolean" },
         "threshold": { "type": ["object", "null"] },
-        "qualifiers": { "type": "array", "items": { "type": "string" } },
-        "evidence_sources": { "type": "array", "items": { "type": "string" } }
+        "qualifiers": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "evidence_sources": { "type": "array", "items": { "type": "string", "minLength": 1 } }
       }
     },
     "area": {
@@ -80,7 +80,7 @@
         "structure": {
           "anyOf": [{ "$ref": "#/$defs/structure_node" }, { "type": "null" }]
         },
-        "mentions": { "type": "array", "items": { "type": "string" } },
+        "mentions": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "description": {
           "anyOf": [
             {
@@ -169,7 +169,7 @@
       "required": ["areas", "interview_evaluated"],
       "properties": {
         "areas": { "type": "array", "items": { "$ref": "#/$defs/area" } },
-        "interview_evaluated": { "type": "array", "items": { "type": "string" } }
+        "interview_evaluated": { "type": "array", "items": { "type": "string", "minLength": 1 } }
       }
     },
     "links": { "type": "array" },

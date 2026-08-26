@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from functools import cache
 from importlib import resources
@@ -16,23 +17,27 @@ def _load(version: str, name: str) -> dict[str, Any]:
     path = root / version / f"{name}.schema.json"
     try:
         raw = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
+    except (FileNotFoundError, NotADirectoryError, ValueError):
         raise KeyError(f"unknown schema version: {version}") from None
     data: dict[str, Any] = json.loads(raw)
     return data
 
 
+@cache
+def _validator(version: str) -> jsonschema.Draft202012Validator:
+    return jsonschema.Draft202012Validator(_load(version, "record"))
+
+
 def record_schema(version: str) -> dict[str, Any]:
-    return _load(version, "record")
+    return copy.deepcopy(_load(version, "record"))  # copies: the cached dict must stay pristine
 
 
 def emit_schema(version: str) -> dict[str, Any]:
-    return _load(version, "emit")
+    return copy.deepcopy(_load(version, "emit"))
 
 
 def validate_record(extraction: dict[str, Any], version: str) -> list[str]:
-    validator = jsonschema.Draft202012Validator(record_schema(version))
     errors = sorted(
-        validator.iter_errors(extraction), key=lambda e: [str(p) for p in e.absolute_path]
+        _validator(version).iter_errors(extraction), key=lambda e: [str(p) for p in e.absolute_path]
     )
     return [f"{'/'.join(str(p) for p in e.absolute_path) or '<root>'}: {e.message}" for e in errors]
