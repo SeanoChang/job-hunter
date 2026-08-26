@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "job-hunter L2 extraction record, schema_version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["document", "facts", "demand_profile", "extraction"],
+  "$defs": {
+    "span": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "integer", "minimum": 1 }
+      ],
+      "items": false,
+      "description": "Half-open [start,end) in Unicode CODEPOINTS (not bytes, not UTF-16 units) into the canonical markdown whose UTF-8 encoding hashes to document_hash."
+    },
+    "quote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "span", "occurrence"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "span": { "$ref": "#/$defs/span" },
+        "occurrence": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "importance": { "enum": ["required", "preferred", "contextual"] },
+    "level": { "enum": ["expert", "proficient", "working", "exposure", null] },
+    "structure_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "of"],
+      "properties": {
+        "op": { "enum": ["AND", "OR"] },
+        "of": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "anyOf": [{ "type": "string" }, { "$ref": "#/$defs/structure_node" }]
+          }
+        }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "quote", "importance", "level", "level_evidence",
+        "negated", "threshold", "qualifiers", "evidence_sources"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "quote": { "$ref": "#/$defs/quote" },
+        "importance": { "$ref": "#/$defs/importance" },
+        "level": { "$ref": "#/$defs/level" },
+        "level_evidence": { "type": ["string", "null"] },
+        "negated": { "type": "boolean" },
+        "threshold": { "type": ["object", "null"] },
+        "qualifiers": { "type": "array", "items": { "type": "string" } },
+        "evidence_sources": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "area": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "name", "kind", "importance", "level", "claims",
+        "context", "structure", "mentions", "description"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["technical", "capability", "trait", "credential", "constraint"] },
+        "importance": { "$ref": "#/$defs/importance" },
+        "level": { "$ref": "#/$defs/level" },
+        "claims": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/claim" } },
+        "context": { "type": "array", "items": { "$ref": "#/$defs/quote" } },
+        "structure": {
+          "anyOf": [{ "$ref": "#/$defs/structure_node" }, { "type": "null" }]
+        },
+        "mentions": { "type": "array", "items": { "type": "string" } },
+        "description": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["text", "synthesis", "run"],
+              "properties": {
+                "text": { "type": ["string", "null"] },
+                "synthesis": { "enum": ["llm", "template", "none"] },
+                "run": { "type": ["string", "null"] }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  },
+  "properties": {
+    "posting": { "type": "object" },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document_hash", "normalizer_version"],
+      "properties": {
+        "document_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "normalizer_version": { "type": "string" }
+      }
+    },
+    "facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "experience_months": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["min", "max", "scope", "anchor"],
+              "properties": {
+                "min": { "type": "integer", "minimum": 0 },
+                "max": { "type": ["integer", "null"], "minimum": 0 },
+                "scope": { "type": ["string", "null"] },
+                "anchor": { "$ref": "#/$defs/quote" }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "compensation": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["min", "max", "currency", "period", "anchor"],
+            "properties": {
+              "min": { "type": ["integer", "null"] },
+              "max": { "type": ["integer", "null"] },
+              "currency": { "type": ["string", "null"] },
+              "period": { "type": ["string", "null"] },
+              "condition": { "type": ["string", "null"] },
+              "anchor": { "$ref": "#/$defs/quote" }
+            }
+          }
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["date", "anchor"],
+              "properties": {
+                "date": { "type": "string", "format": "date" },
+                "anchor": { "$ref": "#/$defs/quote" }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "boilerplate_spans": { "type": "array", "items": { "$ref": "#/$defs/quote" } }
+      }
+    },
+    "demand_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["areas", "interview_evaluated"],
+      "properties": {
+        "areas": { "type": "array", "items": { "$ref": "#/$defs/area" } },
+        "interview_evaluated": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "links": { "type": "array" },
+    "extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "prompt_version", "schema_version", "validator_version", "at"],
+      "properties": {
+        "model": { "type": "string" },
+        "prompt_version": { "type": "string" },
+        "schema_version": { "type": "string" },
+        "validator_version": { "type": "string" },
+        "at": { "type": "string" },
+        "cost_usd": { "type": ["number", "null"] }
+      }
+    },
+    "verification": { "type": "object" }
+  }
+}
