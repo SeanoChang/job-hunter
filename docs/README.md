@@ -123,4 +123,7 @@ and a dated judge run. Its README carries the superseded banner.
   promotion is human; scheduled runs on free/cheap API engines, the
   subscription only in supervised local sessions (no OAuth token in CI);
   whole-extraction status in v1; monitoring stays minimal until a first trend
-  is published.
+  is published. Second round: tiered escalation ladder (ordered candidates,
+  intra-run, ladder hash keys series that span rungs); human review via CLI
+  dossier pipeline with document-only gold labeling; attention digests via
+  generic webhook (Slack-compatible), distinct from the liveness ping.
