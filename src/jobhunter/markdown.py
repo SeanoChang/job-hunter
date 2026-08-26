@@ -256,3 +256,27 @@ def strip_markdown(md: str) -> str:
     text = _MD_LINK.sub(r"\1", md)
     text = _MD_MARK.sub("", text)
     return _WS.sub(" ", text).strip()
+
+
+def block_intervals(md: str) -> list[tuple[int, int]]:
+    """Codepoint intervals [start, end) of maximal runs of non-blank lines.
+
+    Derived on demand from canonical markdown (parsing direction: blocks(markdown)
+    is a function, not a stored table). End excludes the newline separator.
+    """
+    intervals: list[tuple[int, int]] = []
+    pos = 0
+    start: int | None = None
+    end = 0
+    for line in md.split("\n"):
+        if line.strip():
+            if start is None:
+                start = pos
+            end = pos + len(line)
+        elif start is not None:
+            intervals.append((start, end))
+            start = None
+        pos += len(line) + 1
+    if start is not None:
+        intervals.append((start, end))
+    return intervals
