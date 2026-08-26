@@ -55,11 +55,11 @@
         "quote": { "$ref": "#/$defs/quote" },
         "importance": { "$ref": "#/$defs/importance" },
         "level": { "$ref": "#/$defs/level" },
-        "level_evidence": { "type": ["string", "null"], "minLength": 1 },
+        "level_evidence": { "type": ["string", "null"], "minLength": 1, "pattern": "\\S" },
         "negated": { "type": "boolean" },
         "threshold": { "type": ["object", "null"] },
-        "qualifiers": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-        "evidence_sources": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        "qualifiers": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "\\S" } },
+        "evidence_sources": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "\\S" } }
       }
     },
     "area": {
@@ -80,7 +80,7 @@
         "structure": {
           "anyOf": [{ "$ref": "#/$defs/structure_node" }, { "type": "null" }]
         },
-        "mentions": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "mentions": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "\\S" } },
         "description": {
           "anyOf": [
             {

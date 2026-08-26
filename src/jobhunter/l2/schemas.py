@@ -12,7 +12,17 @@ import jsonschema
 
 
 @cache
+def _versions() -> frozenset[str]:
+    root = resources.files("jobhunter.l2.schemas_data")
+    return frozenset(entry.name for entry in root.iterdir() if entry.is_dir())
+
+
+@cache
 def _load(version: str, name: str) -> dict[str, Any]:
+    if version not in _versions():
+        # allowlist before any path join: "1/../1" or an absolute value must
+        # never resolve to a packaged (or arbitrary) schema file
+        raise KeyError(f"unknown schema version: {version}")
     root = resources.files("jobhunter.l2.schemas_data")
     path = root / version / f"{name}.schema.json"
     try:
