@@ -22,7 +22,7 @@ from jobhunter.archive.base import ArchiveStore
 from jobhunter.config import Settings
 from jobhunter.l2 import verify
 from jobhunter.l2.assemble import AssembleError, assemble
-from jobhunter.l2.attempts import Attempt, from_bytes, to_bytes
+from jobhunter.l2.attempts import Attempt, derived_error_detail, from_bytes, to_bytes
 from jobhunter.l2.engines import (
     Engine,
     EngineModelNotFound,
@@ -82,7 +82,8 @@ def _ensure_write_once(store: ArchiveStore) -> None:
 def _settle(conn: Conn, dh: str, globs: tuple[str, ...], profile: dict[str, Any] | None,
             updated_at: str) -> DerivedState:
     attempts = extraction.attempts_for(conn, dh)
-    state = derive_state(attempts, extraction.reviews_for(conn, dh), globs)
+    reviews = extraction.reviews_for(conn, dh)
+    state = derive_state(attempts, reviews, globs)
     chosen = {a.attempt_key: a for a in attempts}.get(state.chosen_attempt or "")
     model_col = (
         (chosen.observed_model if chosen else None)
@@ -93,7 +94,10 @@ def _settle(conn: Conn, dh: str, globs: tuple[str, ...], profile: dict[str, Any]
     extraction.upsert_state(
         conn, document_hash=dh, model=model_col, prompt_version=PROMPT_VERSION,
         schema_version=SCHEMA_VERSION, validator_version=VALIDATOR_VERSION,
-        state=state, profile=profile if state.status == "validated" else None,
+        state=state,
+        # the profile survives review demotions: reviews judge, they never regenerate
+        profile=profile if state.status in ("validated", "needs_review") else None,
+        reviewed_by=reviews[-1].actor if reviews else None,
         updated_at=updated_at,
     )
     return state
@@ -121,7 +125,7 @@ def _catch_up(conn: Conn, store: ArchiveStore, globs: tuple[str, ...], updated_a
         if mark is not None and parsed[0] <= mark:
             continue
         attempt = from_bytes(store.get(key))
-        extraction.record_attempt(conn, attempt, None)
+        extraction.record_attempt(conn, attempt, derived_error_detail(attempt))
         replayed += 1
         if attempt.outcome == "ok" and attempt.record is not None:
             touched[attempt.document_hash] = _profile_of(attempt.record)
@@ -209,15 +213,19 @@ def _extract_doc(
 
     def archive_attempt(
         *, requested_model: str, observed_model: str | None, outcome: str,
-        raw_response: str | None, prior_errors: list[str],
-        validation: list[dict[str, Any]], ladder_exhausted: bool,
+        raw_response: str | None, fed: list[str], produced: list[str],
+        ladder_exhausted: bool, findings: list[dict[str, Any]] | None = None,
         tokens: tuple[int | None, int | None] = (None, None),
         cost: float | None = None, started_at: datetime | None = None,
         record: dict[str, Any] | None = None,
     ) -> Attempt:
+        # `fed` reproduces the rendered prompt (spec §4.2: prior_errors is the
+        # non-reconstructible part of the request); `produced` is what this
+        # attempt's validation yielded, stored in the trace + DB error_detail.
         nonlocal seq
         seq += 1
         t0 = started_at or now()
+        validation = list(findings or []) + [{"error": e} for e in produced]
         attempt = Attempt(
             attempt_key=keys.x_attempt_key(t0, dh, 1, seq),
             run_id=summary.run_id, cli_version=__version__, document_hash=dh,
@@ -225,22 +233,21 @@ def _extract_doc(
             requested_engine=engine.name, requested_model=requested_model,
             observed_model=observed_model, prompt_version=PROMPT_VERSION,
             prompt_sha256=prompt_sha(), schema_version=SCHEMA_VERSION,
-            validator_version=VALIDATOR_VERSION, prior_errors=list(prior_errors),
+            validator_version=VALIDATOR_VERSION, prior_errors=list(fed),
             raw_response=raw_response, validation=validation, outcome=outcome,
             ladder_exhausted=ladder_exhausted, input_tokens=tokens[0],
             output_tokens=tokens[1], cost_usd=cost, started_at=iso(t0),
             finished_at=iso(now()), record=record,
         )
         store.put(attempt.attempt_key, to_bytes(attempt))
-        detail = {"errors": prior_errors[:10]} if prior_errors else None
-        extraction.record_attempt(conn, attempt, detail)
+        extraction.record_attempt(conn, attempt, derived_error_detail(attempt))
         return attempt
 
     if len(markdown) > MAX_DOC_CHARS:
         archive_attempt(
             requested_model=(settings.l2_model_candidates or ("?",))[0], observed_model=None,
-            outcome="over_budget", raw_response=None, prior_errors=[],
-            validation=[{"error": f"document {len(markdown)} chars > {MAX_DOC_CHARS}"}],
+            outcome="over_budget", raw_response=None, fed=[],
+            produced=[f"document {len(markdown)} chars > {MAX_DOC_CHARS}"],
             ladder_exhausted=True,
         )
         _settle(conn, dh, settings.l2_models, None, iso(now()))
@@ -260,13 +267,13 @@ def _extract_doc(
             except EngineThrottled as exc:
                 archive_attempt(requested_model=model, observed_model=None,
                                 outcome="throttled", raw_response=None,
-                                prior_errors=[str(exc)], validation=[],
+                                fed=prior_errors, produced=[str(exc)],
                                 ladder_exhausted=False, started_at=t0)
                 return "throttled", breaker
             except EngineModelNotFound:
                 archive_attempt(requested_model=model, observed_model=None,
                                 outcome="model_rejected", raw_response=None,
-                                prior_errors=["model not found"], validation=[],
+                                fed=prior_errors, produced=["model not found"],
                                 ladder_exhausted=False, started_at=t0)
                 breaker += 1
                 if breaker >= BREAKER_LIMIT:
@@ -276,7 +283,7 @@ def _extract_doc(
                 transports += 1
                 archive_attempt(requested_model=model, observed_model=None,
                                 outcome="transport", raw_response=None,
-                                prior_errors=[str(exc)], validation=[],
+                                fed=prior_errors, produced=[str(exc)],
                                 ladder_exhausted=False, started_at=t0)
                 if transports >= TRANSPORT_RETRIES:
                     return "pending", breaker  # transport says nothing about the doc
@@ -287,8 +294,9 @@ def _extract_doc(
             if not observed or not any(fnmatch(observed, g) for g in settings.l2_models):
                 archive_attempt(requested_model=model, observed_model=observed,
                                 outcome="model_rejected", raw_response=result.raw_text,
-                                prior_errors=[f"observed model {observed!r} outside globs"],
-                                validation=[], ladder_exhausted=False, started_at=t0,
+                                fed=prior_errors,
+                                produced=[f"observed model {observed!r} outside globs"],
+                                ladder_exhausted=False, started_at=t0,
                                 tokens=(result.input_tokens, result.output_tokens),
                                 cost=result.cost_usd)
                 breaker += 1
@@ -307,7 +315,7 @@ def _extract_doc(
                 errors = [f"response is not valid JSON: {exc}"]
                 archive_attempt(requested_model=model, observed_model=observed,
                                 outcome="schema_invalid", raw_response=result.raw_text,
-                                prior_errors=errors, validation=[],
+                                fed=prior_errors, produced=errors,
                                 ladder_exhausted=exhausted, started_at=t0,
                                 tokens=(result.input_tokens, result.output_tokens),
                                 cost=result.cost_usd)
@@ -316,7 +324,7 @@ def _extract_doc(
             if schema_errors := validate_emit(emit, SCHEMA_VERSION):
                 archive_attempt(requested_model=model, observed_model=observed,
                                 outcome="schema_invalid", raw_response=result.raw_text,
-                                prior_errors=schema_errors, validation=[],
+                                fed=prior_errors, produced=schema_errors,
                                 ladder_exhausted=exhausted, started_at=t0,
                                 tokens=(result.input_tokens, result.output_tokens),
                                 cost=result.cost_usd)
@@ -329,7 +337,7 @@ def _extract_doc(
             except AssembleError as exc:
                 archive_attempt(requested_model=model, observed_model=observed,
                                 outcome="attribution_failed", raw_response=result.raw_text,
-                                prior_errors=exc.errors, validation=[],
+                                fed=prior_errors, produced=exc.errors,
                                 ladder_exhausted=exhausted, started_at=t0,
                                 tokens=(result.input_tokens, result.output_tokens),
                                 cost=result.cost_usd)
@@ -348,15 +356,15 @@ def _extract_doc(
                 ]
                 archive_attempt(requested_model=model, observed_model=observed,
                                 outcome="attribution_failed", raw_response=result.raw_text,
-                                prior_errors=errors, validation=findings,
+                                fed=prior_errors, produced=errors, findings=findings,
                                 ladder_exhausted=exhausted, started_at=t0,
                                 tokens=(result.input_tokens, result.output_tokens),
                                 cost=result.cost_usd)
                 prior_errors = errors
                 continue
             archive_attempt(requested_model=model, observed_model=observed, outcome="ok",
-                            raw_response=result.raw_text, prior_errors=[],
-                            validation=findings, ladder_exhausted=False, started_at=t0,
+                            raw_response=result.raw_text, fed=prior_errors, produced=[],
+                            findings=findings, ladder_exhausted=False, started_at=t0,
                             tokens=(result.input_tokens, result.output_tokens),
                             cost=result.cost_usd, record=record)
             _settle(conn, dh, settings.l2_models, _profile_of(record), iso(now()))

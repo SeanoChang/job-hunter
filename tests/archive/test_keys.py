@@ -66,6 +66,6 @@ def test_x_prompt_schema_review_keys() -> None:
     assert keys.x_prompt_key("demand-profile/v1") == "extractions/prompts/demand-profile__v1.txt"
     assert keys.x_schema_key("1") == "extractions/schemas/1.json"
     at = datetime(2026, 8, 27, 6, 12, 4, tzinfo=UTC)
-    assert keys.x_review_key(at, "ab" * 32) == (
-        "extractions/reviews/2026/08/27T061204Z-abababababab.json"
+    assert keys.x_review_key(at, "ab" * 32, "flag") == (
+        "extractions/reviews/2026/08/27T061204Z-abababababab-flag.json"
     )

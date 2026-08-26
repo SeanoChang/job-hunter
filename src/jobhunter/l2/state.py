@@ -15,6 +15,7 @@ from jobhunter.l2.attempts import Attempt
 class Review:
     verb: str  # accept | reject | retry | flag | refute
     at: str
+    actor: str = "human"
 
 
 @dataclass(frozen=True)

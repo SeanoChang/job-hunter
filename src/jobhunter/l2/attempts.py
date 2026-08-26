@@ -54,6 +54,13 @@ class Attempt:
             raise ValueError(f"unknown outcome: {self.outcome!r}")
 
 
+def derived_error_detail(a: Attempt) -> dict[str, Any] | None:
+    """The DB error_detail column, derived purely from the archived object so
+    live inserts and replay produce identical rows."""
+    errors = [str(v["error"]) for v in a.validation if isinstance(v, dict) and "error" in v]
+    return {"errors": errors[:10]} if errors else None
+
+
 def to_bytes(a: Attempt) -> bytes:
     payload = json.dumps(asdict(a), ensure_ascii=False, sort_keys=True).encode("utf-8")
     return gzip.compress(payload, mtime=0)  # deterministic bytes for identical attempts

@@ -106,32 +106,43 @@ def version(as_json: bool = typer.Option(False, "--json")) -> None:
     _emit({"version": __version__}, as_json, __version__)
 
 
-@app.command()
-def verify(
-    extraction_file: str = typer.Argument(..., help="Extraction record JSON"),
-    document_file: str = typer.Argument(..., help="Canonical markdown document"),
-    as_json: bool = typer.Option(False, "--json"),
-) -> None:
-    """Re-run every validator/1 check over an extraction against its document.
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
-    Exit 0: all checks pass. Exit 1: ran fine, findings failed. Exit 2: systemic.
-    """
-    from jobhunter.l2 import verify as l2_verify
+
+def _load_stored_extraction(document_hash: str) -> tuple[dict[str, Any], str]:
+    """Store-addressed verify: markdown from documents, record from the chosen
+    attempt's archive object."""
+    from jobhunter.l2.attempts import from_bytes
+    from jobhunter.markdown import NORMALIZER_VERSION
+    from jobhunter.store import extraction as xstore
+
+    settings = _settings()
+    store = _store(settings)
+    conn = _conn(settings, schema=_schema)
+    try:
+        markdown = xstore.markdown_for(conn, document_hash, NORMALIZER_VERSION)
+        if markdown is None:
+            typer.echo(f"error: no document {document_hash} under {NORMALIZER_VERSION}", err=True)
+            raise typer.Exit(EXIT_SYSTEMIC)
+        row = conn.execute(
+            "SELECT chosen_attempt FROM extractions WHERE document_hash=%s"
+            " AND chosen_attempt IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
+            (document_hash,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        typer.echo(f"error: no extraction with a chosen attempt for {document_hash}", err=True)
+        raise typer.Exit(EXIT_SYSTEMIC)
+    attempt = from_bytes(store.get(row["chosen_attempt"]))
+    if attempt.record is None:
+        typer.echo("error: chosen attempt carries no record", err=True)
+        raise typer.Exit(EXIT_SYSTEMIC)
+    return attempt.record, markdown
+
+
+def _verify_output(report: Any, markdown: str, as_json: bool) -> None:
     from jobhunter.l2.quotes import line_col
-
-    try:
-        extraction = json.loads(Path(extraction_file).read_text(encoding="utf-8"))
-        markdown = Path(document_file).read_text(encoding="utf-8")
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(EXIT_SYSTEMIC) from exc
-    try:
-        report = l2_verify(extraction, markdown)
-    except (KeyError, TypeError, AttributeError, RecursionError) as exc:
-        # unknown schema version, a top level that is not the record shape, or
-        # pathological nesting that outruns the interpreter before any check
-        typer.echo(f"error: {exc!r}", err=True)
-        raise typer.Exit(EXIT_SYSTEMIC) from exc
 
     def _clip(s: str, n: int = 120) -> str:
         return s if len(s) <= n else s[:n] + "…"
@@ -156,6 +167,42 @@ def verify(
         typer.echo(f"{report.status}  ({len(report.findings)} findings)")
     if report.status == "fail":
         raise typer.Exit(1)
+
+
+@app.command()
+def verify(
+    extraction_file: str = typer.Argument(
+        ..., help="Extraction record JSON file, or a 64-hex document_hash"
+    ),
+    document_file: str | None = typer.Argument(None, help="Canonical markdown document"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Re-run every validator/1 check over an extraction against its document.
+
+    Exit 0: all checks pass. Exit 1: ran fine, findings failed. Exit 2: systemic.
+    """
+    from jobhunter.l2 import verify as l2_verify
+
+    if document_file is None and _HEX64.match(extraction_file):
+        extraction, markdown = _load_stored_extraction(extraction_file)
+    else:
+        if document_file is None:
+            typer.echo("error: DOCUMENT_FILE required unless a document_hash is given", err=True)
+            raise typer.Exit(EXIT_SYSTEMIC)
+        try:
+            extraction = json.loads(Path(extraction_file).read_text(encoding="utf-8"))
+            markdown = Path(document_file).read_text(encoding="utf-8")
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(EXIT_SYSTEMIC) from exc
+    try:
+        report = l2_verify(extraction, markdown)
+    except (KeyError, TypeError, AttributeError, RecursionError) as exc:
+        # unknown schema version, a top level that is not the record shape, or
+        # pathological nesting that outruns the interpreter before any check
+        typer.echo(f"error: {exc!r}", err=True)
+        raise typer.Exit(EXIT_SYSTEMIC) from exc
+    _verify_output(report, markdown, as_json)
 
 
 @app.command()
@@ -365,6 +412,13 @@ def status(as_json: bool = typer.Option(False, "--json")) -> None:
         human.append(f"db error: {db_error} (archive health above is still current)")
     elif settings.database_url and payload.get("db_size_bytes") is not None:
         human.append(f"db size: {payload['db_size_bytes'] / 1e6:.1f} MB")
+    if show_db and (xblock := _extraction_block(settings)) is not None:
+        payload["extraction"] = xblock
+        counts = ", ".join(f"{k} {v}" for k, v in sorted(xblock["by_status"].items())) or "none"
+        human.append(
+            f"extraction: {counts}; spend today ${xblock['spend_today_usd']:.2f}; "
+            f"models 7d: {', '.join(xblock['observed_models_7d']) or '-'}"
+        )
     if untracked:
         human.append(f"not in registry but present in archive: {', '.join(untracked)}")
     _emit(payload, as_json, "\n".join(human))
@@ -506,3 +560,262 @@ def db_version(as_json: bool = typer.Option(False, "--json")) -> None:
 
 if __name__ == "__main__":
     app()
+
+
+# -- L2 extraction ---------------------------------------------------------
+
+extract_app = typer.Typer(help="L2 demand-profile extraction")
+review_app = typer.Typer(help="Human review verbs (archive event first, then the row)")
+extract_app.add_typer(review_app, name="review")
+app.add_typer(extract_app, name="extract")
+
+
+def _extraction_block(settings: Settings) -> dict[str, Any] | None:
+    from jobhunter.store.queries import extraction_status
+
+    try:
+        conn = _db.connect(settings.require_database_url(), schema=_schema)
+    except Exception:
+        return None
+    try:
+        return extraction_status(conn)
+    except Exception:
+        return None
+    finally:
+        with contextlib.suppress(Exception):
+            conn.close()
+
+
+def _make_engine(settings: Settings) -> Any:
+    """Indirection so tests can substitute a scripted fake engine."""
+    from jobhunter.l2.engines import ClaudeCli, OpenAICompat
+
+    if settings.l2_engine == "claude-cli":
+        return ClaudeCli()
+    assert settings.l2_base_url is not None  # require_l2 ran
+    return OpenAICompat(settings.l2_base_url, settings.l2_api_key)
+
+
+@extract_app.command("run")
+def extract_run(
+    max_docs: int | None = typer.Option(None, "--max-docs"),
+    max_usd: float | None = typer.Option(None, "--max-usd"),
+    doc: str | None = typer.Option(None, "--doc", help="Extract exactly this document_hash"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the queue, write nothing"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Drain the extraction queue under the caps (harness spec §4.6)."""
+    from jobhunter.l2 import runner as l2_runner
+
+    settings = _settings()
+    try:
+        settings.require_l2()
+    except ConfigError as e:
+        typer.echo(f"config error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+    store = _store(settings)
+    conn = _conn(settings, schema=_schema)
+    try:
+        summary = l2_runner.run(
+            settings, conn, store,
+            engine=_make_engine(settings),
+            max_docs=max_docs if max_docs is not None else settings.l2_max_docs,
+            max_usd=max_usd if max_usd is not None else settings.l2_max_usd,
+            only_doc=doc, dry_run=dry_run, now=_now,
+        )
+        conn.commit()
+    except ArchiveError as e:
+        typer.echo(f"archive error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+    finally:
+        conn.close()
+    if summary.lock_held:
+        _emit(summary.to_dict(), as_json, "already running (extract lock held); nothing done")
+        return
+    if dry_run:
+        human = f"queue ({len(summary.queued)}):\n" + "\n".join(summary.queued)
+    else:
+        human = (
+            f"run {summary.run_id}: {summary.validated} validated, "
+            f"{summary.quarantined} quarantined, {summary.pending} pending, "
+            f"{summary.replayed} replayed, ${summary.spend_usd:.2f}"
+        )
+        if summary.throttled:
+            human += "  THROTTLED (batch stopped)"
+        if summary.breaker_abort:
+            human += "  BREAKER: 5 consecutive model rejections"
+    _emit(summary.to_dict(), as_json, human)
+    if summary.breaker_abort:
+        raise typer.Exit(EXIT_SYSTEMIC)
+
+
+@extract_app.command("rebuild")
+def extract_rebuild(as_json: bool = typer.Option(False, "--json")) -> None:
+    """Truncate the extraction surface and replay it from the archive. No LLM."""
+    from jobhunter.l2.rebuild import rebuild_extractions
+
+    settings = _settings()
+    store = _store(settings)
+    conn = _conn(settings, schema=_schema)
+    try:
+        if not _db.try_lock(conn, _db.EXTRACT_LOCK_KEY):
+            _emit({"lock_held": True}, as_json, "extract lock held; try again later")
+            return
+        attempts, reviews = rebuild_extractions(conn, store, settings.l2_models)
+        conn.commit()
+    except ArchiveError as e:
+        typer.echo(f"archive error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+    finally:
+        with contextlib.suppress(Exception):
+            _db.unlock(conn, _db.EXTRACT_LOCK_KEY)
+        conn.close()
+    _emit(
+        {"attempts": attempts, "reviews": reviews},
+        as_json,
+        f"replayed {attempts} attempts, {reviews} review events",
+    )
+
+
+def _review_verb(verb: str, doc: str, note: str | None, as_json: bool) -> None:
+    from jobhunter.archive.keys import x_review_key
+    from jobhunter.l2.state import derive_state
+    from jobhunter.store import extraction as xstore
+
+    settings = _settings()
+    store = _store(settings)
+    conn = _conn(settings, schema=_schema)
+    try:
+        if not _db.try_lock(conn, _db.EXTRACT_LOCK_KEY):
+            typer.echo("extract lock held (a run or another review is active); try again")
+            raise typer.Exit(EXIT_SYSTEMIC)
+        row = conn.execute(
+            "SELECT * FROM extractions WHERE document_hash=%s ORDER BY updated_at DESC LIMIT 1",
+            (doc,),
+        ).fetchone()
+        if row is None:
+            typer.echo(f"no extraction row for {doc}")
+            raise typer.Exit(EXIT_SYSTEMIC)
+        at = _now()
+        event: dict[str, Any] = {
+            "review_key": x_review_key(at, doc, verb),
+            "document_hash": doc,
+            "model": row["model"],
+            "prompt_version": row["prompt_version"],
+            "schema_version": row["schema_version"],
+            "validator_version": row["validator_version"],
+            "verb": verb,
+            "payload": {"note": note} if note else None,
+            "actor": "human",
+            "at": iso(at),
+        }
+        store.put(event["review_key"], json.dumps(event, ensure_ascii=False).encode("utf-8"))
+        xstore.record_review(conn, **event)
+        state = derive_state(
+            xstore.attempts_for(conn, doc), xstore.reviews_for(conn, doc), settings.l2_models
+        )
+        xstore.update_status(
+            conn, document_hash=doc, model=row["model"],
+            prompt_version=row["prompt_version"], schema_version=row["schema_version"],
+            validator_version=row["validator_version"], state=state,
+            reviewed_by="human", updated_at=iso(_now()),
+        )
+        conn.commit()
+    finally:
+        with contextlib.suppress(Exception):
+            _db.unlock(conn, _db.EXTRACT_LOCK_KEY)
+        conn.close()
+    _emit(
+        {"document_hash": doc, "verb": verb, "status": state.status},
+        as_json,
+        f"{doc[:12]} {verb} -> {state.status or 'pending'}",
+    )
+
+
+@review_app.command("list")
+def review_list(as_json: bool = typer.Option(False, "--json")) -> None:
+    """The inbox: needs_review and quarantined, oldest first."""
+    settings = _settings()
+    conn = _conn(settings, schema=_schema)
+    try:
+        rows = conn.execute(
+            "SELECT document_hash, status, model, updated_at FROM extractions"
+            " WHERE status IN ('needs_review', 'quarantined') ORDER BY updated_at"
+        ).fetchall()
+    finally:
+        conn.close()
+    payload = [
+        {"document_hash": r["document_hash"], "status": r["status"], "model": r["model"],
+         "updated_at": iso(r["updated_at"])}
+        for r in rows
+    ]
+    human = "\n".join(
+        f"{r['status']:13} {r['document_hash'][:12]}  {r['model']}  {r['updated_at']}"
+        for r in payload
+    ) or "inbox empty"
+    _emit({"inbox": payload}, as_json, human)
+
+
+@review_app.command("show")
+def review_show(
+    doc: str = typer.Argument(..., help="document_hash"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """The dossier: state row + attempt history with per-attempt errors."""
+    settings = _settings()
+    conn = _conn(settings, schema=_schema)
+    try:
+        row = conn.execute(
+            "SELECT * FROM extractions WHERE document_hash=%s ORDER BY updated_at DESC LIMIT 1",
+            (doc,),
+        ).fetchone()
+        attempts = conn.execute(
+            "SELECT attempt_no, requested_model, observed_model, outcome, error_detail,"
+            " started_at FROM extraction_attempts WHERE document_hash=%s"
+            " ORDER BY started_at, attempt_no",
+            (doc,),
+        ).fetchall()
+    finally:
+        conn.close()
+    payload = {
+        "state": {k: (iso(v) if k == "updated_at" else v) for k, v in row.items()}
+        if row else None,
+        "attempts": [
+            {**a, "started_at": iso(a["started_at"])} for a in attempts
+        ],
+    }
+    lines = [f"status: {row['status'] if row else 'pending'}"]
+    for a in attempts:
+        detail = a["error_detail"] or {}
+        errs = "; ".join(detail.get("errors", [])[:2]) if isinstance(detail, dict) else ""
+        lines.append(
+            f"  a{a['attempt_no']} {a['outcome']:19} {a['requested_model']}"
+            f" -> {a['observed_model'] or '-'}  {errs}"
+        )
+    _emit(payload, as_json, "\n".join(lines))
+
+
+@review_app.command("accept")
+def review_accept(doc: str, as_json: bool = typer.Option(False, "--json")) -> None:
+    """Promote needs_review -> validated. Human-only by design."""
+    _review_verb("accept", doc, None, as_json)
+
+
+@review_app.command("reject")
+def review_reject(
+    doc: str,
+    note: str = typer.Option(..., "--note", help="Why (required; rejection reasons are eval data)"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    _review_verb("reject", doc, note, as_json)
+
+
+@review_app.command("retry")
+def review_retry(doc: str, as_json: bool = typer.Option(False, "--json")) -> None:
+    """Clear the row back to pending; the next run grants fresh attempts."""
+    _review_verb("retry", doc, None, as_json)
+
+
+@review_app.command("flag")
+def review_flag(doc: str, as_json: bool = typer.Option(False, "--json")) -> None:
+    _review_verb("flag", doc, None, as_json)

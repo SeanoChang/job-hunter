@@ -140,7 +140,11 @@ def test_fabricated_quote_repaired_on_retry(pg: Conn, store: ArchiveStore) -> No
     attempts = [from_bytes(store.get(k)) for k in sorted(store.list(keys.X_ATTEMPTS_PREFIX))]
     first = next(a for a in attempts if a.attempt_no == 1)
     assert first.outcome == "attribution_failed"
-    assert any("longest matching prefix" in e for e in first.prior_errors)
+    produced = [v["error"] for v in first.validation if "error" in v]
+    assert any("longest matching prefix" in e for e in produced)
+    second = next(a for a in attempts if a.attempt_no == 2)
+    assert first.prior_errors == []  # nothing was fed into attempt 1
+    assert any("longest matching prefix" in e for e in second.prior_errors)  # fed into the retry
 
 
 def test_ladder_exhaustion_quarantines(pg: Conn, store: ArchiveStore) -> None:
