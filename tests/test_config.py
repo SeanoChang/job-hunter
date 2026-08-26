@@ -37,6 +37,13 @@ def test_drop_ratio_default_and_override(tmp_path: Path) -> None:
         Settings.load({**base, "JOB_HUNTER_DROP_RATIO": "2"})
 
 
+def test_ping_url_default_and_override(tmp_path: Path) -> None:
+    base = {"JOB_HUNTER_ARCHIVE_URL": f"file://{tmp_path}"}
+    assert Settings.load(base).ping_url is None
+    s = Settings.load({**base, "JOB_HUNTER_PING_URL": "https://hc.example.com/ping/uuid"})
+    assert s.ping_url == "https://hc.example.com/ping/uuid"
+
+
 def test_require_database_url(tmp_path: Path) -> None:
     s = Settings.load({"JOB_HUNTER_ARCHIVE_URL": f"file://{tmp_path}"})
     with pytest.raises(ConfigError, match="JOB_HUNTER_DATABASE_URL"):

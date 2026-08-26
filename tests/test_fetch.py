@@ -258,3 +258,34 @@ def test_run_drains_pending_manifests_before_its_own(
         "SELECT runs FROM presence WHERE uid LIKE 'ab:%' ORDER BY first_at"
     ).fetchall()]
     assert runs_col == [3]  # one continuous interval; no fabricated continuity
+
+
+def test_run_pings_after_fetch(tmp_path: Path) -> None:
+    settings = replace(_settings(tmp_path), ping_url="https://hc.example.com/ping/uuid")
+    pings: list[str] = []
+    t = datetime(2026, 8, 18, 6, tzinfo=UTC)
+    run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, ingest=False, ping=pings.append)
+    assert pings == ["https://hc.example.com/ping/uuid"]
+
+
+def test_run_skips_ping_without_url_or_on_dry_run(tmp_path: Path) -> None:
+    pings: list[str] = []
+    t = datetime(2026, 8, 18, 6, tzinfo=UTC)
+    run(_settings(tmp_path), fetcher=_fetcher(_fake_ats), now=lambda: t, ingest=False,
+        ping=pings.append)
+    assert pings == []
+    dry = replace(_settings(tmp_path), ping_url="https://hc.example.com/ping/uuid")
+    run(dry, fetcher=_fetcher(_fake_ats), now=lambda: t, ingest=False, dry_run=True,
+        ping=pings.append)
+    assert pings == []
+
+
+def test_run_survives_ping_failure(tmp_path: Path) -> None:
+    settings = replace(_settings(tmp_path), ping_url="https://hc.example.com/ping/uuid")
+
+    def boom(url: str) -> None:
+        raise OSError("ping endpoint down")
+
+    t = datetime(2026, 8, 18, 6, tzinfo=UTC)
+    s = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, ingest=False, ping=boom)
+    assert s.db_error is None and len(s.outcomes) == 3

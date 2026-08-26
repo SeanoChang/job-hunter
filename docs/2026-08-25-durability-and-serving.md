@@ -22,6 +22,11 @@ built yet.
 > second live database. Public serving is metadata plus a deterministic snippet
 > and a deep link; full-text redistribution is rejected.
 
+Status 2026-08-25: §3.1 (ping) is built — `JOB_HUNTER_PING_URL`, POSTed by
+`fetch.run` after the fetch phase, best-effort; `status` also reports
+`db_size_bytes` (spec §8's promised telemetry). Everything else here is still
+proposed.
+
 ## 1. Problem and constraints
 
 Four review findings, in consequence order:

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+import httpx
 import psycopg
 
 from jobhunter import __version__
@@ -32,6 +33,11 @@ from jobhunter.timeutil import iso, utcnow
 
 class UnknownBoardError(ValueError):
     """--board named a source:board that is not in the registry."""
+
+
+def post_ping(url: str) -> None:
+    """Dead-man's switch signal (docs/2026-08-25-durability-and-serving.md §3.1)."""
+    httpx.post(url, timeout=10.0)
 
 
 def gzip_bytes(data: bytes) -> bytes:
@@ -172,6 +178,7 @@ def run(
     concurrency: int = 4,
     ingest: bool = True,
     schema: str = _db.SCHEMA,
+    ping: Callable[[str], None] = post_ping,
 ) -> RunSummary:
     store = store or open_store(settings.archive_url)
     started = now()
@@ -235,6 +242,13 @@ def run(
     finally:
         if own_fetcher:
             fetcher.close()
+
+    # Collection liveness signal: sent once the fetch phase completed, whatever the
+    # store did (the switch watches for no-run-at-all, not DB health). A ping
+    # failure must never fail a run.
+    if not dry_run and settings.ping_url:
+        with contextlib.suppress(Exception):
+            ping(settings.ping_url)
 
     ingested = 0
     if conn is not None:

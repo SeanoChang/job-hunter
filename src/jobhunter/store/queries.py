@@ -42,3 +42,10 @@ def open_counts(conn: Conn) -> dict[str, int]:
         "GROUP BY source, board"
     ).fetchall()
     return {f"{r['source']}:{r['board']}": int(r["n"]) for r in rows}
+
+
+def database_size(conn: Conn) -> int:
+    """Bytes used by this database (spec §8: status reports size against the plan limit)."""
+    row = conn.execute("SELECT pg_database_size(current_database()) AS n").fetchone()
+    assert row is not None
+    return int(row["n"])

@@ -7,7 +7,13 @@ import psycopg
 from jobhunter.archive.local import LocalFS
 from jobhunter.models import Board
 from jobhunter.store.lifecycle import Ingestor
-from jobhunter.store.queries import board_health, events_since, open_counts, panel_rows
+from jobhunter.store.queries import (
+    board_health,
+    database_size,
+    events_since,
+    open_counts,
+    panel_rows,
+)
 from tests.store.helpers import ab_record, board_payload, make_manifest, write_registry
 
 
@@ -53,3 +59,8 @@ def test_events_join_is_scoped_by_uid(
     pg.commit()
     ev = {e["uid"]: e for e in events_since(pg, t0 - timedelta(hours=1))}
     assert ev["ab:ramp:x"]["url"].endswith("/x") and ev["ab:ramp:y"]["url"].endswith("/y")
+
+
+def test_database_size(pg: psycopg.Connection[dict[str, Any]]) -> None:
+    n = database_size(pg)
+    assert isinstance(n, int) and n > 0

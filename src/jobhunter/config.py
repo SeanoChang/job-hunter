@@ -19,6 +19,7 @@ class Settings:
     home: Path
     database_url: str | None
     drop_ratio: float = 0.5
+    ping_url: str | None = None
 
     def require_database_url(self) -> str:
         if not self.database_url:
@@ -51,4 +52,5 @@ class Settings:
             home=Path(e["JOB_HUNTER_HOME"]) if e.get("JOB_HUNTER_HOME") else home_default,
             database_url=e.get("JOB_HUNTER_DATABASE_URL") or None,
             drop_ratio=drop_ratio,
+            ping_url=e.get("JOB_HUNTER_PING_URL") or None,
         )
