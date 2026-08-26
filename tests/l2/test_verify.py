@@ -118,3 +118,57 @@ def test_mentions_grounded() -> None:
     rec["demand_profile"]["areas"][0]["mentions"] = ["Python", "Kubernetes"]
     report = verify(rec, DOC_MD)
     assert codes(report, "mentions_grounded") == ["mention_ungrounded"]
+
+
+def test_facts_rederive_mismatch_and_unanchored() -> None:
+    rec = minimal_record()
+    rec["facts"]["experience_months"]["max"] = 36  # anchor says 0-2 YOE -> 24
+    report = verify(rec, DOC_MD)
+    assert "fact_mismatch" in codes(report, "facts_rederive")
+
+    rec2 = minimal_record()
+    rec2["facts"]["experience_months"]["anchor"] = make_quote("distributed systems")
+    report2 = verify(rec2, DOC_MD)
+    assert "fact_unanchored" in codes(report2, "facts_rederive")
+
+
+def test_overlap_claim_in_boilerplate() -> None:
+    rec = minimal_record()
+    rec["facts"]["boilerplate_spans"] = [make_quote("0-2 YOE preferred")]
+    report = verify(rec, DOC_MD)
+    assert "claim_in_boilerplate" in codes(report, "overlap")
+
+
+def test_quote_shape_bounds() -> None:
+    rec = minimal_record()
+    rec["demand_profile"]["areas"][0]["claims"][1]["quote"] = make_quote("YOE")
+    report = verify(rec, DOC_MD)
+    assert "quote_too_short" in codes(report, "quote_shape")
+
+
+def test_template_description() -> None:
+    rec = minimal_record()
+    area = rec["demand_profile"]["areas"][0]
+    area["description"] = {"text": "wrong", "synthesis": "none", "run": None}
+    report = verify(rec, DOC_MD)
+    assert "description_text_unexpected" in codes(report, "template_description")
+
+    area["description"] = {
+        "text": "Backend engineering: **Python** and distributed systems • 0-2 YOE preferred",
+        "synthesis": "template",
+        "run": None,
+    }
+    report2 = verify(rec, DOC_MD)
+    assert codes(report2, "template_description") == []
+
+
+def test_coverage_metrics() -> None:
+    report = verify(minimal_record(), DOC_MD)
+    assert report.metrics["n_areas"] == 1
+    assert report.metrics["n_claims"] == 2
+    c1 = make_quote("**Python** and distributed systems")["span"]
+    c2 = make_quote("0-2 YOE preferred")["span"]
+    boiler = make_quote("Equal opportunity employer.")["span"]
+    covered = (c1[1] - c1[0]) + (c2[1] - c2[0])
+    denominator = len(DOC_MD) - (boiler[1] - boiler[0])
+    assert report.metrics["claim_char_coverage"] == round(covered / denominator, 4)

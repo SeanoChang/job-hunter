@@ -14,7 +14,7 @@ from jobhunter.hashing import sha256_hex
 from jobhunter.l2.quotes import longest_matching_prefix, occurrence_index
 from jobhunter.l2.report import Report
 from jobhunter.l2.schemas import validate_record
-from jobhunter.l2.transforms import VALIDATOR_VERSION
+from jobhunter.l2.transforms import TRANSFORMS, VALIDATOR_VERSION
 from jobhunter.markdown import block_intervals
 
 
@@ -146,6 +146,120 @@ def _check_evidence_fragments(extraction: dict[str, Any], report: Report) -> Non
                 )
 
 
+def _check_facts(extraction: dict[str, Any], report: Report) -> None:
+    transforms = TRANSFORMS[VALIDATOR_VERSION]
+    facts = extraction["facts"]
+    items: list[tuple[str, str, dict[str, Any]]] = []
+    if facts.get("experience_months"):
+        items.append(("experience_months", "facts.experience_months", facts["experience_months"]))
+    for i, comp in enumerate(facts.get("compensation") or []):
+        items.append(("compensation", f"facts.compensation[{i}]", comp))
+    if facts.get("deadline"):
+        items.append(("deadline", "facts.deadline", facts["deadline"]))
+    for kind, path, item in items:
+        derived = transforms[kind](item["anchor"]["text"])
+        if derived is None:
+            report.error("facts_rederive", path, "fact_unanchored")
+            continue
+        stored = {k: item.get(k) for k in derived}
+        if stored != derived:
+            report.error("facts_rederive", path, "fact_mismatch", derived=derived, stored=stored)
+
+
+def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
+    return a[0] < b[1] and b[0] < a[1]
+
+
+def _check_overlap(extraction: dict[str, Any], report: Report) -> None:
+    boiler = [
+        (int(q["span"][0]), int(q["span"][1]))
+        for q in extraction["facts"].get("boilerplate_spans") or []
+    ]
+    seen: dict[tuple[int, int], str] = {}
+    for area in extraction["demand_profile"]["areas"]:
+        for claim in area["claims"]:
+            span = (int(claim["quote"]["span"][0]), int(claim["quote"]["span"][1]))
+            path = f"areas[{area['id']}].claims[{claim['id']}]"
+            for b in boiler:
+                if _overlaps(span, b):
+                    report.error("overlap", path, "claim_in_boilerplate", boilerplate=list(b))
+            if span in seen and seen[span] != area["id"]:
+                report.warn("overlap", path, "duplicate_claim_span", also_in=seen[span])
+            seen.setdefault(span, area["id"])
+
+
+def _check_quote_shape(extraction: dict[str, Any], report: Report) -> None:
+    for path, q in iter_quote_objects(extraction):
+        length = len(q["text"])
+        is_claim = ".claims[" in path
+        is_anchor = path.endswith(".anchor")
+        if is_claim:
+            if length < 5:
+                report.error("quote_shape", path, "quote_too_short", length=length)
+            elif length < 15:
+                report.warn("quote_shape", path, "quote_short", length=length)
+            if length > 600:
+                report.error("quote_shape", path, "quote_too_long", length=length)
+            elif length > 280:
+                report.warn("quote_shape", path, "quote_long", length=length)
+        elif is_anchor and length < 2:
+            report.error("quote_shape", path, "anchor_too_short", length=length)
+
+
+def render_template_description(area: dict[str, Any]) -> str:
+    quotes = " • ".join(c["quote"]["text"] for c in area["claims"])
+    return f"{area['name']}: {quotes}"
+
+
+def _check_descriptions(extraction: dict[str, Any], report: Report) -> None:
+    for area in extraction["demand_profile"]["areas"]:
+        desc = area["description"]
+        if desc is None:
+            continue
+        path = f"areas[{area['id']}].description"
+        if desc["synthesis"] == "none" and desc["text"] is not None:
+            report.error("template_description", path, "description_text_unexpected")
+        elif desc["synthesis"] == "template" and desc["text"] != render_template_description(area):
+            report.error(
+                "template_description",
+                path,
+                "template_mismatch",
+                expected=render_template_description(area),
+            )
+        # synthesis == "llm": judged, not machine-checked (spec §3.4)
+
+
+def _union_size(spans: list[tuple[int, int]]) -> int:
+    total, prev_end = 0, -1
+    for s, e in sorted(spans):
+        s = max(s, prev_end)
+        if e > s:
+            total += e - s
+        prev_end = max(prev_end, e)
+    return total
+
+
+def _compute_coverage(extraction: dict[str, Any], md: str, report: Report) -> None:
+    areas = extraction["demand_profile"]["areas"]
+    claim_spans = [
+        (int(c["quote"]["span"][0]), int(c["quote"]["span"][1])) for a in areas for c in a["claims"]
+    ]
+    ctx_spans = [(int(q["span"][0]), int(q["span"][1])) for a in areas for q in a["context"]]
+    boiler = [
+        (int(q["span"][0]), int(q["span"][1]))
+        for q in extraction["facts"].get("boilerplate_spans") or []
+    ]
+    denominator = len(md) - _union_size(boiler)
+    coverage = _union_size(claim_spans + ctx_spans) / denominator if denominator else 0.0
+    report.metrics.update(
+        {
+            "n_areas": len(areas),
+            "n_claims": len(claim_spans),
+            "claim_char_coverage": round(coverage, 4),
+        }
+    )
+
+
 def verify(extraction: dict[str, Any], markdown: str) -> Report:
     report = Report(validator_version=VALIDATOR_VERSION)
     stored = extraction.get("document", {}).get("document_hash")
@@ -162,4 +276,9 @@ def verify(extraction: dict[str, Any], markdown: str) -> Report:
     _check_block_bounds(extraction, markdown, report)
     _check_structure(extraction, report)
     _check_evidence_fragments(extraction, report)
+    _check_facts(extraction, report)
+    _check_overlap(extraction, report)
+    _check_quote_shape(extraction, report)
+    _check_descriptions(extraction, report)
+    _compute_coverage(extraction, markdown, report)
     return report
