@@ -8,6 +8,7 @@ from tests.conftest import TEST_DSN
 EXPECTED_TABLES = {
     "fetch_attempts", "posting_versions", "documents", "presence", "runs", "panel",
     "postings", "posting_events", "schema_meta",
+    "extraction_attempts", "extraction_reviews", "extractions",
 }
 
 
