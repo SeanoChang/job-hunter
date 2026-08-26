@@ -127,10 +127,14 @@ def verify(
         raise typer.Exit(EXIT_SYSTEMIC) from exc
     try:
         report = l2_verify(extraction, markdown)
-    except (KeyError, TypeError, AttributeError) as exc:
-        # unknown schema version, or a top level that is not the record shape
+    except (KeyError, TypeError, AttributeError, RecursionError) as exc:
+        # unknown schema version, a top level that is not the record shape, or
+        # pathological nesting that outruns the interpreter before any check
         typer.echo(f"error: {exc!r}", err=True)
         raise typer.Exit(EXIT_SYSTEMIC) from exc
+
+    def _clip(s: str, n: int = 120) -> str:
+        return s if len(s) <= n else s[:n] + "…"
 
     if as_json:
         typer.echo(json.dumps(report.to_json(), ensure_ascii=False))
@@ -142,6 +146,13 @@ def verify(
                 line, col = line_col(markdown, int(span[0]))
                 loc = f"  line {line}:{col}"
             typer.echo(f"{f.severity.upper()} {f.check}:{f.code} {f.path}{loc}")
+            expected, found = f.detail.get("expected"), f.detail.get("found")
+            if isinstance(expected, str) and isinstance(found, str):
+                typer.echo(f"  expected: {_clip(expected)!r}")
+                typer.echo(f"  found:    {_clip(found)!r}")
+            prefix = f.detail.get("longest_prefix")
+            if isinstance(prefix, int):
+                typer.echo(f"  longest matching prefix: {prefix} codepoints")
         typer.echo(f"{report.status}  ({len(report.findings)} findings)")
     if report.status == "fail":
         raise typer.Exit(1)
