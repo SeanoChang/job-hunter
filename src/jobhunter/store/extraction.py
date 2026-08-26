@@ -6,7 +6,6 @@ surface is recomputable by replay."""
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
 from typing import Any
 
@@ -14,18 +13,11 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from jobhunter.l2.attempts import Attempt
-from jobhunter.l2.state import DerivedState, Review
+from jobhunter.l2.state import DerivedState, Review, globs_to_regex
+
+__all__ = ["globs_to_regex"]  # re-exported: one glob translation for SQL and Python
 
 Conn = psycopg.Connection[dict[str, Any]]
-
-
-def globs_to_regex(globs: tuple[str, ...] | list[str]) -> str:
-    """fnmatch-style globs -> one anchored POSIX regex for Postgres `~`."""
-    parts = []
-    for g in globs:
-        escaped = re.escape(g).replace(r"\*", ".*").replace(r"\?", ".")
-        parts.append(escaped)
-    return "^(" + "|".join(parts or ["$^"]) + ")$"
 
 
 def record_attempt(conn: Conn, a: Attempt, error_detail: dict[str, Any] | None) -> None:
@@ -171,6 +163,19 @@ def queue(
     return [r["document_hash"] for r in rows]
 
 
+def next_attempt_no(conn: Conn, document_hash: str) -> int:
+    """Monotonic across runs and configs: attempt keys embed (second, doc,
+    attempt_no), so a run starting within the same second as an earlier one
+    must not reuse a number — the immutable archive would silently swallow
+    the new object."""
+    row = conn.execute(
+        "SELECT COALESCE(MAX(attempt_no), 0) AS n FROM extraction_attempts"
+        " WHERE document_hash=%s",
+        (document_hash,),
+    ).fetchone()
+    return (int(row["n"]) if row else 0) + 1
+
+
 def watermark(conn: Conn) -> datetime | None:
     row = conn.execute("SELECT max(started_at) AS w FROM extraction_attempts").fetchone()
     return row["w"] if row else None
@@ -184,12 +189,23 @@ def markdown_for(conn: Conn, document_hash: str, normalizer_version: str) -> str
     return row["markdown"] if row else None
 
 
-def attempts_for(conn: Conn, document_hash: str) -> list[Attempt]:
-    """Rows re-inflated for derive_state; raw_response/prior_errors/validation
-    live only in the archive and are irrelevant to state."""
+def attempts_for(
+    conn: Conn,
+    document_hash: str,
+    *,
+    prompt_version: str,
+    schema_version: str,
+    validator_version: str,
+) -> list[Attempt]:
+    """Rows re-inflated for derive_state, FILTERED to one config: attempts made
+    under another prompt/schema/validator version are a different extraction
+    identity and must never contaminate this fold. raw_response/prior_errors/
+    validation live only in the archive and are irrelevant to state."""
     rows = conn.execute(
-        "SELECT * FROM extraction_attempts WHERE document_hash=%s ORDER BY started_at, attempt_no",
-        (document_hash,),
+        "SELECT * FROM extraction_attempts WHERE document_hash=%s"
+        " AND prompt_version=%s AND schema_version=%s AND validator_version=%s"
+        " ORDER BY started_at, attempt_no",
+        (document_hash, prompt_version, schema_version, validator_version),
     ).fetchall()
     out: list[Attempt] = []
     for r in rows:
@@ -214,39 +230,21 @@ def attempts_for(conn: Conn, document_hash: str) -> list[Attempt]:
     return out
 
 
-def reviews_for(conn: Conn, document_hash: str) -> list[Review]:
-    rows = conn.execute(
-        "SELECT verb, at, actor FROM extraction_reviews WHERE document_hash=%s ORDER BY at",
-        (document_hash,),
-    ).fetchall()
-    return [Review(verb=r["verb"], at=r["at"].isoformat(), actor=r["actor"]) for r in rows]
-
-
-def update_status(
+def reviews_for(
     conn: Conn,
-    *,
     document_hash: str,
-    model: str,
+    *,
     prompt_version: str,
     schema_version: str,
     validator_version: str,
-    state: DerivedState,
-    reviewed_by: str | None,
-    updated_at: str,
-) -> None:
-    """Status-only rewrite after a review event; the stored profile is kept
-    (review verbs judge, they never regenerate). status None deletes the row."""
-    key = (document_hash, model, prompt_version, schema_version, validator_version)
-    if state.status is None:
-        conn.execute(
-            "DELETE FROM extractions WHERE document_hash=%s AND model=%s"
-            " AND prompt_version=%s AND schema_version=%s AND validator_version=%s",
-            key,
-        )
-        return
-    conn.execute(
-        "UPDATE extractions SET status=%s, reviewed_by=%s, updated_at=%s"
-        " WHERE document_hash=%s AND model=%s AND prompt_version=%s"
-        " AND schema_version=%s AND validator_version=%s",
-        (state.status, reviewed_by, updated_at, *key),
-    )
+) -> list[Review]:
+    rows = conn.execute(
+        "SELECT verb, at, actor, review_key FROM extraction_reviews WHERE document_hash=%s"
+        " AND prompt_version=%s AND schema_version=%s AND validator_version=%s"
+        " ORDER BY at, review_key",
+        (document_hash, prompt_version, schema_version, validator_version),
+    ).fetchall()
+    return [
+        Review(verb=r["verb"], at=r["at"].isoformat(), actor=r["actor"], key=r["review_key"])
+        for r in rows
+    ]

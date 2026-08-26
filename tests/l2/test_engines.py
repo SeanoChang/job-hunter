@@ -125,3 +125,20 @@ def test_claude_cli_no_model_usage_is_null_model() -> None:
     )
     result = eng.complete("p", SCHEMA, "sonnet")
     assert result.observed_model is None  # never the requested alias: null-over-guess
+
+
+def test_claude_cli_multi_model_usage_picks_the_worker() -> None:
+    eng = ClaudeCli(
+        run=lambda *a, **k: _cli_result(
+            {
+                "structured_output": {},
+                "modelUsage": {
+                    "claude-haiku-4-5": {"inputTokens": 30, "outputTokens": 5},
+                    "claude-sonnet-5-20260514": {"inputTokens": 4000, "outputTokens": 800},
+                },
+            }
+        ),
+        which=lambda _: "/usr/bin/claude",
+    )
+    result = eng.complete("p", SCHEMA, "sonnet")
+    assert result.observed_model == "claude-sonnet-5-20260514"  # the entry that did the work

@@ -160,9 +160,21 @@ class ClaudeCli:
         if data.get("is_error") or "structured_output" not in data:
             raise EngineTransportError(f"no structured output: {str(data.get('result'))[:200]}")
         model_usage = data.get("modelUsage") or {}
+
+        def _tokens(entry: object) -> int:
+            if not isinstance(entry, dict):
+                return 0
+            return int(entry.get("inputTokens") or 0) + int(entry.get("outputTokens") or 0)
+
+        # a -p session can record side-model usage; attribute to the entry that
+        # did the work, with a sorted tiebreak so the pick is deterministic
+        observed = (
+            max(sorted(model_usage), key=lambda k: _tokens(model_usage[k]))
+            if model_usage else None
+        )
         return EngineResult(
             raw_text=json.dumps(data["structured_output"], ensure_ascii=False),
-            observed_model=next(iter(model_usage), None),
+            observed_model=observed,
             input_tokens=None,
             output_tokens=None,
             cost_usd=data.get("total_cost_usd"),

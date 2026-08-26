@@ -5,6 +5,11 @@ run's catch-up scan. The ladder (`l2_model_candidates`) escalates on content
 failure and falls through on model-not-found; quarantine only after the ladder
 is exhausted. `observed_model` gates everything: out-of-glob responses are
 `model_rejected`, and five consecutive rejections abort the run.
+
+`settle` is the ONLY writer of the derived `extractions` row — the runner, the
+catch-up scan, the review verbs and `extract rebuild` all fold the same
+config-scoped event streams through it, and the stored profile always comes
+from the chosen attempt's archived record, never from caller context.
 """
 
 from __future__ import annotations
@@ -12,8 +17,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
-from fnmatch import fnmatch
+from datetime import datetime, timedelta
 from typing import Any
 
 from jobhunter import __version__
@@ -31,12 +35,12 @@ from jobhunter.l2.engines import (
 )
 from jobhunter.l2.prompt import PROMPT_VERSION, TEMPLATE, prompt_sha, render
 from jobhunter.l2.schemas import emit_schema, validate_emit
-from jobhunter.l2.state import DerivedState, derive_state
+from jobhunter.l2.state import DerivedState, derive_state, globs_to_regex, model_matches
 from jobhunter.l2.transforms import VALIDATOR_VERSION
 from jobhunter.markdown import NORMALIZER_VERSION
 from jobhunter.store import db, extraction
 from jobhunter.store.extraction import Conn
-from jobhunter.timeutil import iso, utcnow
+from jobhunter.timeutil import iso, utcnow_precise
 
 SCHEMA_VERSION = "1"
 MAX_DOC_CHARS = 60_000
@@ -79,10 +83,36 @@ def _ensure_write_once(store: ArchiveStore) -> None:
         store.put(sk, json.dumps(emit_schema(SCHEMA_VERSION), sort_keys=True).encode("utf-8"))
 
 
-def _settle(conn: Conn, dh: str, globs: tuple[str, ...], profile: dict[str, Any] | None,
-            updated_at: str) -> DerivedState:
-    attempts = extraction.attempts_for(conn, dh)
-    reviews = extraction.reviews_for(conn, dh)
+def _profile_of(record: dict[str, Any]) -> dict[str, Any]:
+    return {"facts": record["facts"], "demand_profile": record["demand_profile"]}
+
+
+def settle(
+    conn: Conn,
+    store: ArchiveStore,
+    dh: str,
+    globs: tuple[str, ...],
+    updated_at: str,
+    *,
+    prompt_version: str | None = None,
+    schema_version: str | None = None,
+    validator_version: str | None = None,
+) -> DerivedState:
+    # call-time resolution: definition-time defaults would freeze the constants
+    # and silently ignore a version bump
+    prompt_version = PROMPT_VERSION if prompt_version is None else prompt_version
+    schema_version = SCHEMA_VERSION if schema_version is None else schema_version
+    validator_version = (
+        VALIDATOR_VERSION if validator_version is None else validator_version
+    )
+    attempts = extraction.attempts_for(
+        conn, dh, prompt_version=prompt_version, schema_version=schema_version,
+        validator_version=validator_version,
+    )
+    reviews = extraction.reviews_for(
+        conn, dh, prompt_version=prompt_version, schema_version=schema_version,
+        validator_version=validator_version,
+    )
     state = derive_state(attempts, reviews, globs)
     chosen = {a.attempt_key: a for a in attempts}.get(state.chosen_attempt or "")
     model_col = (
@@ -91,48 +121,54 @@ def _settle(conn: Conn, dh: str, globs: tuple[str, ...], profile: dict[str, Any]
     )
     if model_col is None:
         return state  # nothing decisive ever happened; no row to write
+    profile: dict[str, Any] | None = None
+    if state.status in ("validated", "needs_review") and state.chosen_attempt:
+        # the profile is the CHOSEN attempt's archived record — never whatever
+        # record the caller happened to hold (a later ok attempt, or nothing)
+        chosen_obj = from_bytes(store.get(state.chosen_attempt))
+        if chosen_obj.record is not None:
+            profile = _profile_of(chosen_obj.record)
     extraction.upsert_state(
-        conn, document_hash=dh, model=model_col, prompt_version=PROMPT_VERSION,
-        schema_version=SCHEMA_VERSION, validator_version=VALIDATOR_VERSION,
-        state=state,
-        # the profile survives review demotions: reviews judge, they never regenerate
-        profile=profile if state.status in ("validated", "needs_review") else None,
+        conn, document_hash=dh, model=model_col, prompt_version=prompt_version,
+        schema_version=schema_version, validator_version=validator_version,
+        state=state, profile=profile,
         reviewed_by=reviews[-1].actor if reviews else None,
         updated_at=updated_at,
     )
     return state
 
 
-def _profile_of(record: dict[str, Any]) -> dict[str, Any]:
-    return {"facts": record["facts"], "demand_profile": record["demand_profile"]}
-
-
 def _catch_up(conn: Conn, store: ArchiveStore, globs: tuple[str, ...], updated_at: str) -> int:
     mark = extraction.watermark(conn)
+    mark = mark.replace(microsecond=0) if mark is not None else None
     start_after = None
     if mark is not None:
-        stamp = iso(mark)
+        # one second BEFORE the watermark: keys stamp whole seconds, and an
+        # orphan written in the same second as the watermark must be replayed
+        # (record_attempt is idempotent, so re-listing that second is free)
+        stamp = iso(mark - timedelta(seconds=1))
         start_after = (
             f"{keys.X_ATTEMPTS_PREFIX}{stamp[0:4]}/{stamp[5:7]}/"
             f"{stamp[8:10]}T{stamp[11:19].replace(':', '')}Z"
         )
     replayed = 0
-    touched: dict[str, dict[str, Any] | None] = {}
+    touched: set[tuple[str, str, str, str]] = set()
     for key in store.list(keys.X_ATTEMPTS_PREFIX, start_after=start_after):
         parsed = keys.parse_x_attempt_key(key)
         if parsed is None:
             continue
-        if mark is not None and parsed[0] <= mark:
+        if mark is not None and parsed[0] < mark:
             continue
         attempt = from_bytes(store.get(key))
         extraction.record_attempt(conn, attempt, derived_error_detail(attempt))
         replayed += 1
-        if attempt.outcome == "ok" and attempt.record is not None:
-            touched[attempt.document_hash] = _profile_of(attempt.record)
-        else:
-            touched.setdefault(attempt.document_hash, None)
-    for dh, profile in touched.items():
-        _settle(conn, dh, globs, profile, updated_at)
+        touched.add(
+            (attempt.document_hash, attempt.prompt_version, attempt.schema_version,
+             attempt.validator_version)
+        )
+    for dh, pv, sv, vv in touched:
+        settle(conn, store, dh, globs, updated_at,
+               prompt_version=pv, schema_version=sv, validator_version=vv)
     return replayed
 
 
@@ -146,26 +182,36 @@ def run(
     max_usd: float,
     only_doc: str | None = None,
     dry_run: bool = False,
-    now: Callable[[], datetime] = utcnow,
+    now: Callable[[], datetime] = utcnow_precise,
 ) -> ExtractSummary:
     started = now()
     summary = ExtractSummary(run_id=f"x-{iso(started).replace(':', '').replace('-', '')}")
+    if not settings.l2_model_candidates:
+        raise ValueError("l2_model_candidates is empty; require_l2() must run before extraction")
     if not db.try_lock(conn, db.EXTRACT_LOCK_KEY):
         summary.lock_held = True
         return summary
     try:
+        # done = a row exists under any ACCEPTED model (l2_models) at the current
+        # versions; candidates are what we ask for, not what satisfies (spec §4.1)
+        model_regex = globs_to_regex(settings.l2_models)
+        if dry_run:
+            # strictly read-only: no write-once objects, no catch-up replay
+            summary.queued = [only_doc] if only_doc else extraction.queue(
+                conn, prompt_version=PROMPT_VERSION, schema_version=SCHEMA_VERSION,
+                validator_version=VALIDATOR_VERSION, model_regex=model_regex,
+                normalizer_version=NORMALIZER_VERSION, limit=max_docs,
+            )
+            return summary
         _ensure_write_once(store)
         summary.replayed = _catch_up(conn, store, settings.l2_models, iso(now()))
         conn.commit()
-        model_regex = extraction.globs_to_regex(settings.l2_model_candidates or ("*",))
         docs = [only_doc] if only_doc else extraction.queue(
             conn, prompt_version=PROMPT_VERSION, schema_version=SCHEMA_VERSION,
             validator_version=VALIDATOR_VERSION, model_regex=model_regex,
             normalizer_version=NORMALIZER_VERSION, limit=max_docs,
         )
         summary.queued = docs
-        if dry_run:
-            return summary
         breaker = 0
         for dh in docs:
             if summary.docs_attempted >= max_docs or summary.spend_usd >= max_usd:
@@ -208,7 +254,7 @@ def _extract_doc(
     if markdown is None:
         return None
     summary.docs_attempted += 1
-    seq = 0
+    seq = extraction.next_attempt_no(conn, dh) - 1
     schema = emit_schema(SCHEMA_VERSION)
 
     def archive_attempt(
@@ -236,24 +282,33 @@ def _extract_doc(
             validator_version=VALIDATOR_VERSION, prior_errors=list(fed),
             raw_response=raw_response, validation=validation, outcome=outcome,
             ladder_exhausted=ladder_exhausted, input_tokens=tokens[0],
-            output_tokens=tokens[1], cost_usd=cost, started_at=iso(t0),
-            finished_at=iso(now()), record=record,
+            output_tokens=tokens[1], cost_usd=cost, started_at=t0.isoformat(),
+            finished_at=now().isoformat(), record=record,
         )
         store.put(attempt.attempt_key, to_bytes(attempt))
         extraction.record_attempt(conn, attempt, derived_error_detail(attempt))
         return attempt
 
+    def settle_and_disposition() -> tuple[str, int]:
+        state = settle(conn, store, dh, settings.l2_models, iso(now()))
+        # the summary must agree with the fold: model_rejected fall-throughs
+        # settle to no row (pending), not quarantine
+        if state.status == "quarantined":
+            return "quarantined", breaker
+        if state.status == "validated":
+            return "validated", breaker
+        return "pending", breaker
+
+    candidates = settings.l2_model_candidates
     if len(markdown) > MAX_DOC_CHARS:
         archive_attempt(
-            requested_model=(settings.l2_model_candidates or ("?",))[0], observed_model=None,
+            requested_model=candidates[0], observed_model=None,
             outcome="over_budget", raw_response=None, fed=[],
             produced=[f"document {len(markdown)} chars > {MAX_DOC_CHARS}"],
             ladder_exhausted=True,
         )
-        _settle(conn, dh, settings.l2_models, None, iso(now()))
-        return "quarantined", breaker
+        return settle_and_disposition()
 
-    candidates = settings.l2_model_candidates or ("?",)
     for rung_i, model in enumerate(candidates):
         last_rung = rung_i == len(candidates) - 1
         prior_errors: list[str] = []
@@ -291,7 +346,7 @@ def _extract_doc(
 
             summary.spend_usd += result.cost_usd or 0.0
             observed = result.observed_model
-            if not observed or not any(fnmatch(observed, g) for g in settings.l2_models):
+            if not model_matches(observed, settings.l2_models):
                 archive_attempt(requested_model=model, observed_model=observed,
                                 outcome="model_rejected", raw_response=result.raw_text,
                                 fed=prior_errors,
@@ -303,6 +358,7 @@ def _extract_doc(
                 if breaker >= BREAKER_LIMIT:
                     return "breaker", breaker
                 break  # next rung
+            assert observed is not None  # model_matches guarantees it
             breaker = 0
             content_no += 1
             exhausted = last_rung and content_no == CONTENT_ATTEMPTS
@@ -367,8 +423,6 @@ def _extract_doc(
                             findings=findings, ladder_exhausted=False, started_at=t0,
                             tokens=(result.input_tokens, result.output_tokens),
                             cost=result.cost_usd, record=record)
-            _settle(conn, dh, settings.l2_models, _profile_of(record), iso(now()))
-            return "validated", breaker
+            return settle_and_disposition()
 
-    _settle(conn, dh, settings.l2_models, None, iso(now()))
-    return "quarantined", breaker
+    return settle_and_disposition()

@@ -390,3 +390,18 @@ def test_reject_requires_note(xenv: Path) -> None:
     runner.invoke(cli.app, ["extract", "run"])
     r = runner.invoke(cli.app, ["extract", "review", "reject", DH])
     assert r.exit_code != 0  # typer enforces the missing --note
+
+
+def test_verify_hash_with_missing_archive_object_is_systemic(
+    xenv: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    from tests.l2.test_runner import DH
+
+    r = runner.invoke(cli.app, ["extract", "run"])
+    assert r.exit_code == 0, r.output
+    row = pg.execute("SELECT chosen_attempt FROM extractions").fetchone()
+    assert row is not None
+    archive_root = xenv / "archive" / row["chosen_attempt"]
+    archive_root.unlink()  # simulate a lost/unreplicated attempt object
+    r = runner.invoke(cli.app, ["verify", DH])
+    assert r.exit_code == 2, r.output  # infrastructure failure, never "findings failed"

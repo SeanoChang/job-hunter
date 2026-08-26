@@ -167,6 +167,7 @@ def test_out_of_glob_breaker_aborts(pg: Conn, store: ArchiveStore) -> None:
     summary = run(_settings(), pg, store, engine=FakeEngine([rogue] * 6),
                   max_docs=10, max_usd=5.0)
     assert summary.breaker_abort is True
+    assert summary.quarantined == 0 and summary.pending == 4  # fold agreement: no rows -> pending
     assert pg.execute("SELECT count(*) AS n FROM extractions").fetchone()["n"] == 0  # type: ignore[index]
     outcomes = pg.execute(
         "SELECT count(*) AS n FROM extraction_attempts WHERE outcome='model_rejected'"
@@ -230,3 +231,114 @@ def test_dry_run_writes_nothing(pg: Conn, store: ArchiveStore) -> None:
     assert summary.queued and summary.docs_attempted == 0
     assert _state_row(pg) is None
     assert list(store.list(keys.X_ATTEMPTS_PREFIX)) == []
+    assert list(store.list("extractions/")) == []  # no prompt/schema write-once objects
+
+
+def test_prompt_bump_requeues_without_contamination(
+    pg: Conn, store: ArchiveStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_doc(pg)
+    assert run(_settings(), pg, store, engine=FakeEngine([GOOD]),
+               max_docs=10, max_usd=5.0).validated == 1
+
+    from jobhunter.l2 import runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "PROMPT_VERSION", "demand-profile/v2")
+    bad = EngineResult("not json", "z-ai/glm-5.2:free", 1, 1, 0.0)
+    summary = run(_settings(), pg, store, engine=FakeEngine([bad] * 3),
+                  max_docs=10, max_usd=5.0)
+    assert summary.queued == [DH]  # the bump re-selects the validated doc
+    assert summary.quarantined == 1
+    rows = pg.execute(
+        "SELECT prompt_version, status, chosen_attempt FROM extractions ORDER BY prompt_version"
+    ).fetchall()
+    assert [(r["prompt_version"], r["status"]) for r in rows] == [
+        ("demand-profile/v1", "validated"),
+        ("demand-profile/v2", "quarantined"),
+    ]
+    assert rows[0]["chosen_attempt"] is not None
+    assert rows[1]["chosen_attempt"] is None  # v1's ok attempt must not leak into v2
+
+
+def test_observed_model_differing_from_candidate_still_satisfies(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    _seed_doc(pg)
+    canonical = EngineResult(json.dumps(EMIT), "z-ai/glm-5.2", 1, 1, 0.0)  # ':free' dropped
+    settings = _settings(**{"JOB_HUNTER_L2_MODELS": "z-ai/*"})
+    assert run(settings, pg, store, engine=FakeEngine([canonical]),
+               max_docs=10, max_usd=5.0).validated == 1
+    second = run(settings, pg, store, engine=FakeEngine([]), max_docs=10, max_usd=5.0)
+    assert second.queued == []  # satisfied under l2_models, not the candidate spelling
+
+
+def test_retry_review_then_next_run_revalidates(pg: Conn, store: ArchiveStore) -> None:
+    from jobhunter.archive.keys import x_review_key
+    from jobhunter.l2.runner import settle
+    from jobhunter.store import extraction as xstore
+    from jobhunter.timeutil import utcnow_precise
+
+    _seed_doc(pg)
+    bad = EngineResult("not json", "z-ai/glm-5.2:free", 1, 1, 0.0)
+    assert run(_settings(), pg, store, engine=FakeEngine([bad] * 3),
+               max_docs=10, max_usd=5.0).quarantined == 1
+    at = utcnow_precise()
+    event = {
+        "review_key": x_review_key(at, DH, "retry", 1), "document_hash": DH,
+        "model": "z-ai/glm-5.2:free", "prompt_version": "demand-profile/v1",
+        "schema_version": "1", "validator_version": "1", "verb": "retry",
+        "payload": None, "actor": "human", "at": at.isoformat(),
+    }
+    store.put(event["review_key"], json.dumps(event).encode())
+    xstore.record_review(pg, **event)
+    state = settle(pg, store, DH, _settings().l2_models, at.isoformat())
+    assert state.status is None  # pending again
+    pg.commit()
+    summary = run(_settings(), pg, store, engine=FakeEngine([GOOD]), max_docs=10, max_usd=5.0)
+    assert summary.validated == 1  # the retry does not erase the later success
+
+
+def test_doc_rerun_profile_stays_with_chosen_attempt(pg: Conn, store: ArchiveStore) -> None:
+    _seed_doc(pg)
+    assert run(_settings(), pg, store, engine=FakeEngine([GOOD]),
+               max_docs=10, max_usd=5.0).validated == 1
+    emit_one = copy.deepcopy(EMIT)
+    area = emit_one["demand_profile"]["areas"][0]
+    area["claims"] = area["claims"][:1]
+    del area["structure"]
+    second_record = EngineResult(json.dumps(emit_one), "z-ai/glm-5.2:free", 1, 1, 0.0)
+    run(_settings(), pg, store, engine=FakeEngine([second_record]),
+        max_docs=10, max_usd=5.0, only_doc=DH)
+    row = pg.execute("SELECT profile, chosen_attempt FROM extractions").fetchone()
+    assert row is not None
+    # first ok attempt stays chosen; the stored profile must be ITS record (2 claims)
+    assert len(row["profile"]["demand_profile"]["areas"][0]["claims"]) == 2
+    chosen = from_bytes(store.get(row["chosen_attempt"]))
+    assert chosen.record is not None
+    assert row["profile"]["demand_profile"] == chosen.record["demand_profile"]
+
+
+def test_catch_up_replays_same_second_orphan(pg: Conn, store: ArchiveStore) -> None:
+    _seed_doc(pg)
+    at = datetime(2026, 8, 27, 7, 0, 0, tzinfo=UTC)
+    recorded = _attempt(
+        attempt_key=keys.x_attempt_key(at, DH, 1, 1), document_hash=DH,
+        outcome="transport", raw_response=None, observed_model=None,
+        started_at="2026-08-27T07:00:00Z",
+    )
+    store.put(recorded.attempt_key, to_bytes(recorded))
+    from jobhunter.store import extraction as xstore
+
+    xstore.record_attempt(pg, recorded, None)  # watermark now at 07:00:00
+    pg.commit()
+    record = {"facts": {"boilerplate_spans": []},
+              "demand_profile": {"areas": [], "interview_evaluated": []}}
+    orphan = _attempt(
+        attempt_key=keys.x_attempt_key(at, DH, 1, 2), document_hash=DH,
+        record=record, started_at="2026-08-27T07:00:00Z", attempt_no=2,
+    )
+    store.put(orphan.attempt_key, to_bytes(orphan))  # archived, never recorded (crash)
+    summary = run(_settings(), pg, store, engine=FakeEngine([]), max_docs=10, max_usd=5.0)
+    assert summary.replayed >= 1  # the same-second orphan is not skipped
+    row = _state_row(pg)
+    assert row and row["status"] == "validated"

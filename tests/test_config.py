@@ -102,7 +102,9 @@ def test_require_l2() -> None:
     import pytest as _pytest
 
     with _pytest.raises(ConfigError):
-        Settings.load(_L2_BASE).require_l2()  # openai-compat without base_url/candidates
+        Settings.load(_L2_BASE).require_l2()  # no candidates
+    with _pytest.raises(ConfigError):  # claude-cli still needs candidates (no '?' fallback)
+        Settings.load(_L2_BASE | {"JOB_HUNTER_L2_ENGINE": "claude-cli"}).require_l2()
     Settings.load(
         _L2_BASE
         | {
@@ -110,4 +112,23 @@ def test_require_l2() -> None:
             "JOB_HUNTER_L2_MODEL_CANDIDATES": "z-ai/glm-5.2:free",
         }
     ).require_l2()
-    Settings.load(_L2_BASE | {"JOB_HUNTER_L2_ENGINE": "claude-cli"}).require_l2()
+    Settings.load(
+        _L2_BASE
+        | {
+            "JOB_HUNTER_L2_ENGINE": "claude-cli",
+            "JOB_HUNTER_L2_MODEL_CANDIDATES": "sonnet",
+        }
+    ).require_l2()
+
+
+def test_l2_models_defaults_to_candidates_and_empty_is_error() -> None:
+    import pytest as _pytest
+
+    s = Settings.load(_L2_BASE | {"JOB_HUNTER_L2_MODEL_CANDIDATES": "a, b"})
+    assert s.l2_models == ("a", "b")  # strict by default: accept what was requested
+    wide = Settings.load(
+        _L2_BASE | {"JOB_HUNTER_L2_MODEL_CANDIDATES": "a", "JOB_HUNTER_L2_MODELS": "*"}
+    )
+    assert wide.l2_models == ("*",)
+    with _pytest.raises(ConfigError):
+        Settings.load(_L2_BASE | {"JOB_HUNTER_L2_MODELS": " , "})
