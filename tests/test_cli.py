@@ -249,3 +249,31 @@ def test_status_reports_db_size(env: Path) -> None:
     assert isinstance(data["db_size_bytes"], int) and data["db_size_bytes"] > 0
     sh = runner.invoke(cli.app, ["status"])
     assert sh.exit_code == 0 and "db size" in sh.stdout
+
+
+def test_verify_pass_and_fail(tmp_path: Path) -> None:
+    from tests.l2.conftest import DOC_MD, minimal_record
+
+    doc = tmp_path / "doc.md"
+    doc.write_text(DOC_MD, encoding="utf-8")
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(minimal_record()), encoding="utf-8")
+    result = runner.invoke(cli.app, ["verify", str(good), str(doc), "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["status"] == "pass"
+
+    bad_record = minimal_record()
+    bad_record["demand_profile"]["areas"][0]["claims"][0]["quote"]["text"] = "fabricated"
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(bad_record), encoding="utf-8")
+    result = runner.invoke(cli.app, ["verify", str(bad), str(doc)])
+    assert result.exit_code == 1, result.output
+    assert "text_mismatch" in result.stdout
+    assert "line " in result.stdout  # derived line:col shown for span findings
+
+
+def test_verify_systemic(tmp_path: Path) -> None:
+    doc = tmp_path / "doc.md"
+    doc.write_text("x", encoding="utf-8")
+    result = runner.invoke(cli.app, ["verify", str(tmp_path / "missing.json"), str(doc)])
+    assert result.exit_code == 2
