@@ -132,3 +132,13 @@ def test_l2_models_defaults_to_candidates_and_empty_is_error() -> None:
     assert wide.l2_models == ("*",)
     with _pytest.raises(ConfigError):
         Settings.load(_L2_BASE | {"JOB_HUNTER_L2_MODELS": " , "})
+
+
+def test_l2_price_parse() -> None:
+    import pytest as _pytest
+
+    s = Settings.load(_L2_BASE | {"JOB_HUNTER_L2_PRICE": "0.35,0.75"})
+    assert s.l2_price == (0.35, 0.75)
+    assert Settings.load(_L2_BASE).l2_price is None
+    with _pytest.raises(ConfigError):
+        Settings.load(_L2_BASE | {"JOB_HUNTER_L2_PRICE": "cheap"})

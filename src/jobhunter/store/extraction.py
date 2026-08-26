@@ -20,8 +20,9 @@ __all__ = ["globs_to_regex"]  # re-exported: one glob translation for SQL and Py
 Conn = psycopg.Connection[dict[str, Any]]
 
 
-def record_attempt(conn: Conn, a: Attempt, error_detail: dict[str, Any] | None) -> None:
-    conn.execute(
+def record_attempt(conn: Conn, a: Attempt, error_detail: dict[str, Any] | None) -> bool:
+    """True when the attempt was new (False = idempotent replay of a known key)."""
+    cur = conn.execute(
         """
         INSERT INTO extraction_attempts (
           attempt_key, run_id, document_hash, normalizer_version, sample_slot,
@@ -41,6 +42,7 @@ def record_attempt(conn: Conn, a: Attempt, error_detail: dict[str, Any] | None) 
             a.cli_version,
         ),
     )
+    return cur.rowcount == 1
 
 
 def record_review(
@@ -56,8 +58,9 @@ def record_review(
     payload: dict[str, Any] | None,
     actor: str,
     at: str,
-) -> None:
-    conn.execute(
+) -> bool:
+    """True when the event was new (False = idempotent replay of a known key)."""
+    cur = conn.execute(
         """
         INSERT INTO extraction_reviews (
           review_key, document_hash, model, prompt_version, schema_version,
@@ -70,6 +73,7 @@ def record_review(
             validator_version, verb, Jsonb(payload) if payload else None, actor, at,
         ),
     )
+    return cur.rowcount == 1
 
 
 def upsert_state(
@@ -87,15 +91,26 @@ def upsert_state(
     reviewed_by: str | None = None,
     updated_at: str,
 ) -> None:
-    """status None (pending, e.g. after a human retry) removes the row."""
-    key = (document_hash, model, prompt_version, schema_version, validator_version)
+    """At most ONE row per (document, config): the model column is derived
+    (observed id, or the last requested alias when nothing settled), so stale
+    rows under a different model spelling are removed on every write — a human
+    retry must clear the row regardless of which spelling keyed it.
+    status None (pending) removes the config's row entirely."""
+    config = (document_hash, prompt_version, schema_version, validator_version)
     if state.status is None:
         conn.execute(
-            "DELETE FROM extractions WHERE document_hash=%s AND model=%s"
+            "DELETE FROM extractions WHERE document_hash=%s"
             " AND prompt_version=%s AND schema_version=%s AND validator_version=%s",
-            key,
+            config,
         )
         return
+    key = (document_hash, model, prompt_version, schema_version, validator_version)
+    conn.execute(
+        "DELETE FROM extractions WHERE document_hash=%s"
+        " AND prompt_version=%s AND schema_version=%s AND validator_version=%s"
+        " AND model <> %s",
+        (*config, model),
+    )
     conn.execute(
         """
         INSERT INTO extractions (

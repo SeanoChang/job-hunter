@@ -115,3 +115,19 @@ def test_same_timestamp_review_tiebreak_is_deterministic() -> None:
     backward = derive_state([ok], [accept, flag], GLOBS)
     assert forward == backward  # key order decides, input order does not
     assert forward.status == "validated"  # flag (a-) folds before accept (b-)
+
+
+def test_later_ok_never_overrides_human_or_machine_settled_states() -> None:
+    later_ok = _attempt(
+        attempt_key="extractions/attempts/2026/08/30T000000Z-abcdefabcdef-s1a9.json.gz",
+        started_at="2026-08-30T00:00:00Z", attempt_no=9,
+    )
+    ok = _attempt()
+    flagged = derive_state([ok, later_ok], [Review("flag", "2026-08-29T00:00:00Z")], GLOBS)
+    assert flagged.status == "needs_review"  # machine result cannot re-promote
+    rejected = derive_state([ok, later_ok], [Review("reject", "2026-08-29T00:00:00Z")], GLOBS)
+    assert rejected.status == "rejected"
+    quarantine = _attempt(outcome="attribution_failed", attempt_no=3, ladder_exhausted=True,
+                          observed_model=None)
+    still_quarantined = derive_state([quarantine, later_ok], [], GLOBS)
+    assert still_quarantined.status == "quarantined"  # only a human retry clears it

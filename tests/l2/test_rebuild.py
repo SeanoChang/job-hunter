@@ -12,6 +12,7 @@ from jobhunter.l2.rebuild import rebuild_extractions
 from jobhunter.l2.runner import run
 from jobhunter.store import extraction
 from jobhunter.timeutil import utcnow_precise
+from tests.l2.test_assemble import EMIT
 from tests.l2.test_runner import DH, GOOD, FakeEngine, _seed_doc, _settings, store  # noqa: F401
 
 Conn = psycopg.Connection[dict[str, Any]]
@@ -74,3 +75,33 @@ def test_rebuild_reproduces_incremental_state(
     pg.commit()
     assert attempts >= 1 and reviews == 1
     assert _dump(pg) == before
+
+
+def test_rebuild_rejudges_raw_responses_under_current_validators(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """Spec §4.3 step 2: the derived row comes from re-running today's
+    validators over the archived raw response — a validator bugfix (or bump)
+    re-judges the corpus for $0, without an LLM call."""
+    _seed_doc(pg)
+    from tests.l2.test_attempts import _attempt
+
+    wrongly_failed = _attempt(
+        document_hash=DH,
+        outcome="attribution_failed",  # archived verdict from a buggy validator
+        raw_response=json.dumps(EMIT),  # ...but the raw response is actually valid
+        validation=[{"error": "phantom finding"}],
+        attempt_no=1,
+        ladder_exhausted=True,
+    )
+    from jobhunter.l2.attempts import to_bytes
+
+    store.put(wrongly_failed.attempt_key, to_bytes(wrongly_failed))
+    attempts, _ = rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+    assert attempts == 1
+    row = pg.execute("SELECT status, profile FROM extractions").fetchone()
+    assert row and row["status"] == "validated"  # re-judged, not restored
+    assert row["profile"]["demand_profile"]["areas"][0]["id"] == "a1"
+    prov = pg.execute("SELECT outcome FROM extraction_attempts").fetchone()
+    assert prov and prov["outcome"] == "attribution_failed"  # provenance untouched

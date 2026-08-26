@@ -310,7 +310,8 @@ def rebuild(as_json: bool = typer.Option(False, "--json")) -> None:
     settings = _settings()
     store = _store(settings)
     try:
-        s = _rebuild(store, settings.require_database_url(), drop_ratio=settings.drop_ratio,
+        s = _rebuild(store, settings.require_database_url(), l2_globs=settings.l2_models,
+                     drop_ratio=settings.drop_ratio,
                      schema=_schema)
     except ConfigError as e:
         typer.echo(f"config error: {e}")
@@ -421,7 +422,8 @@ def status(as_json: bool = typer.Option(False, "--json")) -> None:
         payload["extraction"] = xblock
         counts = ", ".join(f"{k} {v}" for k, v in sorted(xblock["by_status"].items())) or "none"
         human.append(
-            f"extraction: {counts}; spend today ${xblock['spend_today_usd']:.2f}; "
+            f"extraction: queue {xblock['queue_depth']}; {counts}; "
+            f"spend today ${xblock['spend_today_usd']:.2f}; "
             f"models 7d: {', '.join(xblock['observed_models_7d']) or '-'}"
         )
     if untracked:
@@ -580,6 +582,11 @@ app.add_typer(extract_app, name="extract")
 
 
 def _extraction_block(settings: Settings) -> dict[str, Any] | None:
+    from jobhunter.l2.prompt import PROMPT_VERSION
+    from jobhunter.l2.runner import SCHEMA_VERSION
+    from jobhunter.l2.state import globs_to_regex
+    from jobhunter.l2.transforms import VALIDATOR_VERSION
+    from jobhunter.markdown import NORMALIZER_VERSION
     from jobhunter.store.queries import extraction_status
 
     try:
@@ -587,7 +594,12 @@ def _extraction_block(settings: Settings) -> dict[str, Any] | None:
     except Exception:
         return None
     try:
-        return extraction_status(conn)
+        return extraction_status(
+            conn, prompt_version=PROMPT_VERSION, schema_version=SCHEMA_VERSION,
+            validator_version=VALIDATOR_VERSION,
+            model_regex=globs_to_regex(settings.l2_models),
+            normalizer_version=NORMALIZER_VERSION,
+        )
     except Exception:
         return None
     finally:
@@ -602,7 +614,7 @@ def _make_engine(settings: Settings) -> Any:
     if settings.l2_engine == "claude-cli":
         return ClaudeCli()
     assert settings.l2_base_url is not None  # require_l2 ran
-    return OpenAICompat(settings.l2_base_url, settings.l2_api_key)
+    return OpenAICompat(settings.l2_base_url, settings.l2_api_key, prices=settings.l2_price)
 
 
 @extract_app.command("run")
@@ -615,6 +627,7 @@ def extract_run(
 ) -> None:
     """Drain the extraction queue under the caps (harness spec §4.6)."""
     from jobhunter.l2 import runner as l2_runner
+    from jobhunter.l2.engines import EngineFatalError
 
     settings = _settings()
     try:
@@ -632,7 +645,7 @@ def extract_run(
             engine=_make_engine(settings),
             max_docs=max_docs if max_docs is not None else settings.l2_max_docs,
             max_usd=max_usd if max_usd is not None else settings.l2_max_usd,
-            only_doc=doc, dry_run=dry_run, now=_now,
+            only_doc=doc, dry_run=dry_run,
         )
         conn.commit()
     except ArchiveError as e:
@@ -640,6 +653,9 @@ def extract_run(
         raise typer.Exit(EXIT_SYSTEMIC) from e
     except (psycopg.Error, _db.SchemaMismatch, ValueError) as e:
         typer.echo(f"database error: {e}")
+        raise typer.Exit(EXIT_SYSTEMIC) from e
+    except EngineFatalError as e:
+        typer.echo(f"engine error: {e}")
         raise typer.Exit(EXIT_SYSTEMIC) from e
     finally:
         conn.close()
@@ -659,7 +675,8 @@ def extract_run(
         if summary.breaker_abort:
             human += "  BREAKER: 5 consecutive model rejections"
     _emit(summary.to_dict(), as_json, human)
-    if summary.breaker_abort:
+    if summary.breaker_abort or (summary.throttled and summary.validated == 0):
+        # a scheduled run that did nothing must not report success
         raise typer.Exit(EXIT_SYSTEMIC)
 
 
@@ -677,8 +694,10 @@ def extract_rebuild(as_json: bool = typer.Option(False, "--json")) -> None:
             return
         attempts, reviews = rebuild_extractions(conn, store, settings.l2_models)
         conn.commit()
-    except ArchiveError as e:
-        typer.echo(f"archive error: {e}")
+    except Exception as e:  # archive errors, corrupt objects, psycopg failures
+        with contextlib.suppress(Exception):
+            conn.rollback()  # replay is all-or-nothing: discard TRUNCATE + partial rows
+        typer.echo(f"rebuild error: {e}")
         raise typer.Exit(EXIT_SYSTEMIC) from e
     finally:
         with contextlib.suppress(Exception):

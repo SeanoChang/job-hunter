@@ -142,3 +142,48 @@ def test_claude_cli_multi_model_usage_picks_the_worker() -> None:
     )
     result = eng.complete("p", SCHEMA, "sonnet")
     assert result.observed_model == "claude-sonnet-5-20260514"  # the entry that did the work
+
+
+def test_openai_compat_permanent_4xx_taxonomy() -> None:
+    from jobhunter.l2.engines import EngineFatalError
+
+    for status in (401, 403, 422):
+        eng = OpenAICompat(
+            "https://x.test/api/v1", None,
+            client=_client(lambda _, s=status: httpx.Response(s, json={})),
+        )
+        with pytest.raises(EngineFatalError):
+            eng.complete("p", SCHEMA, "m")
+    model_400 = OpenAICompat(
+        "https://x.test/api/v1", None,
+        client=_client(lambda _: httpx.Response(400, json={"error": "no such model: nope"})),
+    )
+    with pytest.raises(EngineModelNotFound):
+        model_400.complete("p", SCHEMA, "nope")
+    other_400 = OpenAICompat(
+        "https://x.test/api/v1", None,
+        client=_client(lambda _: httpx.Response(400, json={"error": "bad json_schema field"})),
+    )
+    with pytest.raises(EngineFatalError):
+        other_400.complete("p", SCHEMA, "m")
+
+
+def test_openai_compat_cost_from_usage_and_prices() -> None:
+    reported = OpenAICompat(
+        "https://x.test/api/v1", None,
+        client=_client(lambda _: httpx.Response(200, json={
+            "model": "m", "choices": [{"message": {"content": "{}"}}],
+            "usage": {"prompt_tokens": 4000, "completion_tokens": 1000, "cost": 0.0123},
+        })),
+    )
+    assert reported.complete("p", SCHEMA, "m").cost_usd == 0.0123
+
+    priced = OpenAICompat(
+        "https://x.test/api/v1", None,
+        client=_client(lambda _: httpx.Response(200, json={
+            "model": "m", "choices": [{"message": {"content": "{}"}}],
+            "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000},
+        })),
+        prices=(0.35, 0.75),
+    )
+    assert priced.complete("p", SCHEMA, "m").cost_usd == pytest.approx(1.10)

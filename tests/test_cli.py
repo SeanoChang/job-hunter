@@ -405,3 +405,14 @@ def test_verify_hash_with_missing_archive_object_is_systemic(
     archive_root.unlink()  # simulate a lost/unreplicated attempt object
     r = runner.invoke(cli.app, ["verify", DH])
     assert r.exit_code == 2, r.output  # infrastructure failure, never "findings failed"
+
+
+def test_throttled_zero_progress_run_is_systemic(
+    xenv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobhunter.l2.engines import EngineThrottled
+    from tests.l2.test_runner import FakeEngine
+
+    monkeypatch.setattr(cli, "_make_engine", lambda s: FakeEngine([EngineThrottled("429")]))
+    r = runner.invoke(cli.app, ["extract", "run"])
+    assert r.exit_code == 2, r.output  # a scheduled run that did nothing must not report success
