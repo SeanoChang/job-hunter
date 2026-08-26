@@ -258,3 +258,27 @@ def test_coverage_denominator_guard() -> None:
     ]
     report = verify(rec, DOC_MD)  # attribution fails, but metrics must stay sane
     assert report.metrics["claim_char_coverage"] == 0.0
+
+
+def test_deep_structure_reports_instead_of_recursing() -> None:
+    rec = minimal_record()
+    node: dict[str, object] = {"op": "AND", "of": ["c1", "c2"]}
+    for _ in range(200):
+        node = {"op": "OR", "of": [node, "c1"]}
+    rec["demand_profile"]["areas"][0]["structure"] = node
+    report = verify(rec, DOC_MD)  # must not raise RecursionError
+    assert report.status == "fail"
+    assert "depth_exceeded" in codes(report, "structure")
+
+
+def test_nonnull_level_requires_evidence() -> None:
+    rec = minimal_record()
+    claim = rec["demand_profile"]["areas"][0]["claims"][1]
+    claim["level"] = "exposure"
+    claim["level_evidence"] = None
+    report = verify(rec, DOC_MD)
+    assert "level_evidence_missing" in codes(report, "evidence_substrings")
+
+    claim["level_evidence"] = "preferred"  # grounded in the claim quote
+    report2 = verify(rec, DOC_MD)
+    assert codes(report2, "evidence_substrings") == []

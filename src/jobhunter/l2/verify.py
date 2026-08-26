@@ -80,6 +80,39 @@ def _check_block_bounds(extraction: dict[str, Any], md: str, report: Report) -> 
 _MAX_DEPTH = 5
 
 
+def _structure_depth_ok(extraction: dict[str, Any], report: Report) -> bool:
+    """Iterative depth preflight, run BEFORE schema validation: the schema's
+    recursive $ref would hit RecursionError on a few hundred nested operators,
+    crashing before any check could report the configured cap. Defensive over
+    raw JSON — nothing here assumes the record validated."""
+    profile = extraction.get("demand_profile")
+    areas = profile.get("areas") if isinstance(profile, dict) else None
+    if not isinstance(areas, list):
+        return True
+    ok = True
+    for area in areas:
+        if not isinstance(area, dict):
+            continue
+        aid = area.get("id")
+        label = aid if isinstance(aid, str) else "?"
+        stack: list[tuple[object, int]] = [(area.get("structure"), 1)]
+        while stack:
+            node, depth = stack.pop()
+            if not isinstance(node, dict):
+                continue
+            if depth > _MAX_DEPTH:
+                report.error(
+                    "structure", f"areas[{label}].structure", "depth_exceeded",
+                    max_depth=_MAX_DEPTH,
+                )
+                ok = False
+                break
+            children = node.get("of")
+            if isinstance(children, list):
+                stack.extend((child, depth + 1) for child in children)
+    return ok
+
+
 def _walk_structure(
     node: object, depth: int, leaves: list[str], report: Report, path: str
 ) -> bool:
@@ -143,6 +176,15 @@ def _check_evidence_fragments(extraction: dict[str, Any], report: Report) -> Non
     for area in extraction["demand_profile"]["areas"]:
         context_texts = [c["text"] for c in area["context"]]
         for claim in area["claims"]:
+            if claim["level"] is not None and claim["level_evidence"] is None:
+                # ruled in the parsing direction (review disposition 7): a non-null
+                # level carries an evidence phrase; null means unstated
+                report.error(
+                    "evidence_substrings",
+                    f"areas[{area['id']}].claims[{claim['id']}]",
+                    "level_evidence_missing",
+                    level=claim["level"],
+                )
             hay = [claim["quote"]["text"], *context_texts]
             frags = [claim["level_evidence"], *claim["qualifiers"], *claim["evidence_sources"]]
             for frag in frags:
@@ -300,6 +342,9 @@ def verify(extraction: dict[str, Any], markdown: str) -> Report:
     if sha256_hex(markdown.encode("utf-8")) != stored:
         report.error("doc_binding", "document", "hash_mismatch", stored=stored)
         return report  # hard fail-fast: wrong document, nothing else is meaningful
+
+    if not _structure_depth_ok(extraction, report):
+        return report  # schema validation would recurse past the interpreter limit
 
     for message in validate_record(extraction, extraction["extraction"]["schema_version"]):
         report.error("schema", "<schema>", "invalid", message=message)
