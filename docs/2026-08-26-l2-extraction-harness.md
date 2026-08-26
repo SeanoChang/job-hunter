@@ -178,7 +178,7 @@ change bumps it. Checks, in order (ids are stable API):
 | `overlap` | claim spans must not overlap `boilerplate_spans` (error); identical claim spans across areas warn. |
 | `quote_shape` | claim quote length: error < 5 or > 600 codepoints, warn < 15 or > 280; fact anchors ≥ 2. |
 | `template_description` | `synthesis: "template"` → re-render and compare exactly; `"none"` → text null; `"llm"` → skipped (judged, not machine-checked). |
-| `coverage` | recompute `n_areas`, `n_claims`, `claim_char_coverage`; stored counters must match. |
+| `coverage` | always recomputed into the report, never read from the record (schema v1 stores no counters): `n_areas`, `n_claims`, and `claim_char_coverage` — bounded to [0, 1] by clamping spans to the document, excluding boilerplate from the numerator, and returning 0.0 on an empty denominator. |
 
 **CLI:** `job-hunter verify [DOC_HASH] [--all | --since 7d]
 [--from-archive] [--json]` — always recomputes, never echoes a stored flag;
