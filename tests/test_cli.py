@@ -277,3 +277,19 @@ def test_verify_systemic(tmp_path: Path) -> None:
     doc.write_text("x", encoding="utf-8")
     result = runner.invoke(cli.app, ["verify", str(tmp_path / "missing.json"), str(doc)])
     assert result.exit_code == 2
+
+
+def test_verify_systemic_non_dict_and_non_utf8(tmp_path: Path) -> None:
+    doc = tmp_path / "doc.md"
+    doc.write_text("x", encoding="utf-8")
+    arr = tmp_path / "arr.json"
+    arr.write_text("[1, 2]", encoding="utf-8")
+    result = runner.invoke(cli.app, ["verify", str(arr), str(doc)])
+    assert result.exit_code == 2, result.output
+
+    bad = tmp_path / "bad.md"
+    bad.write_bytes(b"\xff\xfe\x00")
+    good = tmp_path / "good.json"
+    good.write_text("{}", encoding="utf-8")
+    result = runner.invoke(cli.app, ["verify", str(good), str(bad)])
+    assert result.exit_code == 2, result.output
