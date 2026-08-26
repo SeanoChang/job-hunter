@@ -1,7 +1,7 @@
 from typing import Any
 
 from jobhunter.l2 import VALIDATOR_VERSION, verify
-from tests.l2.conftest import DOC_MD, minimal_record
+from tests.l2.conftest import DOC_MD, make_quote, minimal_record
 
 
 def codes(report: Any, check: str) -> list[str]:
@@ -59,3 +59,62 @@ def test_block_bounds_rejects_newline_quote() -> None:
     claim["quote"]["span"] = [start, end]
     report = verify(rec, DOC_MD)
     assert "newline_in_quote" in codes(report, "block_bounds")
+
+
+def test_structure_missing_and_dangling() -> None:
+    rec = minimal_record()
+    rec["demand_profile"]["areas"][0]["structure"] = None
+    report = verify(rec, DOC_MD)
+    assert "structure_missing" in codes(report, "structure")
+
+    rec2 = minimal_record()
+    rec2["demand_profile"]["areas"][0]["structure"] = {"op": "AND", "of": ["c1", "cX"]}
+    report2 = verify(rec2, DOC_MD)
+    assert "unknown_claim_id" in codes(report2, "structure")
+
+
+def test_structure_each_claim_exactly_once() -> None:
+    rec = minimal_record()
+    rec["demand_profile"]["areas"][0]["structure"] = {"op": "AND", "of": ["c1", "c1"]}
+    report = verify(rec, DOC_MD)
+    assert "claim_reference_count" in codes(report, "structure")
+
+
+def test_structure_depth_cap() -> None:
+    rec = minimal_record()
+    node: dict[str, object] = {"op": "AND", "of": ["c1", "c2"]}
+    for _ in range(6):
+        node = {"op": "OR", "of": [node, "c1"]}
+    rec["demand_profile"]["areas"][0]["structure"] = node
+    report = verify(rec, DOC_MD)
+    assert "depth_exceeded" in codes(report, "structure")
+
+
+def test_interview_evaluated_resolves() -> None:
+    rec = minimal_record()
+    rec["demand_profile"]["interview_evaluated"] = ["a99"]
+    report = verify(rec, DOC_MD)
+    assert "unknown_area_id" in codes(report, "structure")
+
+
+def test_evidence_substring_of_quote_or_context() -> None:
+    rec = minimal_record()
+    area = rec["demand_profile"]["areas"][0]
+    area["claims"][1]["level_evidence"] = "preferred"  # substring of its quote: ok
+    area["claims"][0]["qualifiers"] = ["with guidance"]  # nowhere in quote or context
+    report = verify(rec, DOC_MD)
+    assert "fragment_unanchored" in codes(report, "evidence_substrings")
+
+    rec2 = minimal_record()
+    area2 = rec2["demand_profile"]["areas"][0]
+    area2["context"] = [make_quote("0-2 YOE preferred", occurrence=0)]
+    area2["claims"][0]["qualifiers"] = ["preferred"]  # in context text: ok
+    report2 = verify(rec2, DOC_MD)
+    assert codes(report2, "evidence_substrings") == []
+
+
+def test_mentions_grounded() -> None:
+    rec = minimal_record()
+    rec["demand_profile"]["areas"][0]["mentions"] = ["Python", "Kubernetes"]
+    report = verify(rec, DOC_MD)
+    assert codes(report, "mentions_grounded") == ["mention_ungrounded"]
