@@ -96,8 +96,16 @@ All still current as research; none define the design.
   span resolution, versioned fact transforms, JSON schemas v1, the pure
   `verify()` check suite, and the file-based `verify` CLI. `validator/1` frozen.
 
-Not built yet: the L2 extraction runner (harness increments 2–4) and the
-concept linker.
+- `superpowers/plans/2026-08-27-l2-increment-2-harness.md` — L2 increment 2
+  (shipped): the extraction runner — engines (openai-compat + claude-cli,
+  observed model ids), prompt `demand-profile/v1`, per-attempt archive
+  objects, pure state derivation, store schema v2 (attempts/reviews/
+  extractions + queue), ladder escalation with breaker and caps, catch-up
+  scan, `extract run|review|rebuild`, store-addressed `verify`, `status`
+  extraction block. Serial in M2; k-sampling and the quality loop are M3.
+
+Not built yet: the M3 quality loop (k-sampling, refuter, consolidate,
+alerts), M4 access verbs, and the concept linker (L3).
 
 ## Prototype code
 
