@@ -6,6 +6,7 @@ import contextlib
 import json
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -103,6 +104,58 @@ def _split_board(value: str | None) -> tuple[str | None, str | None]:
 def version(as_json: bool = typer.Option(False, "--json")) -> None:
     """Print the job-hunter version."""
     _emit({"version": __version__}, as_json, __version__)
+
+
+@app.command()
+def verify(
+    extraction_file: str = typer.Argument(..., help="Extraction record JSON"),
+    document_file: str = typer.Argument(..., help="Canonical markdown document"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Re-run every validator/1 check over an extraction against its document.
+
+    Exit 0: all checks pass. Exit 1: ran fine, findings failed. Exit 2: systemic.
+    """
+    from jobhunter.l2 import verify as l2_verify
+    from jobhunter.l2.quotes import line_col
+
+    try:
+        extraction = json.loads(Path(extraction_file).read_text(encoding="utf-8"))
+        markdown = Path(document_file).read_text(encoding="utf-8")
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(EXIT_SYSTEMIC) from exc
+    try:
+        report = l2_verify(extraction, markdown)
+    except (KeyError, TypeError, AttributeError, RecursionError) as exc:
+        # unknown schema version, a top level that is not the record shape, or
+        # pathological nesting that outruns the interpreter before any check
+        typer.echo(f"error: {exc!r}", err=True)
+        raise typer.Exit(EXIT_SYSTEMIC) from exc
+
+    def _clip(s: str, n: int = 120) -> str:
+        return s if len(s) <= n else s[:n] + "…"
+
+    if as_json:
+        typer.echo(json.dumps(report.to_json(), ensure_ascii=False))
+    else:
+        for f in report.findings:
+            loc = ""
+            span = f.detail.get("span")
+            if isinstance(span, list):
+                line, col = line_col(markdown, int(span[0]))
+                loc = f"  line {line}:{col}"
+            typer.echo(f"{f.severity.upper()} {f.check}:{f.code} {f.path}{loc}")
+            expected, found = f.detail.get("expected"), f.detail.get("found")
+            if isinstance(expected, str) and isinstance(found, str):
+                typer.echo(f"  expected: {_clip(expected)!r}")
+                typer.echo(f"  found:    {_clip(found)!r}")
+            prefix = f.detail.get("longest_prefix")
+            if isinstance(prefix, int):
+                typer.echo(f"  longest matching prefix: {prefix} codepoints")
+        typer.echo(f"{report.status}  ({len(report.findings)} findings)")
+    if report.status == "fail":
+        raise typer.Exit(1)
 
 
 @app.command()

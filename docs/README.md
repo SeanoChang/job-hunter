@@ -91,8 +91,13 @@ All still current as research; none define the design.
   panel, `Ingestor.ingest` with presence intervals, the drop guard and
   interval-censored closes, `ingest`, `rebuild`, `report`, `registry list`,
   `db init|version`.
+- `superpowers/plans/2026-08-26-l2-increment-1-verifier.md` — L2 increment 1
+  (shipped): `l2/` verifier — quote objects with codepoint spans, deterministic
+  span resolution, versioned fact transforms, JSON schemas v1, the pure
+  `verify()` check suite, and the file-based `verify` CLI. `validator/1` frozen.
 
-Not built yet: the demand-profile extractor (L2) and the concept linker.
+Not built yet: the L2 extraction runner (harness increments 2–4) and the
+concept linker.
 
 ## Prototype code
 
