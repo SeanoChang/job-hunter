@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.markdown import NORMALIZER_VERSION, strip_markdown, to_markdown, visible_text
+from jobhunter.markdown import (
+    NORMALIZER_VERSION,
+    block_intervals,
+    strip_markdown,
+    to_markdown,
+    visible_text,
+)
 from tests.conftest import FIXTURES
 
 GOLDEN = FIXTURES / "md"
@@ -105,3 +111,22 @@ def test_adjacent_emphasis_is_not_corrupted(src: str, expected: str) -> None:
     md = to_markdown(src)
     assert md == expected
     assert strip_markdown(md) == visible_text(src)
+
+
+def test_block_intervals_basic() -> None:
+    md = "## Head\n\n- a\n- b\n\npara"
+    assert block_intervals(md) == [(0, 7), (9, 16), (18, 22)]
+
+
+def test_block_intervals_empty_and_trailing() -> None:
+    assert block_intervals("") == []
+    assert block_intervals("\n\n") == []
+    assert block_intervals("one\n") == [(0, 3)]
+
+
+def test_block_intervals_cover_all_nonblank() -> None:
+    md = "a\nb\n\n\nc"
+    ivs = block_intervals(md)
+    assert ivs == [(0, 3), (6, 7)]
+    for s, e in ivs:
+        assert md[s:e].strip() == md[s:e]
