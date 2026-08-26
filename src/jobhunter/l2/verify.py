@@ -6,6 +6,7 @@ three call sites, one implementation (harness spec §3.3). Zero I/O; no LLM.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterator
 from typing import Any
 
@@ -68,6 +69,83 @@ def _check_block_bounds(extraction: dict[str, Any], md: str, report: Report) -> 
             report.error("block_bounds", path, "crosses_block_boundary", span=[s, e])
 
 
+_MAX_DEPTH = 5
+
+
+def _walk_structure(
+    node: object, depth: int, leaves: list[str], report: Report, path: str
+) -> None:
+    if isinstance(node, str):
+        leaves.append(node)
+        return
+    assert isinstance(node, dict)  # schema-guaranteed past the schema check
+    if depth > _MAX_DEPTH:
+        report.error("structure", path, "depth_exceeded", max_depth=_MAX_DEPTH)
+        return
+    for child in node["of"]:
+        _walk_structure(child, depth + 1, leaves, report, path)
+
+
+def _check_structure(extraction: dict[str, Any], report: Report) -> None:
+    profile = extraction["demand_profile"]
+    area_ids: set[str] = set()
+    all_claim_ids: list[str] = []
+    for area in profile["areas"]:
+        aid = area["id"]
+        area_ids.add(aid)
+        path = f"areas[{aid}].structure"
+        ids_here = [c["id"] for c in area["claims"]]
+        all_claim_ids.extend(ids_here)
+        structure = area["structure"]
+        if len(area["claims"]) > 1 and structure is None:
+            report.error("structure", path, "structure_missing")
+            continue
+        if len(area["claims"]) == 1 and structure is not None:
+            report.error("structure", path, "structure_unexpected")
+            continue
+        if structure is None:
+            continue
+        leaves: list[str] = []
+        _walk_structure(structure, 1, leaves, report, path)
+        for leaf in leaves:
+            if leaf not in ids_here:
+                report.error("structure", path, "unknown_claim_id", claim_id=leaf)
+        known = Counter(leaf for leaf in leaves if leaf in ids_here)
+        if known != Counter(ids_here):
+            report.error("structure", path, "claim_reference_count", expected=ids_here, got=leaves)
+    dupes = {c for c in all_claim_ids if all_claim_ids.count(c) > 1}
+    if dupes:
+        report.error("structure", "<document>", "duplicate_claim_id", ids=sorted(dupes))
+    for aid in profile["interview_evaluated"]:
+        if aid not in area_ids:
+            report.error("structure", "interview_evaluated", "unknown_area_id", area_id=aid)
+
+
+def _check_evidence_fragments(extraction: dict[str, Any], report: Report) -> None:
+    for area in extraction["demand_profile"]["areas"]:
+        context_texts = [c["text"] for c in area["context"]]
+        for claim in area["claims"]:
+            hay = [claim["quote"]["text"], *context_texts]
+            frags = [claim["level_evidence"], *claim["qualifiers"], *claim["evidence_sources"]]
+            for frag in frags:
+                if frag is not None and not any(frag in t for t in hay):
+                    report.error(
+                        "evidence_substrings",
+                        f"areas[{area['id']}].claims[{claim['id']}]",
+                        "fragment_unanchored",
+                        fragment=frag,
+                    )
+        for mention in area["mentions"]:
+            texts = [c["quote"]["text"] for c in area["claims"]] + context_texts
+            if not any(mention in t for t in texts):
+                report.error(
+                    "mentions_grounded",
+                    f"areas[{area['id']}]",
+                    "mention_ungrounded",
+                    mention=mention,
+                )
+
+
 def verify(extraction: dict[str, Any], markdown: str) -> Report:
     report = Report(validator_version=VALIDATOR_VERSION)
     stored = extraction.get("document", {}).get("document_hash")
@@ -82,4 +160,6 @@ def verify(extraction: dict[str, Any], markdown: str) -> Report:
 
     _check_attribution(extraction, markdown, report)
     _check_block_bounds(extraction, markdown, report)
+    _check_structure(extraction, report)
+    _check_evidence_fragments(extraction, report)
     return report
