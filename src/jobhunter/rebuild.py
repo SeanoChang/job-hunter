@@ -30,6 +30,7 @@ def rebuild(
     drop_ratio: float = 0.5,
     schema: str = db.SCHEMA,
     work_schema: str | None = None,
+    l2_globs: tuple[str, ...] = ("*",),
 ) -> RebuildSummary:
     """Replay the whole archive into `work_schema`, then make it the live `schema`."""
     work = work_schema or f"{schema}_new"
@@ -45,6 +46,12 @@ def rebuild(
             db.init(conn, work)
             conn.commit()
             s = replay_pending(conn, store, drop_ratio=drop_ratio)
+            conn.commit()
+            # the L2 surface is part of the store: swapping without replaying it
+            # would put empty extraction tables live and re-spend the corpus
+            from jobhunter.l2.rebuild import rebuild_extractions
+
+            rebuild_extractions(conn, store, l2_globs)
             conn.commit()
             db.swap_schema(conn, new=work, target=schema, previous=f"{schema}_previous")
             conn.commit()

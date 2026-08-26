@@ -160,12 +160,23 @@ def _catch_up(conn: Conn, store: ArchiveStore, globs: tuple[str, ...], updated_a
         if mark is not None and parsed[0] < mark:
             continue
         attempt = from_bytes(store.get(key))
-        extraction.record_attempt(conn, attempt, derived_error_detail(attempt))
-        replayed += 1
-        touched.add(
-            (attempt.document_hash, attempt.prompt_version, attempt.schema_version,
-             attempt.validator_version)
-        )
+        if extraction.record_attempt(conn, attempt, derived_error_detail(attempt)):
+            replayed += 1
+            touched.add(
+                (attempt.document_hash, attempt.prompt_version, attempt.schema_version,
+                 attempt.validator_version)
+            )
+    # review events are archived BEFORE their DB row (archive-as-truth): a crash
+    # between the two must not leave a human decision unapplied until a manual
+    # rebuild. The prefix is tiny (human verbs), so a full idempotent scan is fine.
+    for key in store.list(keys.X_REVIEWS_PREFIX):
+        event = json.loads(store.get(key))
+        if extraction.record_review(conn, **event):
+            replayed += 1
+            touched.add(
+                (event["document_hash"], event["prompt_version"], event["schema_version"],
+                 event["validator_version"])
+            )
     for dh, pv, sv, vv in touched:
         settle(conn, store, dh, globs, updated_at,
                prompt_version=pv, schema_version=sv, validator_version=vv)
@@ -214,7 +225,9 @@ def run(
         summary.queued = docs
         breaker = 0
         for dh in docs:
-            if summary.docs_attempted >= max_docs or summary.spend_usd >= max_usd:
+            # strict >: a cap of 0 means "free work only" (the documented
+            # subscription-backfill mode), not "stop before the first document"
+            if summary.docs_attempted >= max_docs or summary.spend_usd > max_usd:
                 break
             result = _extract_doc(settings, conn, store, engine, dh, summary, breaker, now)
             if result is None:

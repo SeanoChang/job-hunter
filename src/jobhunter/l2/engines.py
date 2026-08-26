@@ -38,6 +38,11 @@ class EngineModelNotFound(Exception):
     """The requested model id does not exist — the ladder falls through."""
 
 
+class EngineFatalError(Exception):
+    """Non-retryable request failure (credentials, malformed request). Retrying
+    or laddering cannot help; the run aborts and the CLI exits systemic."""
+
+
 class Engine(Protocol):
     name: str
 
@@ -62,6 +67,7 @@ class OpenAICompat:
         client: httpx.Client | None = None,
         extra_body: dict[str, Any] | None = None,
         timeout: float = 120.0,
+        prices: tuple[float, float] | None = None,  # USD per 1M tokens (in, out)
     ) -> None:
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         self._client = client or httpx.Client(timeout=timeout, headers=headers)
@@ -69,6 +75,7 @@ class OpenAICompat:
             client.headers.update(headers)
         self._base_url = base_url.rstrip("/")
         self._extra_body = extra_body or {}
+        self._prices = prices
 
     def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
         body = {
@@ -89,7 +96,17 @@ class OpenAICompat:
             raise EngineThrottled(f"429 from {self._base_url}")
         if resp.status_code == 404:
             raise EngineModelNotFound(model)
-        if resp.status_code >= 400:
+        if resp.status_code in (401, 403):
+            raise EngineFatalError(f"credentials rejected (HTTP {resp.status_code})")
+        if resp.status_code == 400:
+            text = resp.text[:300]
+            if "model" in text.lower():
+                # e.g. OpenRouter's 400 for an unknown model id: ladder falls through
+                raise EngineModelNotFound(f"{model}: {text}")
+            raise EngineFatalError(f"bad request (HTTP 400): {text}")
+        if 400 <= resp.status_code < 500:
+            raise EngineFatalError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+        if resp.status_code >= 500:
             raise EngineTransportError(f"HTTP {resp.status_code}: {resp.text[:300]}")
         try:
             data = resp.json()
@@ -99,12 +116,16 @@ class OpenAICompat:
         if not isinstance(content, str) or not content:
             raise EngineTransportError("empty completion content")
         usage = data.get("usage") or {}
+        in_tok, out_tok = usage.get("prompt_tokens"), usage.get("completion_tokens")
+        cost = usage.get("cost")  # OpenRouter reports credits (USD) here when available
+        if cost is None and self._prices and in_tok is not None and out_tok is not None:
+            cost = in_tok / 1e6 * self._prices[0] + out_tok / 1e6 * self._prices[1]
         return EngineResult(
             raw_text=content,
             observed_model=data.get("model") or None,
-            input_tokens=usage.get("prompt_tokens"),
-            output_tokens=usage.get("completion_tokens"),
-            cost_usd=None,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            cost_usd=float(cost) if cost is not None else None,
         )
 
 

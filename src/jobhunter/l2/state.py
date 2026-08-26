@@ -72,7 +72,9 @@ def derive_state(
         if isinstance(event, Attempt):
             if event.outcome == "ok":
                 in_glob = model_matches(event.observed_model, accepted_globs)
-                if in_glob and status != "validated":
+                # only PENDING work validates: needs_review/rejected/quarantined
+                # can be cleared solely by a human retry (human-only promotion)
+                if in_glob and status is None:
                     status, chosen = "validated", event.attempt_key
             elif event.outcome == "over_budget":
                 if status is None:

@@ -342,3 +342,98 @@ def test_catch_up_replays_same_second_orphan(pg: Conn, store: ArchiveStore) -> N
     assert summary.replayed >= 1  # the same-second orphan is not skipped
     row = _state_row(pg)
     assert row and row["status"] == "validated"
+
+
+def test_zero_usd_cap_is_free_only_mode(pg: Conn, store: ArchiveStore) -> None:
+    _seed_doc(pg)
+    _seed_doc(pg, dh=sha256_hex(f"{DOC_MD}2".encode()), markdown=f"{DOC_MD}2", uid="gh:x:2")
+    summary = run(_settings(), pg, store, engine=FakeEngine([GOOD, GOOD]),
+                  max_docs=10, max_usd=0.0)
+    assert summary.validated == 2  # zero-cost calls proceed under --max-usd 0
+    _seed_doc(pg, dh=sha256_hex(f"{DOC_MD}3".encode()), markdown=f"{DOC_MD}3", uid="gh:x:3")
+    _seed_doc(pg, dh=sha256_hex(f"{DOC_MD}4".encode()), markdown=f"{DOC_MD}4", uid="gh:x:4")
+    paid = EngineResult(json.dumps(EMIT), "z-ai/glm-5.2:free", 1, 1, 0.5)
+    summary2 = run(_settings(), pg, store, engine=FakeEngine([paid, paid]),
+                   max_docs=10, max_usd=0.0)
+    assert summary2.docs_attempted == 1  # first paid call exceeds the zero cap
+
+
+def test_retry_clears_row_keyed_by_observed_model(pg: Conn, store: ArchiveStore) -> None:
+    from jobhunter.archive.keys import x_review_key
+    from jobhunter.l2.runner import settle
+    from jobhunter.store import extraction as xstore
+    from jobhunter.timeutil import utcnow_precise
+
+    _seed_doc(pg)
+    canonical = EngineResult(json.dumps(EMIT), "z-ai/glm-5.2", 1, 1, 0.0)  # != requested alias
+    assert run(_settings(**{"JOB_HUNTER_L2_MODELS": "z-ai/*"}), pg, store,
+               engine=FakeEngine([canonical]), max_docs=10, max_usd=5.0).validated == 1
+    at = utcnow_precise()
+    event = {
+        "review_key": x_review_key(at, DH, "flag", 1), "document_hash": DH,
+        "model": "z-ai/glm-5.2", "prompt_version": "demand-profile/v1",
+        "schema_version": "1", "validator_version": "1", "verb": "flag",
+        "payload": None, "actor": "human", "at": at.isoformat(),
+    }
+    store.put(event["review_key"], json.dumps(event).encode())
+    xstore.record_review(pg, **event)
+    at2 = utcnow_precise()
+    retry = dict(event, review_key=x_review_key(at2, DH, "retry", 2), verb="retry",
+                 at=at2.isoformat())
+    store.put(retry["review_key"], json.dumps(retry).encode())
+    xstore.record_review(pg, **retry)
+    settle(pg, store, DH, ("z-ai/*",), at2.isoformat())
+    rows = pg.execute("SELECT count(*) AS n FROM extractions").fetchone()
+    assert rows and rows["n"] == 0  # the observed-model row is gone, not orphaned
+
+
+def test_catch_up_replays_orphaned_review_event(pg: Conn, store: ArchiveStore) -> None:
+    from jobhunter.archive.keys import x_review_key
+    from jobhunter.timeutil import utcnow_precise
+
+    _seed_doc(pg)
+    assert run(_settings(), pg, store, engine=FakeEngine([GOOD]),
+               max_docs=10, max_usd=5.0).validated == 1
+    at = utcnow_precise()
+    event = {
+        "review_key": x_review_key(at, DH, "reject", 1), "document_hash": DH,
+        "model": "z-ai/glm-5.2:free", "prompt_version": "demand-profile/v1",
+        "schema_version": "1", "validator_version": "1", "verb": "reject",
+        "payload": {"note": "wrong"}, "actor": "human", "at": at.isoformat(),
+    }
+    store.put(event["review_key"], json.dumps(event).encode())  # archived, DB row lost (crash)
+    summary = run(_settings(), pg, store, engine=FakeEngine([]), max_docs=10, max_usd=5.0)
+    assert summary.replayed >= 1
+    row = _state_row(pg)
+    assert row and row["status"] == "rejected"  # the archived decision was applied
+
+
+def test_one_row_per_config_across_model_spellings(pg: Conn, store: ArchiveStore) -> None:
+    _seed_doc(pg)
+    bad = EngineResult("not json", "z-ai/glm-5.2", 1, 1, 0.0)
+    settings = _settings(**{"JOB_HUNTER_L2_MODELS": "z-ai/*"})
+    assert run(settings, pg, store, engine=FakeEngine([bad] * 3),
+               max_docs=10, max_usd=5.0).quarantined == 1
+    # human retries, next run validates under the observed spelling
+    from jobhunter.archive.keys import x_review_key
+    from jobhunter.store import extraction as xstore
+    from jobhunter.timeutil import utcnow_precise
+
+    at = utcnow_precise()
+    event = {
+        "review_key": x_review_key(at, DH, "retry", 1), "document_hash": DH,
+        "model": "z-ai/glm-5.2:free", "prompt_version": "demand-profile/v1",
+        "schema_version": "1", "validator_version": "1", "verb": "retry",
+        "payload": None, "actor": "human", "at": at.isoformat(),
+    }
+    store.put(event["review_key"], json.dumps(event).encode())
+    xstore.record_review(pg, **event)
+    from jobhunter.l2.runner import settle as l2_settle
+
+    l2_settle(pg, store, DH, settings.l2_models, at.isoformat())  # as the CLI verb does
+    pg.commit()
+    canonical = EngineResult(json.dumps(EMIT), "z-ai/glm-5.2", 1, 1, 0.0)
+    assert run(settings, pg, store, engine=FakeEngine([canonical]),
+               max_docs=10, max_usd=5.0).validated == 1
+    rows = pg.execute("SELECT model, status FROM extractions").fetchall()
+    assert len(rows) == 1 and rows[0]["status"] == "validated"

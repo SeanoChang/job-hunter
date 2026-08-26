@@ -27,6 +27,7 @@ class Settings:
     l2_model_candidates: tuple[str, ...] = ()
     l2_max_docs: int = 300
     l2_max_usd: float = 5.0
+    l2_price: tuple[float, float] | None = None  # USD per 1M tokens (in, out)
 
     def require_l2(self) -> None:
         if not self.l2_model_candidates:
@@ -80,6 +81,16 @@ class Settings:
         if models is None:
             models = candidates or ("*",)
 
+        price_raw = e.get("JOB_HUNTER_L2_PRICE")
+        l2_price: tuple[float, float] | None = None
+        if price_raw:
+            try:
+                lo, hi = (float(x) for x in price_raw.split(","))
+                l2_price = (lo, hi)
+            except ValueError as ex:
+                raise ConfigError(
+                    f"JOB_HUNTER_L2_PRICE must be 'in_usd_per_mtok,out_usd_per_mtok': {price_raw!r}"
+                ) from ex
         try:
             l2_max_docs = int(e.get("JOB_HUNTER_L2_MAX_DOCS", "300"))
             l2_max_usd = float(e.get("JOB_HUNTER_L2_MAX_USD", "5.0"))
@@ -101,4 +112,5 @@ class Settings:
             l2_model_candidates=candidates,
             l2_max_docs=l2_max_docs,
             l2_max_usd=l2_max_usd,
+            l2_price=l2_price,
         )
