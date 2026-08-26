@@ -15,8 +15,9 @@ class SchemaMismatch(RuntimeError):
 
 
 SCHEMA = "jobhunter"
-SCHEMA_VERSION = "1"
-LOCK_KEY = 0x6A6F6268  # "jobh"
+SCHEMA_VERSION = "2"
+LOCK_KEY = 0x6A6F6268  # "jobh" — ingestion writer
+EXTRACT_LOCK_KEY = 0x6A6F6232  # "job2" — extraction writer (harness spec §4.6)
 
 Conn = psycopg.Connection[dict[str, Any]]
 

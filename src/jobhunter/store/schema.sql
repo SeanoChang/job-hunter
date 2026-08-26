@@ -129,3 +129,63 @@ CREATE INDEX IF NOT EXISTS ix_events_uid ON posting_events (uid, event_id);
 CREATE INDEX IF NOT EXISTS ix_events_time ON posting_events (at);
 
 CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+-- extraction surface (harness spec §4.7); writer: store/extraction.py under
+-- EXTRACT_LOCK_KEY. Provenance insert-only; extractions derived (replayable).
+CREATE TABLE IF NOT EXISTS extraction_attempts (
+  attempt_key        TEXT PRIMARY KEY,
+  run_id             TEXT NOT NULL,
+  document_hash      TEXT NOT NULL,
+  normalizer_version TEXT NOT NULL,
+  sample_slot        INTEGER NOT NULL,
+  attempt_no         INTEGER NOT NULL,
+  requested_engine   TEXT NOT NULL,
+  requested_model    TEXT NOT NULL,
+  observed_model     TEXT,
+  prompt_version     TEXT NOT NULL,
+  schema_version     TEXT NOT NULL,
+  validator_version  TEXT NOT NULL,
+  outcome            TEXT NOT NULL,
+  ladder_exhausted   BOOLEAN NOT NULL,
+  error_detail       JSONB,
+  input_tokens       INTEGER,
+  output_tokens      INTEGER,
+  cost_usd           NUMERIC(9,5),
+  started_at         TIMESTAMPTZ NOT NULL,
+  finished_at        TIMESTAMPTZ NOT NULL,
+  cli_version        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_xattempts_doc ON extraction_attempts (document_hash, started_at);
+CREATE INDEX IF NOT EXISTS ix_xattempts_time ON extraction_attempts (started_at);
+
+CREATE TABLE IF NOT EXISTS extraction_reviews (
+  review_key        TEXT PRIMARY KEY,
+  document_hash     TEXT NOT NULL,
+  model             TEXT NOT NULL,
+  prompt_version    TEXT NOT NULL,
+  schema_version    TEXT NOT NULL,
+  validator_version TEXT NOT NULL,
+  verb              TEXT NOT NULL,
+  payload           JSONB,
+  actor             TEXT NOT NULL,
+  at                TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS extractions (
+  document_hash     TEXT NOT NULL,
+  model             TEXT NOT NULL,
+  prompt_version    TEXT NOT NULL,
+  schema_version    TEXT NOT NULL,
+  validator_version TEXT NOT NULL,
+  status            TEXT NOT NULL,
+  chosen_attempt    TEXT REFERENCES extraction_attempts (attempt_key),
+  k                 INTEGER NOT NULL DEFAULT 1,
+  agreement         JSONB,
+  profile           JSONB,
+  flags             JSONB,
+  reviewed_by       TEXT,
+  updated_at        TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (document_hash, model, prompt_version, schema_version, validator_version)
+);
+CREATE INDEX IF NOT EXISTS ix_extractions_doc ON extractions (document_hash);
+CREATE INDEX IF NOT EXISTS ix_extractions_status ON extractions (status);
