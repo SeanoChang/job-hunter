@@ -71,3 +71,12 @@ def test_compensation(text: str, expected: dict[str, object] | None) -> None:
 )
 def test_deadline(text: str, expected: dict[str, object] | None) -> None:
     assert parse_deadline(text) == expected
+
+
+def test_descending_range_is_none() -> None:
+    assert parse_experience_months("5-3 years") is None
+
+
+def test_lowercase_currency_normalized() -> None:
+    result = parse_compensation("$90,000 - $110,000 usd")
+    assert result is not None and result["currency"] == "USD"

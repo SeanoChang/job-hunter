@@ -27,7 +27,7 @@ _MONEY = re.compile(
 )
 _HOURLY = re.compile(r"(?:/\s*(?:hr|hour)|per\s+hour)\b", re.IGNORECASE)
 _YEARLY = re.compile(r"(?:/\s*(?:yr|year)|per\s+(?:year|annum)|annually|annual)\b", re.IGNORECASE)
-_CURRENCY = re.compile(r"\b(USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP)\b")  # explicit codes only
+_CURRENCY = re.compile(r"\b(USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP)\b", re.IGNORECASE)  # explicit codes
 
 _MONTH_NAMES = [
     "january", "february", "march", "april", "may", "june",
@@ -40,7 +40,10 @@ _DATE = re.compile(r"([A-Za-z]+)\.?\s+(\d{1,2}),\s*(\d{4})")
 
 def parse_experience_months(text: str) -> dict[str, object] | None:
     if m := _RANGE.search(text):
-        return {"min": int(m.group(1)) * 12, "max": int(m.group(2)) * 12}
+        lo, hi = int(m.group(1)) * 12, int(m.group(2)) * 12
+        if lo > hi:
+            return None  # descending range: ambiguous
+        return {"min": lo, "max": hi}
     if m := _FLOOR.search(text):
         return {"min": int(m.group(1)) * 12, "max": None}
     exacts = _EXACT.findall(text)
@@ -70,7 +73,7 @@ def parse_compensation(text: str) -> dict[str, object] | None:
     return {
         "min": lo,
         "max": hi,
-        "currency": currency.group(1) if currency else None,
+        "currency": currency.group(1).upper() if currency else None,
         "period": period,
     }
 
