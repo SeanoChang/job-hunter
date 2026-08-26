@@ -8,9 +8,9 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
 ## Layout
 
 - `cli.py` — Typer entry point (`job-hunter`). Commands: `version`, `fetch`,
-  `ingest`, `rebuild`, `report`, `status`; sub-apps `archive ls`,
+  `ingest`, `rebuild`, `report`, `status`, `verify`; sub-apps `archive ls`,
   `registry check|list`, `db init|version`. Every command accepts `--json`;
-  exit 0 normal, 2 systemic.
+  exit 0 normal, 2 systemic (`verify` adds exit 1 = findings failed).
 - `models.py` — frozen dataclasses shared by every module. No I/O.
 - `registry.py` — `companies.toml` → validated `Board` list + revision hash.
 - `fetch.py` — one run: registry → fetch every board (thread pool) → archive
