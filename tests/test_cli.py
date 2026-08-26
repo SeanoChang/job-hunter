@@ -293,3 +293,18 @@ def test_verify_systemic_non_dict_and_non_utf8(tmp_path: Path) -> None:
     good.write_text("{}", encoding="utf-8")
     result = runner.invoke(cli.app, ["verify", str(good), str(bad)])
     assert result.exit_code == 2, result.output
+
+
+def test_verify_human_output_shows_mismatch_diagnostics(tmp_path: Path) -> None:
+    from tests.l2.conftest import DOC_MD, minimal_record
+
+    doc = tmp_path / "doc.md"
+    doc.write_text(DOC_MD, encoding="utf-8")
+    rec = minimal_record()
+    rec["demand_profile"]["areas"][0]["claims"][1]["quote"]["text"] = "0-2 YOE preferrd"
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(rec), encoding="utf-8")
+    result = runner.invoke(cli.app, ["verify", str(bad), str(doc)])
+    assert result.exit_code == 1
+    assert "expected:" in result.stdout and "found:" in result.stdout
+    assert "longest matching prefix:" in result.stdout
