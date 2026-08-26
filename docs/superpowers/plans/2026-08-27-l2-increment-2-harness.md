@@ -261,8 +261,9 @@ schema-capable rungs (glm-5.2:free) with JSON-mode-only rungs
 (nvidia/nemotron-3-ultra:free, per the 2026-08-26 research), and a global
 `require_parameters: true` would leave the non-schema rung with no
 eligible endpoint. Endpoints that ignore `response_format` are caught by
-the validator chain — that loop is mandatory regardless (owner ruling
-2026-08-27, Nemotron question).
+the validator chain — that loop is mandatory regardless. (Whether any
+JSON-mode-only model actually joins the ladder is an open owner decision;
+this just keeps mixed ladders possible.)
 
 `ClaudeCli(timeout: float = 300.0, run=subprocess.run, which=shutil.which)` —
 mirrors the proven wiring in `prototypes/parsing/retree.py::call_claude`:
@@ -645,11 +646,17 @@ by the next run's catch-up scan.
 - [ ] Step 2: `uv run pytest && uv run ruff check . && uv run mypy` — all green
 - [ ] Step 3: commit `docs: L2 increment 2 shipped — extraction harness`
 - [ ] Step 4: **canary procedure (manual, documented in the PR):** owner
-  exports `JOB_HUNTER_L2_*` (OpenRouter base URL + key + candidates
-  `z-ai/glm-5.2:free`), runs `job-hunter extract run --doc <one fixture-like
-  document> `, inspects `verify <hash>` output, then a supervised
-  `--max-docs 20` batch before any scheduled wiring. First backfill session
-  follows the same shape on `claude-cli`.
+  exports `JOB_HUNTER_L2_*` (OpenRouter base URL + key), then canaries
+  **both** free engines on the same documents — `z-ai/glm-5.2:free` and
+  `nvidia/nemotron-3-ultra-550b-a55b:free` (ruled 2026-08-27: canary both,
+  place on evidence) — comparing verbatim-quote rate and validator retry
+  rate via `verify <hash>` and the attempt trail. Ladder placement (glm
+  alone, glm→nemotron, or other) is decided from those numbers; then a
+  supervised `--max-docs 20` batch before any scheduled wiring. First
+  backfill session follows the same shape on `claude-cli`. Note: routing
+  to Nemotron's free endpoint requires the owner's OpenRouter data-policy
+  toggle (providers that may train on data) — job-side public postings
+  only, never the résumé side.
 - [ ] Step 5: superpowers:finishing-a-development-branch (present options).
 
 ---
