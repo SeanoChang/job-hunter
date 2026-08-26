@@ -216,7 +216,37 @@ def attempts_for(conn: Conn, document_hash: str) -> list[Attempt]:
 
 def reviews_for(conn: Conn, document_hash: str) -> list[Review]:
     rows = conn.execute(
-        "SELECT verb, at FROM extraction_reviews WHERE document_hash=%s ORDER BY at",
+        "SELECT verb, at, actor FROM extraction_reviews WHERE document_hash=%s ORDER BY at",
         (document_hash,),
     ).fetchall()
-    return [Review(verb=r["verb"], at=r["at"].isoformat()) for r in rows]
+    return [Review(verb=r["verb"], at=r["at"].isoformat(), actor=r["actor"]) for r in rows]
+
+
+def update_status(
+    conn: Conn,
+    *,
+    document_hash: str,
+    model: str,
+    prompt_version: str,
+    schema_version: str,
+    validator_version: str,
+    state: DerivedState,
+    reviewed_by: str | None,
+    updated_at: str,
+) -> None:
+    """Status-only rewrite after a review event; the stored profile is kept
+    (review verbs judge, they never regenerate). status None deletes the row."""
+    key = (document_hash, model, prompt_version, schema_version, validator_version)
+    if state.status is None:
+        conn.execute(
+            "DELETE FROM extractions WHERE document_hash=%s AND model=%s"
+            " AND prompt_version=%s AND schema_version=%s AND validator_version=%s",
+            key,
+        )
+        return
+    conn.execute(
+        "UPDATE extractions SET status=%s, reviewed_by=%s, updated_at=%s"
+        " WHERE document_hash=%s AND model=%s AND prompt_version=%s"
+        " AND schema_version=%s AND validator_version=%s",
+        (state.status, reviewed_by, updated_at, *key),
+    )

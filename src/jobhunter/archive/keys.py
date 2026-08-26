@@ -93,5 +93,7 @@ def parse_x_attempt_key(key: str) -> tuple[datetime, str, int, int] | None:
     return at, dochash12, int(slot), int(no)
 
 
-def x_review_key(at: datetime, document_hash: str) -> str:
-    return f"{X_PREFIX}reviews/{_x_stamp(at)}-{document_hash[:12]}.json"
+def x_review_key(at: datetime, document_hash: str, verb: str) -> str:
+    # verb in the leaf: successive verbs on one document within a second must
+    # not collide (an idempotent same-verb duplicate is the only residual case)
+    return f"{X_PREFIX}reviews/{_x_stamp(at)}-{document_hash[:12]}-{verb}.json"
