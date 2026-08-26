@@ -25,6 +25,12 @@ dispositions of the 2026-08-17 external review:
 
 ## Design documents
 
+- `2026-08-26-l2-extraction-harness.md` — **current, normative** for the L2
+  layer: machine-verifiable evidence format + standalone verifier, extraction
+  lifecycle state machine and runner, drift control + weekly consolidation
+  checkpoint, agent access verbs and trust rings, threat model, engine
+  choices (verified 2026-08-26). The record format itself stays ruled by the
+  parsing-direction doc.
 - `2026-08-25-durability-and-serving.md` — draft. Dead-man's switch, redundant
   schedulers, checkpointed rebuild, nightly snapshots; public serving ruled as
   snippets + attribution.
@@ -109,3 +115,12 @@ and a dated judge run. Its README carries the superseded banner.
   levels; the demand description is the most important extraction; the LLM is
   not the only solution — record must be evidence-first, LLM as labeler, small
   models later; external review's eight findings adopted.
+- 2026-08-26 — L2 harness: evidence as quote objects (codepoint spans; the LLM
+  never computes offsets; no fuzzy repair); one verifier, `validator_version`
+  in the engine tuple; `model` observed from responses, never configured;
+  extraction is stateless (no L2 input derived from any L2 output); aggregates
+  are validated-only within one engine tuple; automated verdicts demote only —
+  promotion is human; scheduled runs on free/cheap API engines, the
+  subscription only in supervised local sessions (no OAuth token in CI);
+  whole-extraction status in v1; monitoring stays minimal until a first trend
+  is published.
