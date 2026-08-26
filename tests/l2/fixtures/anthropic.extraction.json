@@ -1,0 +1,103 @@
+{
+  "document": {
+    "document_hash": "db2dbaf156deb5d6911ebd10bdc317b5300cdf0271b215242e75e2930f18e512",
+    "normalizer_version": "md/1"
+  },
+  "facts": {
+    "experience_months": null,
+    "compensation": [
+      {
+        "min": 300000,
+        "max": 405000,
+        "currency": "USD",
+        "period": "year",
+        "condition": null,
+        "anchor": {
+          "text": "$300,000—$405,000 USD",
+          "span": [
+            6969,
+            6990
+          ],
+          "occurrence": 0
+        }
+      }
+    ],
+    "deadline": null,
+    "boilerplate_spans": []
+  },
+  "demand_profile": {
+    "areas": [
+      {
+        "id": "a1",
+        "name": "Full-stack product engineering",
+        "kind": "technical",
+        "importance": "required",
+        "level": null,
+        "claims": [
+          {
+            "id": "c1",
+            "quote": {
+              "text": "Are proficient in Python and a modern web stack (React, TypeScript, or similar)",
+              "span": [
+                3954,
+                4033
+              ],
+              "occurrence": 0
+            },
+            "importance": "required",
+            "level": "proficient",
+            "level_evidence": "proficient",
+            "negated": false,
+            "threshold": null,
+            "qualifiers": [],
+            "evidence_sources": []
+          },
+          {
+            "id": "c2",
+            "quote": {
+              "text": "Experience with async Python (Trio, asyncio) or high-throughput API design",
+              "span": [
+                5415,
+                5489
+              ],
+              "occurrence": 0
+            },
+            "importance": "preferred",
+            "level": null,
+            "level_evidence": null,
+            "negated": false,
+            "threshold": null,
+            "qualifiers": [],
+            "evidence_sources": []
+          }
+        ],
+        "context": [],
+        "structure": {
+          "op": "AND",
+          "of": [
+            "c1",
+            "c2"
+          ]
+        },
+        "mentions": [
+          "Python",
+          "React",
+          "TypeScript"
+        ],
+        "description": {
+          "text": null,
+          "synthesis": "none",
+          "run": null
+        }
+      }
+    ],
+    "interview_evaluated": []
+  },
+  "extraction": {
+    "model": "golden-fixture",
+    "prompt_version": "demand-profile/v1",
+    "schema_version": "1",
+    "validator_version": "1",
+    "at": "2026-08-26T00:00:00Z"
+  }
+}
