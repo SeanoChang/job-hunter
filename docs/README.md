@@ -25,6 +25,9 @@ dispositions of the 2026-08-17 external review:
 
 ## Design documents
 
+- `2026-08-25-durability-and-serving.md` — draft. Dead-man's switch, redundant
+  schedulers, checkpointed rebuild, nightly snapshots; public serving ruled as
+  snippets + attribution.
 - `2026-08-18-ingestion-layer-spec.md` — **current, normative.** Ingestion
   layer: one hosted corpus, R2 archive as truth, artifact identities, Postgres
   (Neon) store with presence intervals, lifecycle algorithm with drop guard and
