@@ -44,9 +44,9 @@ docker compose up -d postgres             # local Postgres (compose also has Min
 uv run job-hunter --help                  # CLI entry point
 ```
 
-CLI: `version`, `fetch`, `ingest`, `rebuild`, `report`, `status`,
+CLI: `version`, `fetch`, `ingest`, `rebuild`, `report`, `status`, `verify`,
 `archive ls`, `registry check|list`, `db init|version` — all accept `--json`;
-exit 0 normal, 2 systemic. Env config via `JOB_HUNTER_*` variables (see
+exit 0 normal, 2 systemic (`verify` adds exit 1 = findings failed). Env config via `JOB_HUNTER_*` variables (see
 `src/jobhunter/config.py`); full run instructions in `README.md`.
 
 ## Conventions
