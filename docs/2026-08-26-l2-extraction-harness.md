@@ -290,7 +290,7 @@ crash-heal catch-up scan can list "keys newer than watermark" directly
   prompts/<prompt_version>.txt        # rendered template, write-once
   schemas/<schema_version>.json       # emit + record schema, write-once
   attempts/<YYYY>/<MM>/<DD>T<HHMMSS>Z-<dochash12>-s<slot>a<no>.json.gz
-  reviews/<YYYY>/<MM>/<DD>T<HHMMSS>Z-<dochash12>.json
+  reviews/<YYYY>/<MM>/<DD>T<HHMMSS>Z-<dochash12>-<seq>-<verb>.json
 consolidation/<YYYY-MM-DD>/…          # section 5.3 products
 memos/<YYYY-MM-DD>-<topic>-<sha8>.json
 proposals/refutations/<UTC-ts>-<sha8>.json
@@ -360,7 +360,7 @@ stateDiagram-v2
   in_flight --> in_flight: schema_invalid or attribution_failed, attempt < 3 (error-fed reprompt)
   in_flight --> pending: transport/throttled — no content attempt consumed
   in_flight --> pending: model_rejected (5 consecutive abort the run)
-  in_flight --> validated: verifier pass + k-policy satisfied
+  in_flight --> validated: verifier pass + k-policy satisfied (from pending ONLY — a machine result never overrides a settled or reviewed state)
   in_flight --> needs_review: verifier pass, k-agreement below threshold
   in_flight --> in_flight: rung exhausted, next ladder candidate (fresh attempts)
   in_flight --> quarantined: ladder exhausted, or over_budget
@@ -908,14 +908,20 @@ Environment (via `config.py`, the only env reader):
 - `JOB_HUNTER_L2_BASE_URL`, `JOB_HUNTER_L2_API_KEY` — endpoint for
   `openai-compat` (OpenRouter/Cloudflare/vLLM/ollama all conform);
   `ANTHROPIC_API_KEY` for `api`.
-- `JOB_HUNTER_L2_MODELS` — accepted observed-model globs, comma-separated
-  (e.g. `z-ai/glm-5.2*`).
+- `JOB_HUNTER_L2_MODELS` — accepted observed-model globs (`*`/`?` only),
+  comma-separated (e.g. `z-ai/glm-5.2*`). Defaults to the candidate list —
+  strict by default; widening to `*` is an explicit operator choice. An
+  explicitly empty value is a config error, never a silent wildcard.
 - `JOB_HUNTER_L2_MODEL_CANDIDATES` — the ordered ladder (cheap → strong),
   tried in order on model-not-found **and** on content-attempt exhaustion
   (4.4). Each id that serves yields its own tuple; the ladder config is
   hashed for the series key (5.2).
-- `JOB_HUNTER_L2_MAX_DOCS` (300), `JOB_HUNTER_L2_MAX_USD` (5.00),
-  `JOB_HUNTER_L2_CONCURRENCY` (2), `JOB_HUNTER_L2_AUDIT_MOD` (20).
+- `JOB_HUNTER_L2_MAX_DOCS` (300), `JOB_HUNTER_L2_MAX_USD` (5.00) — the cap
+  is strict-greater, so `0` means "free work only" (the supervised
+  subscription-backfill mode); `JOB_HUNTER_L2_PRICE` — optional
+  `in_usd_per_mtok,out_usd_per_mtok` used to price token counts when the
+  endpoint reports no cost; `JOB_HUNTER_L2_CONCURRENCY` (2),
+  `JOB_HUNTER_L2_AUDIT_MOD` (20).
 - `JOB_HUNTER_ALERT_URL` — attention-digest webhook (4.9),
   Slack-incoming-webhook compatible; best-effort; unset = disabled.
   Distinct from `JOB_HUNTER_PING_URL` (liveness).
@@ -927,7 +933,7 @@ systemic, plus `verify`'s documented exit `1`):
 
 | command | effect |
 | --- | --- |
-| `extract [--max-docs N] [--max-usd X] [--doc HASH] [--dry-run]` | lock, catch-up scan, drain queue under caps |
+| `extract run [--max-docs N] [--max-usd X] [--doc HASH] [--dry-run]` | lock, catch-up scan, drain queue under caps (subcommand shape: bare `extract` collides with its sub-verbs; M2 is serial — concurrency arrives with the M3 audit stream) |
 | `verify [DOC_HASH] [--all \| --since 7d] [--from-archive]` | recompute every check over archived attempts; no LLM; exit 1 on findings |
 | `extract review list \| show \| next \| accept \| reject \| retry \| flag` | inbox, dossier (`--json`, `--html` self-contained highlighted-span page), interactive loop, decision verbs; archive event first, then derived row; takes the extract lock |
 | `extract review label <doc>` | gold-labeling mode: shows the document only, never model output; labels append to gold |

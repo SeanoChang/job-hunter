@@ -38,6 +38,19 @@ def _validator(version: str) -> jsonschema.Draft202012Validator:
     return jsonschema.Draft202012Validator(_load(version, "record"))
 
 
+@cache
+def _emit_validator(version: str) -> jsonschema.Draft202012Validator:
+    return jsonschema.Draft202012Validator(_load(version, "emit"))
+
+
+def validate_emit(emit: dict[str, Any], version: str) -> list[str]:
+    errors = sorted(
+        _emit_validator(version).iter_errors(emit),
+        key=lambda e: [str(p) for p in e.absolute_path],
+    )
+    return [f"{'/'.join(str(p) for p in e.absolute_path) or '<root>'}: {e.message}" for e in errors]
+
+
 def record_schema(version: str) -> dict[str, Any]:
     return copy.deepcopy(_load(version, "record"))  # copies: the cached dict must stay pristine
 
