@@ -568,6 +568,9 @@ through a read-only role; users' personal data never enters this database.
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` — R2 API token; required for
   `s3://`.
 - `JOB_HUNTER_DROP_RATIO` — drop-guard ratio; default `0.5`.
+- `JOB_HUNTER_PING_URL` — optional liveness ping (dead-man's switch), POSTed
+  after each completed fetch phase; unset = disabled. See
+  `2026-08-25-durability-and-serving.md` §3.1.
 - `JOB_HUNTER_REGISTRY` — path to `companies.toml`; default `./companies.toml`.
 - `JOB_HUNTER_HOME` — optional local cache; default `~/.local/share/job-hunter`.
 

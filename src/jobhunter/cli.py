@@ -287,10 +287,14 @@ def status(as_json: bool = typer.Option(False, "--json")) -> None:
         })
     untracked = sorted(set(latest) - {b.key for b in registry.boards})
     payload: dict[str, Any] = {"boards": rows, "untracked": untracked}
-    db_error = _merge_store_health(settings, rows) if settings.database_url else None
-    show_db = settings.database_url is not None and db_error is None
     if settings.database_url:
+        db_error, db_size = _merge_store_health(settings, rows)
         payload["db_error"] = db_error
+        if db_size is not None:
+            payload["db_size_bytes"] = db_size
+    else:
+        db_error = None
+    show_db = settings.database_url is not None and db_error is None
     header = "board                            last attempt          transport   status  records"
     human = [header + ("  health    open" if show_db else "")]
     for r in rows:
@@ -306,31 +310,38 @@ def status(as_json: bool = typer.Option(False, "--json")) -> None:
         human.append(line)
     if db_error:
         human.append(f"db error: {db_error} (archive health above is still current)")
+    elif settings.database_url and payload.get("db_size_bytes") is not None:
+        human.append(f"db size: {payload['db_size_bytes'] / 1e6:.1f} MB")
     if untracked:
         human.append(f"not in registry but present in archive: {', '.join(untracked)}")
     _emit(payload, as_json, "\n".join(human))
 
 
-def _merge_store_health(settings: Settings, rows: list[dict[str, Any]]) -> str | None:
-    """Add `health`/`open` to each row from the store; return the error if it is unreachable."""
-    from jobhunter.store.queries import board_health, open_counts
+def _merge_store_health(
+    settings: Settings, rows: list[dict[str, Any]]
+) -> tuple[str | None, int | None]:
+    """Add `health`/`open` to each row from the store.
+
+    Returns the error if the DB is unreachable, else `(None, database size in bytes)`."""
+    from jobhunter.store.queries import board_health, database_size, open_counts
 
     try:
         conn = _db.connect(settings.require_database_url(), schema=_schema)
     except Exception as e:  # status is a report: an unreachable DB is noted, never fatal
-        return f"{type(e).__name__}: {e}"
+        return f"{type(e).__name__}: {e}", None
     try:
         health = board_health(conn)
         opens = open_counts(conn)
+        size = database_size(conn)
     except Exception as e:
-        return f"{type(e).__name__}: {e}"
+        return f"{type(e).__name__}: {e}", None
     finally:
         conn.close()
     for r in rows:
         h = health.get(r["board"])
         r["health"] = h["health"] if h else None
         r["open"] = opens.get(r["board"], 0)
-    return None
+    return None, size
 
 
 @archive_app.command("ls")

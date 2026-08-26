@@ -240,3 +240,12 @@ def test_ingest_exits_2_on_gap_manifests(
     assert r.exit_code == 2
     data = json.loads(r.stdout)
     assert len(data["gaps"]) == 1 and "rebuild" in data["hint"]
+
+
+def test_status_reports_db_size(env: Path) -> None:
+    runner.invoke(cli.app, ["fetch"])
+    sj = runner.invoke(cli.app, ["status", "--json"])
+    data = json.loads(sj.stdout)
+    assert isinstance(data["db_size_bytes"], int) and data["db_size_bytes"] > 0
+    sh = runner.invoke(cli.app, ["status"])
+    assert sh.exit_code == 0 and "db size" in sh.stdout
