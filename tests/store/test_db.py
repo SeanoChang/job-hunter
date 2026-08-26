@@ -8,6 +8,7 @@ from tests.conftest import TEST_DSN
 EXPECTED_TABLES = {
     "fetch_attempts", "posting_versions", "documents", "presence", "runs", "panel",
     "postings", "posting_events", "schema_meta",
+    "extraction_attempts", "extraction_reviews", "extractions",
 }
 
 
@@ -110,3 +111,22 @@ def test_init_refuses_schema_version_mismatch(pg: psycopg.Connection[dict[str, A
     with pytest.raises(SchemaMismatch, match="0"):
         db.init(pg, _schema_of(pg))
     pg.rollback()
+
+
+def test_additive_upgrade_from_v1_stamps_version(pg: psycopg.Connection[dict[str, Any]]) -> None:
+    schema = _schema_of(pg)
+    db.set_meta(pg, "schema_version", "1")
+    pg.commit()
+    db.init(pg, schema)  # must upgrade in place, not raise SchemaMismatch
+    pg.commit()
+    assert db.stored_schema_version(pg) == db.SCHEMA_VERSION
+
+
+def test_non_additive_mismatch_still_raises(pg: psycopg.Connection[dict[str, Any]]) -> None:
+    import pytest
+
+    schema = _schema_of(pg)
+    db.set_meta(pg, "schema_version", "0")
+    pg.commit()
+    with pytest.raises(db.SchemaMismatch):
+        db.init(pg, schema)

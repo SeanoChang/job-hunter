@@ -52,3 +52,50 @@ def registry_key(revision: str) -> str:
 
 def version_key(version_hash: str) -> str:
     return f"versions/{version_hash[:2]}/{version_hash}.html.gz"
+
+
+# -- extraction layer (harness spec §4.2): date-first so the catch-up scan can
+# list "keys newer than the watermark" with start_after; the document hash is
+# inside the leaf name, not the path.
+
+X_PREFIX = "extractions/"
+X_ATTEMPTS_PREFIX = "extractions/attempts/"
+X_REVIEWS_PREFIX = "extractions/reviews/"
+_X_ATTEMPT_KEY_RE = re.compile(
+    r"^extractions/attempts/(\d{4})/(\d{2})/(\d{2})T(\d{2})(\d{2})(\d{2})Z"
+    r"-([0-9a-f]{12})-s(\d+)a(\d+)\.json\.gz$"
+)
+
+
+def x_prompt_key(prompt_version: str) -> str:
+    return f"{X_PREFIX}prompts/{prompt_version.replace('/', '__')}.txt"
+
+
+def x_schema_key(schema_version: str) -> str:
+    return f"{X_PREFIX}schemas/{schema_version}.json"
+
+
+def _x_stamp(at: datetime) -> str:
+    ts = iso(at)  # 2026-08-27T06:12:04Z
+    return f"{ts[0:4]}/{ts[5:7]}/{ts[8:10]}T{ts[11:19].replace(':', '')}Z"
+
+
+def x_attempt_key(started_at: datetime, document_hash: str, slot: int, attempt_no: int) -> str:
+    leaf = f"{_x_stamp(started_at)}-{document_hash[:12]}-s{slot}a{attempt_no}.json.gz"
+    return X_ATTEMPTS_PREFIX + leaf
+
+
+def parse_x_attempt_key(key: str) -> tuple[datetime, str, int, int] | None:
+    m = _X_ATTEMPT_KEY_RE.match(key)
+    if not m:
+        return None
+    y, mo, d, hh, mm, ss, dochash12, slot, no = m.groups()
+    at = datetime(int(y), int(mo), int(d), int(hh), int(mm), int(ss), tzinfo=UTC)
+    return at, dochash12, int(slot), int(no)
+
+
+def x_review_key(at: datetime, document_hash: str, verb: str, seq: int) -> str:
+    # seq is the per-document review ordinal: utcnow() is second-granular, so
+    # same-second verbs need an order the fold can reproduce from the event
+    # alone (key sort == seq order == fold order, live and in replay)
+    return f"{X_PREFIX}reviews/{_x_stamp(at)}-{document_hash[:12]}-{seq:04d}-{verb}.json"

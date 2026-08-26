@@ -308,3 +308,111 @@ def test_verify_human_output_shows_mismatch_diagnostics(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert "expected:" in result.stdout and "found:" in result.stdout
     assert "longest matching prefix:" in result.stdout
+
+
+@pytest.fixture
+def xenv(
+    pg: psycopg.Connection[dict[str, Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    (tmp_path / "companies.toml").write_text(
+        '[[boards]]\ncompany="X"\nsource="greenhouse"\nboard="x"\n'
+    )
+    monkeypatch.setenv("JOB_HUNTER_ARCHIVE_URL", f"file://{tmp_path / 'archive'}")
+    monkeypatch.setenv("JOB_HUNTER_REGISTRY", str(tmp_path / "companies.toml"))
+    monkeypatch.setenv("JOB_HUNTER_DATABASE_URL", TEST_DSN)
+    monkeypatch.setenv("JOB_HUNTER_L2_BASE_URL", "https://openrouter.test/api/v1")
+    monkeypatch.setenv("JOB_HUNTER_L2_MODELS", "z-ai/*")
+    monkeypatch.setenv("JOB_HUNTER_L2_MODEL_CANDIDATES", "z-ai/glm-5.2:free")
+    row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert row is not None
+    monkeypatch.setattr(cli, "_schema", str(row["s"]))
+    from tests.l2.test_runner import GOOD, FakeEngine, _seed_doc
+
+    _seed_doc(pg)
+    monkeypatch.setattr(cli, "_make_engine", lambda settings: FakeEngine([GOOD]))
+    return tmp_path
+
+
+def test_extract_run_review_verify_status_end_to_end(
+    xenv: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    from tests.l2.test_runner import DH
+
+    r = runner.invoke(cli.app, ["extract", "run", "--json"])
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.stdout)
+    assert data["validated"] == 1
+
+    r = runner.invoke(cli.app, ["extract", "review", "list", "--json"])
+    assert json.loads(r.stdout)["inbox"] == []
+
+    r = runner.invoke(cli.app, ["extract", "review", "flag", DH, "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["status"] == "needs_review"
+
+    r = runner.invoke(cli.app, ["extract", "review", "list", "--json"])
+    inbox = json.loads(r.stdout)["inbox"]
+    assert len(inbox) == 1 and inbox[0]["document_hash"] == DH
+
+    r = runner.invoke(cli.app, ["extract", "review", "show", DH])
+    assert r.exit_code == 0 and "needs_review" in r.stdout and "a1 ok" in r.stdout
+
+    r = runner.invoke(cli.app, ["extract", "review", "accept", DH, "--json"])
+    assert json.loads(r.stdout)["status"] == "validated"
+
+    r = runner.invoke(cli.app, ["verify", DH, "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["status"] == "pass"
+
+    r = runner.invoke(cli.app, ["status", "--json"])
+    assert r.exit_code == 0, r.output
+    block = json.loads(r.stdout).get("extraction")
+    assert block and block["by_status"] == {"validated": 1}
+    assert block["observed_models_7d"] == ["z-ai/glm-5.2:free"]
+
+    r = runner.invoke(cli.app, ["extract", "rebuild", "--json"])
+    assert r.exit_code == 0, r.output
+    counts = json.loads(r.stdout)
+    assert counts["attempts"] == 1 and counts["reviews"] == 2
+
+
+def test_extract_run_requires_l2_config(xenv: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("JOB_HUNTER_L2_BASE_URL")
+    r = runner.invoke(cli.app, ["extract", "run"])
+    assert r.exit_code == 2 and "JOB_HUNTER_L2" in r.stdout
+
+
+def test_reject_requires_note(xenv: Path) -> None:
+    from tests.l2.test_runner import DH
+
+    runner.invoke(cli.app, ["extract", "run"])
+    r = runner.invoke(cli.app, ["extract", "review", "reject", DH])
+    assert r.exit_code != 0  # typer enforces the missing --note
+
+
+def test_verify_hash_with_missing_archive_object_is_systemic(
+    xenv: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    from tests.l2.test_runner import DH
+
+    r = runner.invoke(cli.app, ["extract", "run"])
+    assert r.exit_code == 0, r.output
+    row = pg.execute("SELECT chosen_attempt FROM extractions").fetchone()
+    assert row is not None
+    archive_root = xenv / "archive" / row["chosen_attempt"]
+    archive_root.unlink()  # simulate a lost/unreplicated attempt object
+    r = runner.invoke(cli.app, ["verify", DH])
+    assert r.exit_code == 2, r.output  # infrastructure failure, never "findings failed"
+
+
+def test_throttled_zero_progress_run_is_systemic(
+    xenv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobhunter.l2.engines import EngineThrottled
+    from tests.l2.test_runner import FakeEngine
+
+    monkeypatch.setattr(cli, "_make_engine", lambda s: FakeEngine([EngineThrottled("429")]))
+    r = runner.invoke(cli.app, ["extract", "run"])
+    assert r.exit_code == 2, r.output  # a scheduled run that did nothing must not report success

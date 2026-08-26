@@ -15,8 +15,12 @@ class SchemaMismatch(RuntimeError):
 
 
 SCHEMA = "jobhunter"
-SCHEMA_VERSION = "1"
-LOCK_KEY = 0x6A6F6268  # "jobh"
+SCHEMA_VERSION = "2"
+# stored -> code versions where schema.sql's idempotent DDL is the whole
+# migration (purely additive changes); anything else still demands `rebuild`
+_ADDITIVE_UPGRADES = {("1", "2")}
+LOCK_KEY = 0x6A6F6268  # "jobh" — ingestion writer
+EXTRACT_LOCK_KEY = 0x6A6F6232  # "job2" — extraction writer (harness spec §4.6)
 
 Conn = psycopg.Connection[dict[str, Any]]
 
@@ -78,6 +82,14 @@ def init(conn: Conn, schema: str = SCHEMA) -> None:
         with contextlib.suppress(psycopg.Error):
             conn.execute(sql.SQL("SET search_path TO {}").format(sql.SQL(previous_path)))
     if stored != SCHEMA_VERSION:
+        if (stored, SCHEMA_VERSION) in _ADDITIVE_UPGRADES:
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {}.schema_meta SET value = %s WHERE key = 'schema_version'"
+                ).format(sql.Identifier(schema)),
+                (SCHEMA_VERSION,),
+            )
+            return
         raise SchemaMismatch(
             f"database schema_version {stored!r} != code {SCHEMA_VERSION!r}; "
             "run `job-hunter rebuild`"

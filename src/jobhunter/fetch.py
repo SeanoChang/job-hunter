@@ -199,7 +199,7 @@ def run(
                 return RunSummary(run_id, started, now(), registry.revision, [], lock_held=True)
             _db.init(conn, schema)
             conn.commit()
-        except (psycopg.Error, OSError) as e:
+        except (psycopg.Error, OSError, _db.SchemaMismatch) as e:
             db_error = f"{type(e).__name__}: {e}"
             if conn is not None:
                 conn.close()
