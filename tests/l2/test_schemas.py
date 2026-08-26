@@ -44,3 +44,21 @@ def test_pathlike_version_is_keyerror() -> None:
 
     with _pytest.raises(KeyError):
         record_schema("1/record.schema.json")
+
+
+def test_traversal_version_is_keyerror() -> None:
+    import pytest as _pytest
+
+    for version in ("1/../1", "../schemas_data/1", "/tmp"):
+        with _pytest.raises(KeyError):
+            record_schema(version)
+
+
+def test_whitespace_only_evidence_rejected() -> None:
+    rec = minimal_record()
+    rec["demand_profile"]["areas"][0]["mentions"] = [" "]
+    assert validate_record(rec, "1")
+
+    rec2 = minimal_record()
+    rec2["demand_profile"]["areas"][0]["claims"][0]["level_evidence"] = "  "
+    assert validate_record(rec2, "1")
