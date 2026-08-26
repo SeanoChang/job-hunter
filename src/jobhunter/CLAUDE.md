@@ -8,9 +8,9 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
 ## Layout
 
 - `cli.py` — Typer entry point (`job-hunter`). Commands: `version`, `fetch`,
-  `ingest`, `rebuild`, `report`, `status`; sub-apps `archive ls`,
+  `ingest`, `rebuild`, `report`, `status`, `verify`; sub-apps `archive ls`,
   `registry check|list`, `db init|version`. Every command accepts `--json`;
-  exit 0 normal, 2 systemic.
+  exit 0 normal, 2 systemic (`verify` adds exit 1 = findings failed).
 - `models.py` — frozen dataclasses shared by every module. No I/O.
 - `registry.py` — `companies.toml` → validated `Board` list + revision hash.
 - `fetch.py` — one run: registry → fetch every board (thread pool) → archive
@@ -34,12 +34,18 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
   (local FS / S3-R2).
 - [`store/`](store/CLAUDE.md) — Postgres schema, lifecycle write path, panel,
   read queries.
+- `l2/` — demand-profile verification (increment 1): quote/span resolution
+  (`quotes.py`), versioned fact transforms (`transforms.py`), JSON schemas v1
+  (`schemas_data/`), the pure `verify()` check suite (`verify.py`).
+  `VALIDATOR_VERSION = "1"` is frozen — any check or threshold change bumps it
+  (`docs/2026-08-26-l2-extraction-harness.md` §3). No I/O, no LLM.
 
 ## Conventions
 
 - Strict typing (`mypy --strict`), ruff line length 100, import sorting on.
 - Identity/hashing only via `hashing.py`; time only via `timeutil.py`;
   environment only via `config.py`.
-- Not built yet (design docs): demand-profile extractor (L2), concept linker.
+- Not built yet (design docs): L2 extraction runner (harness increments 2+),
+  concept linker.
 
 Parent: [../../CLAUDE.md](../../CLAUDE.md)
