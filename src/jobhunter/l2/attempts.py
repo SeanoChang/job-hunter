@@ -47,6 +47,7 @@ class Attempt:
     cost_usd: float | None
     started_at: str
     finished_at: str
+    record: dict[str, Any] | None = None  # the assembled record, on passing attempts
 
     def __post_init__(self) -> None:
         if self.outcome not in OUTCOMES:
