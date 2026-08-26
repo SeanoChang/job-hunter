@@ -122,12 +122,13 @@ def verify(
     try:
         extraction = json.loads(Path(extraction_file).read_text(encoding="utf-8"))
         markdown = Path(document_file).read_text(encoding="utf-8")
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(EXIT_SYSTEMIC) from exc
     try:
         report = l2_verify(extraction, markdown)
-    except (KeyError, TypeError) as exc:  # unknown schema version, malformed top level
+    except (KeyError, TypeError, AttributeError) as exc:
+        # unknown schema version, or a top level that is not the record shape
         typer.echo(f"error: {exc!r}", err=True)
         raise typer.Exit(EXIT_SYSTEMIC) from exc
 
