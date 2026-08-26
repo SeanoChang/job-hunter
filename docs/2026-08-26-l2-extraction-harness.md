@@ -290,7 +290,7 @@ crash-heal catch-up scan can list "keys newer than watermark" directly
   prompts/<prompt_version>.txt        # rendered template, write-once
   schemas/<schema_version>.json       # emit + record schema, write-once
   attempts/<YYYY>/<MM>/<DD>T<HHMMSS>Z-<dochash12>-s<slot>a<no>.json.gz
-  reviews/<YYYY>/<MM>/<DD>T<HHMMSS>Z-<dochash12>.json
+  reviews/<YYYY>/<MM>/<DD>T<HHMMSS>Z-<dochash12>-<verb>.json
 consolidation/<YYYY-MM-DD>/…          # section 5.3 products
 memos/<YYYY-MM-DD>-<topic>-<sha8>.json
 proposals/refutations/<UTC-ts>-<sha8>.json
@@ -927,7 +927,7 @@ systemic, plus `verify`'s documented exit `1`):
 
 | command | effect |
 | --- | --- |
-| `extract [--max-docs N] [--max-usd X] [--doc HASH] [--dry-run]` | lock, catch-up scan, drain queue under caps |
+| `extract run [--max-docs N] [--max-usd X] [--doc HASH] [--dry-run]` | lock, catch-up scan, drain queue under caps (subcommand shape: bare `extract` collides with its sub-verbs; M2 is serial — concurrency arrives with the M3 audit stream) |
 | `verify [DOC_HASH] [--all \| --since 7d] [--from-archive]` | recompute every check over archived attempts; no LLM; exit 1 on findings |
 | `extract review list \| show \| next \| accept \| reject \| retry \| flag` | inbox, dossier (`--json`, `--html` self-contained highlighted-span page), interactive loop, decision verbs; archive event first, then derived row; takes the extract lock |
 | `extract review label <doc>` | gold-labeling mode: shows the document only, never model output; labels append to gold |
