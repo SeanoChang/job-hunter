@@ -903,8 +903,20 @@ the fallback ever has to carry it.
 
 Environment (via `config.py`, the only env reader):
 
-- `JOB_HUNTER_L2_ENGINE` — `openai-compat | claude-cli | api`; default
-  `openai-compat`.
+- `JOB_HUNTER_L2_ENGINE` — `openai-compat | claude-cli | codex-cli | api`;
+  default `openai-compat`. `JOB_HUNTER_L2_REASONING_EFFORT` (`low`, default)
+  applies to `codex-cli`.
+- **CLI-agent engines must be isolated.** `codex exec` is an agentic loop by
+  default — it loads `~/.codex/config.toml`, connects MCP servers, reads
+  plugin skills and can shell out (a live trace spent 18k tokens reading
+  `SKILL.md` files before answering "hi"). Extraction is a pure function of
+  one document (Invariant I1) and the extraction identity assumes the prompt
+  bytes fully determine the request, so `CodexCli` passes
+  `--ignore-user-config --ephemeral -s read-only`, an empty scratch cwd,
+  closed stdin (codex blocks reading stdin when it is not a TTY), and an
+  explicit model and effort. `ClaudeCli` gets the same treatment via
+  `--tools "" --strict-mcp-config --no-session-persistence`. An engine that
+  cannot be reduced to text-in/JSON-out does not belong on this seam.
 - `JOB_HUNTER_L2_BASE_URL`, `JOB_HUNTER_L2_API_KEY` — endpoint for
   `openai-compat` (OpenRouter/Cloudflare/vLLM/ollama all conform);
   `ANTHROPIC_API_KEY` for `api`.

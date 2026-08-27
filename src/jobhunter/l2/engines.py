@@ -9,9 +9,11 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
@@ -199,4 +201,145 @@ class ClaudeCli:
             input_tokens=None,
             output_tokens=None,
             cost_usd=data.get("total_cost_usd"),
+        )
+
+
+def observed_from_events(stdout: str) -> tuple[str | None, int | None, int | None]:
+    """(observed_model, input_tokens, output_tokens) from `codex exec --json`.
+
+    The JSONL event schema is not a stable contract across codex versions, so
+    this scans events for a model id and a usage block rather than binding to
+    one shape: the first string `model` found at the top level or one nesting
+    level down wins, and token counts come from a `usage` object under either
+    the OpenAI (`prompt_tokens`) or codex (`input_tokens`) spelling. Because
+    the engine runs with --ignore-user-config and a single requested model,
+    the only model in play is the one that served the call. Nothing found ->
+    None, which the runner treats as `model_rejected` (never fall back to the
+    requested id: that forges provenance).
+    """
+    model: str | None = None
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+
+    def _usage(block: object) -> None:
+        nonlocal tokens_in, tokens_out
+        if not isinstance(block, dict):
+            return
+        for key in ("input_tokens", "prompt_tokens"):
+            if isinstance(block.get(key), int):
+                tokens_in = block[key]
+        for key in ("output_tokens", "completion_tokens"):
+            if isinstance(block.get(key), int):
+                tokens_out = block[key]
+
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        candidates: list[Any] = [event]
+        candidates.extend(v for v in event.values() if isinstance(v, dict))
+        for scope in candidates:
+            if model is None and isinstance(scope.get("model"), str) and scope["model"]:
+                model = scope["model"]
+            _usage(scope.get("usage"))
+    return model, tokens_in, tokens_out
+
+
+class CodexCli:
+    """OpenAI Codex via `codex exec`, locked down to a pure completion.
+
+    `codex exec` is an agentic loop by default: it loads ~/.codex/config.toml,
+    connects MCP servers, reads plugin skills and can shell out — a live trace
+    showed it spending 18k tokens reading SKILL.md files before answering
+    "hi". Extraction must be a pure function of one document (Invariant I1),
+    and the extraction cache identity is only sound if the prompt bytes fully
+    determine the request, so the engine refuses all of that:
+    --ignore-user-config (no MCP, no plugins, no configured model/effort),
+    --ephemeral (no session files), a read-only sandbox, an empty scratch cwd,
+    and closed stdin (codex reads stdin when it is not a TTY and blocks).
+    Model and reasoning effort are passed explicitly by the harness; effort
+    defaults to low because extraction is schema-bound labeling, not reasoning.
+    """
+
+    name = "codex-cli"
+
+    def __init__(
+        self,
+        reasoning_effort: str = "low",
+        timeout: float = 300.0,
+        run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+        which: Callable[[str], str | None] = shutil.which,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._reasoning_effort = reasoning_effort
+        self._timeout = timeout
+        self._run = run
+        self._which = which
+        self._sleep = sleep
+
+    def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
+        with tempfile.TemporaryDirectory(prefix="jh-codex-") as work:
+            schema_path = Path(work) / "schema.json"
+            schema_path.write_text(json.dumps(schema), encoding="utf-8")
+            out_path = Path(work) / "last-message.txt"
+            args = [
+                "exec",
+                "--json",
+                "--ephemeral",
+                "--skip-git-repo-check",
+                "--ignore-user-config",
+                "-s", "read-only",
+                "-m", model,
+                "-c", f'model_reasoning_effort="{self._reasoning_effort}"',
+                "--output-schema", str(schema_path),
+                "--output-last-message", str(out_path),
+                prompt,
+            ]
+            for attempt in range(3):  # the CLI self-updates; the binary can vanish briefly
+                exe = self._which("codex")
+                if exe:
+                    try:
+                        proc = self._run(
+                            [exe, *args],
+                            capture_output=True,
+                            text=True,
+                            timeout=self._timeout,
+                            stdin=subprocess.DEVNULL,
+                            cwd=work,
+                        )
+                        break
+                    except FileNotFoundError:
+                        pass
+                    except subprocess.TimeoutExpired as exc:
+                        raise EngineTransportError(f"codex exec timed out: {exc}") from exc
+                self._sleep(2.0 * (attempt + 1))
+            else:
+                raise EngineTransportError("codex CLI not found on PATH")
+
+            stderr = (proc.stderr or "")[:400]
+            if proc.returncode != 0:
+                lowered = stderr.lower()
+                if any(s in lowered for s in ("not logged in", "codex login", "unauthorized")):
+                    raise EngineFatalError(f"codex auth failed: {stderr}")
+                raise EngineTransportError(f"codex exited {proc.returncode}: {stderr}")
+            try:
+                raw_text = out_path.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise EngineTransportError(f"codex wrote no final message: {exc}") from exc
+            if not raw_text:
+                raise EngineTransportError("codex final message was empty")
+
+        observed, tokens_in, tokens_out = observed_from_events(proc.stdout or "")
+        return EngineResult(
+            raw_text=raw_text,
+            observed_model=observed,
+            input_tokens=tokens_in,
+            output_tokens=tokens_out,
+            cost_usd=None,  # codex reports no per-call cost; price via JOB_HUNTER_L2_PRICE
         )
