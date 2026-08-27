@@ -609,10 +609,12 @@ def _extraction_block(settings: Settings) -> dict[str, Any] | None:
 
 def _make_engine(settings: Settings) -> Any:
     """Indirection so tests can substitute a scripted fake engine."""
-    from jobhunter.l2.engines import ClaudeCli, OpenAICompat
+    from jobhunter.l2.engines import ClaudeCli, CodexCli, OpenAICompat
 
     if settings.l2_engine == "claude-cli":
         return ClaudeCli()
+    if settings.l2_engine == "codex-cli":
+        return CodexCli(reasoning_effort=settings.l2_reasoning_effort)
     assert settings.l2_base_url is not None  # require_l2 ran
     return OpenAICompat(settings.l2_base_url, settings.l2_api_key, prices=settings.l2_price)
 

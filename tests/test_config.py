@@ -142,3 +142,23 @@ def test_l2_price_parse() -> None:
     assert Settings.load(_L2_BASE).l2_price is None
     with _pytest.raises(ConfigError):
         Settings.load(_L2_BASE | {"JOB_HUNTER_L2_PRICE": "cheap"})
+
+
+def test_l2_codex_engine_and_effort() -> None:
+    import pytest as _pytest
+
+    s = Settings.load(
+        _L2_BASE
+        | {"JOB_HUNTER_L2_ENGINE": "codex-cli", "JOB_HUNTER_L2_MODEL_CANDIDATES": "gpt-5.6-sol"}
+    )
+    assert s.l2_engine == "codex-cli"
+    assert s.l2_reasoning_effort == "low"  # extraction is labeling, not reasoning
+    s.require_l2()  # codex-cli needs no base_url
+
+    assert Settings.load(
+        _L2_BASE | {"JOB_HUNTER_L2_REASONING_EFFORT": "medium"}
+    ).l2_reasoning_effort == "medium"
+    with _pytest.raises(ConfigError):
+        Settings.load(_L2_BASE | {"JOB_HUNTER_L2_REASONING_EFFORT": "ludicrous"})
+    with _pytest.raises(ConfigError):
+        Settings.load(_L2_BASE | {"JOB_HUNTER_L2_ENGINE": "carrier-pigeon"})

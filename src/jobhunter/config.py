@@ -28,6 +28,7 @@ class Settings:
     l2_max_docs: int = 300
     l2_max_usd: float = 5.0
     l2_price: tuple[float, float] | None = None  # USD per 1M tokens (in, out)
+    l2_reasoning_effort: str = "low"  # codex-cli: extraction is labeling, not reasoning
 
     def require_l2(self) -> None:
         if not self.l2_model_candidates:
@@ -61,8 +62,16 @@ class Settings:
         if not 0 < drop_ratio <= 1:
             raise ConfigError(f"JOB_HUNTER_DROP_RATIO must be in (0, 1], got {drop_ratio}")
         engine = e.get("JOB_HUNTER_L2_ENGINE", "openai-compat")
-        if engine not in ("openai-compat", "claude-cli"):
-            raise ConfigError(f"JOB_HUNTER_L2_ENGINE must be openai-compat or claude-cli: {engine}")
+        engines = ("openai-compat", "claude-cli", "codex-cli")
+        if engine not in engines:
+            raise ConfigError(
+                f"JOB_HUNTER_L2_ENGINE must be one of {', '.join(engines)}: {engine}"
+            )
+        effort = e.get("JOB_HUNTER_L2_REASONING_EFFORT", "low")
+        if effort not in ("low", "medium", "high", "max"):
+            raise ConfigError(
+                f"JOB_HUNTER_L2_REASONING_EFFORT must be low|medium|high|max: {effort}"
+            )
 
         def _csv(name: str) -> tuple[str, ...] | None:
             raw = e.get(name)
@@ -113,4 +122,5 @@ class Settings:
             l2_max_docs=l2_max_docs,
             l2_max_usd=l2_max_usd,
             l2_price=l2_price,
+            l2_reasoning_effort=effort,
         )
