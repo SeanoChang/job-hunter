@@ -29,6 +29,9 @@ class Settings:
     l2_max_usd: float = 5.0
     l2_price: tuple[float, float] | None = None  # USD per 1M tokens (in, out)
     l2_reasoning_effort: str = "low"  # codex-cli: extraction is labeling, not reasoning
+    # codex reports no model id; opt in to recording the requested one as
+    # asserted (not observed) provenance — a silent swap becomes undetectable
+    l2_trust_requested_model: bool = False
 
     def require_l2(self) -> None:
         if not self.l2_model_candidates:
@@ -123,4 +126,8 @@ class Settings:
             l2_max_usd=l2_max_usd,
             l2_price=l2_price,
             l2_reasoning_effort=effort,
+            l2_trust_requested_model=e.get("JOB_HUNTER_L2_TRUST_REQUESTED_MODEL", "")
+            .strip()
+            .lower()
+            in ("1", "true", "yes"),
         )

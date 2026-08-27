@@ -176,3 +176,48 @@ def test_unresolvable_model_fails_safe() -> None:
     run = FakeRun('{"ok": true}', stdout='{"type":"turn.started"}')
     result = _engine(run).complete("p", SCHEMA, "gpt-5.6-sol")
     assert result.observed_model is None
+
+
+# --- provenance: codex reports no model id --------------------------------
+# Verified against codex-cli 0.149.1: the --json vocabulary is
+# thread.started / turn.started / item.completed / turn.completed, and none
+# of those events carries a model field. The observed-model rule (spec §4.1)
+# therefore cannot be satisfied, so trusting the requested id is opt-in.
+
+REAL_EVENTS = "\n".join([
+    '{"type":"thread.started","thread_id":"01a043a8-1095-7883-95e7-7a5b59ea19ab"}',
+    '{"type":"turn.started"}',
+    '{"type":"item.completed","item":{"id":"item_0","type":"agent_message",'
+    '"text":"{\\"ok\\":true}"}}',
+    '{"type":"turn.completed","usage":{"input_tokens":15418,"cached_input_tokens":0,'
+    '"cache_write_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0}}',
+])
+
+
+def test_real_codex_events_yield_tokens_but_no_model() -> None:
+    model, tin, tout = observed_from_events(REAL_EVENTS)
+    assert model is None          # codex simply does not report it
+    assert tin == 15418 and tout == 20
+
+
+def test_default_fails_safe_on_real_events() -> None:
+    run = FakeRun('{"ok": true}', stdout=REAL_EVENTS)
+    result = _engine(run).complete("p", SCHEMA, "gpt-5.6-sol")
+    assert result.observed_model is None   # -> runner records model_rejected
+    assert result.input_tokens == 15418
+
+
+def test_trust_requested_model_is_opt_in() -> None:
+    run = FakeRun('{"ok": true}', stdout=REAL_EVENTS)
+    engine = _engine(run, trust_requested_model=True)
+    result = engine.complete("p", SCHEMA, "gpt-5.6-sol")
+    assert result.observed_model == "gpt-5.6-sol"  # asserted, not observed
+
+
+def test_trust_flag_never_overrides_a_reported_model() -> None:
+    """If a future codex does report a model, the reported one wins — the flag
+    fills a gap, it never overwrites real provenance."""
+    events = REAL_EVENTS + '\n{"type":"turn.started","model":"gpt-5.7-actual"}'
+    run = FakeRun('{"ok": true}', stdout=events)
+    result = _engine(run, trust_requested_model=True).complete("p", SCHEMA, "gpt-5.6-sol")
+    assert result.observed_model == "gpt-5.7-actual"

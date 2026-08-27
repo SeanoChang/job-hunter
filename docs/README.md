@@ -128,6 +128,12 @@ and a dated judge run. Its README carries the superseded banner.
   levels; the demand description is the most important extraction; the LLM is
   not the only solution — record must be evidence-first, LLM as labeler, small
   models later; external review's eight findings adopted.
+- 2026-08-27 — codex-cli is a supported extraction engine, but only fully
+  isolated (--ignore-user-config kills its MCP servers and plugin skills;
+  an agentic engine cannot be an extraction engine). It reports no model
+  id, so recording the requested one is opt-in
+  (JOB_HUNTER_L2_TRUST_REQUESTED_MODEL) and marked as asserted, not
+  observed, provenance.
 - 2026-08-26 — L2 harness: evidence as quote objects (codepoint spans; the LLM
   never computes offsets; no fuzzy repair); one verifier, `validator_version`
   in the engine tuple; `model` observed from responses, never configured;

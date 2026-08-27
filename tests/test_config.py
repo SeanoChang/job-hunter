@@ -162,3 +162,16 @@ def test_l2_codex_engine_and_effort() -> None:
         Settings.load(_L2_BASE | {"JOB_HUNTER_L2_REASONING_EFFORT": "ludicrous"})
     with _pytest.raises(ConfigError):
         Settings.load(_L2_BASE | {"JOB_HUNTER_L2_ENGINE": "carrier-pigeon"})
+
+
+def test_l2_trust_requested_model_flag() -> None:
+    assert Settings.load(_L2_BASE).l2_trust_requested_model is False  # fail-safe default
+    for truthy in ("1", "true", "YES"):
+        s = Settings.load(_L2_BASE | {"JOB_HUNTER_L2_TRUST_REQUESTED_MODEL": truthy})
+        assert s.l2_trust_requested_model is True
+    assert (
+        Settings.load(
+            _L2_BASE | {"JOB_HUNTER_L2_TRUST_REQUESTED_MODEL": "0"}
+        ).l2_trust_requested_model
+        is False
+    )
