@@ -84,3 +84,33 @@ store with `job-hunter report --since 24h` before running another one.
 > number here; if it is already painful, the fix is batching the per-record
 > inserts (COPY / executemany), which is designed but not built. Known
 > liability, accepted 2026-08-19.
+
+## Extraction in CI (added 2026-08-27)
+
+The daily `fetch` workflow runs L2 extraction as a step between `fetch` and
+`status` — a step rather than a second cron, because a separate schedule is
+another thing that can die silently (durability doc §1). It takes its own
+advisory lock (`job2`), so it cannot collide with ingestion.
+
+Enable it by adding one secret:
+
+- `JOB_HUNTER_L2_API_KEY` — an OpenRouter key. Buy the one-time $10 credit to
+  lift the free tier from 50 to 1,000 requests/day; the retry ladder can spend
+  up to 3 calls per document, so 50/day is only ~16 documents.
+
+Until that secret exists the step prints "extraction skipped" and exits 0, so
+the collection job stays green. Optional repository variables override the
+defaults without editing the workflow: `JOB_HUNTER_L2_MODEL_CANDIDATES`
+(default `z-ai/glm-5.2:free`), `JOB_HUNTER_L2_MODELS` (default `z-ai/*`),
+`JOB_HUNTER_L2_BASE_URL`, `JOB_HUNTER_L2_MAX_DOCS` (default 50),
+`JOB_HUNTER_L2_MAX_USD` (default 0 = free work only).
+
+Run a canary from the Actions UI (or `gh workflow run fetch.yml -f
+extract_max_docs=1`): the `extract_max_docs` input overrides the cap for that
+run, and `0` skips extraction entirely.
+
+The step is `continue-on-error: true` on purpose. Collection is irreplaceable
+— history cannot be backfilled — while extraction is recomputable from the
+archive at any time, so a bad engine day must never fail the run that guards
+history. Extraction problems stay visible in the step log, in the
+`extract-summary.json` artifact, and in the `status` block that follows it.
