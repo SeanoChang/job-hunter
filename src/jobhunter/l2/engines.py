@@ -265,6 +265,17 @@ class CodexCli:
     and closed stdin (codex reads stdin when it is not a TTY and blocks).
     Model and reasoning effort are passed explicitly by the harness; effort
     defaults to low because extraction is schema-bound labeling, not reasoning.
+
+    PROVENANCE LIMIT (verified against codex-cli 0.149.1): the --json event
+    stream — thread.started / turn.started / item.completed / turn.completed —
+    carries token usage but no model id, so the observed-model rule (spec
+    §4.1) cannot be satisfied. The engine reports None by default, which the
+    runner records as `model_rejected`. `trust_requested_model=True`
+    (JOB_HUNTER_L2_TRUST_REQUESTED_MODEL=1) makes it record the requested id
+    instead — an ASSERTION, not an observation: a silent server-side model
+    swap is undetectable in that mode, so a series built on it is only as
+    trustworthy as the operator's config. A model id actually present in the
+    stream always wins over the assertion.
     """
 
     name = "codex-cli"
@@ -272,12 +283,14 @@ class CodexCli:
     def __init__(
         self,
         reasoning_effort: str = "low",
+        trust_requested_model: bool = False,
         timeout: float = 300.0,
         run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
         which: Callable[[str], str | None] = shutil.which,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._reasoning_effort = reasoning_effort
+        self._trust_requested_model = trust_requested_model
         self._timeout = timeout
         self._run = run
         self._which = which
@@ -336,6 +349,8 @@ class CodexCli:
                 raise EngineTransportError("codex final message was empty")
 
         observed, tokens_in, tokens_out = observed_from_events(proc.stdout or "")
+        if observed is None and self._trust_requested_model:
+            observed = model  # asserted provenance; see PROVENANCE LIMIT above
         return EngineResult(
             raw_text=raw_text,
             observed_model=observed,
