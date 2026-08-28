@@ -307,7 +307,7 @@ def test_verify_human_output_shows_mismatch_diagnostics(tmp_path: Path) -> None:
     result = runner.invoke(cli.app, ["verify", str(bad), str(doc)])
     assert result.exit_code == 1
     assert "expected:" in result.stdout and "found:" in result.stdout
-    assert "longest matching prefix:" in result.stdout
+    assert "matches the document for" in result.stdout
 
 
 @pytest.fixture

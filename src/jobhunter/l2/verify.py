@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from jobhunter.hashing import sha256_hex
-from jobhunter.l2.quotes import longest_matching_prefix, occurrence_index
+from jobhunter.l2.quotes import describe_not_found, longest_matching_prefix, occurrence_index
 from jobhunter.l2.report import Report
 from jobhunter.l2.schemas import validate_record
 from jobhunter.l2.transforms import TRANSFORMS, VALIDATOR_VERSION
@@ -58,6 +58,7 @@ def _check_attribution(extraction: dict[str, Any], md: str, report: Report) -> N
                 found=md[s:e],
                 span=[s, e],
                 longest_prefix=longest_matching_prefix(md, q["text"]),
+                divergence=describe_not_found(md, q["text"]),
             )
             continue
         if occurrence_index(md, q["text"], s) != q["occurrence"]:
