@@ -9,13 +9,21 @@ after three attempts, on two defects this version addresses:
   * evidence fragments (level_evidence / qualifiers / evidence_sources) were
     paraphrased rather than copied, failing the substring check.
 v1 attempts remain valid provenance under their own engine tuple.
+
+v3 (2026-08-28) — a five-document run surfaced a third failure mode the design
+had not anticipated. The attribution gate assumed a failed exact match means
+fabrication or a transcription slip; in practice the model SILENTLY NORMALISES
+TYPOGRAPHY, straightening curly quotes and apostrophes. Two quotes failed that
+way on one posting ("Anthropic\u2019s" and "\u201cOTE\u201d"), indistinguishable
+from fabrication under exact matching. Fuzzy repair is not an option — it is
+the hole every invented quote would walk through — so v3 names the trap.
 """
 
 from __future__ import annotations
 
 from jobhunter.hashing import sha256_hex
 
-PROMPT_VERSION = "demand-profile/v2"
+PROMPT_VERSION = "demand-profile/v3"
 
 TEMPLATE = """\
 You are extracting a demand profile from ONE job posting document.
@@ -28,6 +36,11 @@ Return ONLY JSON conforming to the provided schema. Rules:
 - Quote VERBATIM from the document, markup included (**bold**, [links](url)).
   Never paraphrase inside a "text" field. A quote must not contain a newline;
   evidence spanning lines becomes multiple quotes.
+- Copy punctuation EXACTLY as the document writes it. Job postings are full of
+  typographic characters — curly apostrophes and quotes, en and em dashes,
+  non-breaking spaces, ellipsis characters. Reproduce each one as it appears;
+  do NOT straighten or normalise them. A quote that differs by a single
+  character does not exist as far as validation is concerned.
 - Do not compute character offsets. Code locates your quotes in the document.
   If your quoted text occurs more than once, set "occurrence" (0-based index
   among identical occurrences, in document order).

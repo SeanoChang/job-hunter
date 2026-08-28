@@ -5,6 +5,7 @@ import psycopg
 
 from jobhunter.l2.prompt import PROMPT_VERSION
 from jobhunter.l2.state import DerivedState
+from jobhunter.l2.transforms import VALIDATOR_VERSION
 from jobhunter.store import extraction
 from tests.l2.test_attempts import _attempt
 
@@ -13,7 +14,7 @@ Conn = psycopg.Connection[dict[str, Any]]
 CONFIG = {
     "prompt_version": PROMPT_VERSION,
     "schema_version": "1",
-    "validator_version": "1",
+    "validator_version": VALIDATOR_VERSION,
 }
 
 

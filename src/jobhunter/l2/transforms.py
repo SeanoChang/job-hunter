@@ -14,20 +14,28 @@ import re
 from collections.abc import Callable
 from datetime import date
 
-VALIDATOR_VERSION = "1"
+VALIDATOR_VERSION = "2"
 
 _RANGE = re.compile(r"(\d+)\s*(?:-|–|—|to|and)\s*(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 _FLOOR = re.compile(r"(\d+)\s*\+\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 _EXACT = re.compile(r"(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 
+# validator/2: currency is retained as written, never converted. A symbol
+# implies a currency only when it maps to exactly one — £ and € do; $ (USD,
+# CAD, AUD, SGD, HKD, NZD) and ¥ (JPY, CNY) do not, so those stay null unless
+# the posting writes a code. Both sides of a range must use the same symbol.
+_SYMBOL_CURRENCY = {"£": "GBP", "€": "EUR"}
+_AMOUNT = r"(\d{1,3}(?:,\d{3})*|\d+)\s*(k)?"
 _MONEY = re.compile(
-    r"\$\s*(\d{1,3}(?:,\d{3})*|\d+)\s*(k)?\s*(?:-|–|—|to)\s*"
-    r"\$\s*(\d{1,3}(?:,\d{3})*|\d+)\s*(k)?",
+    r"([$£€¥])\s*" + _AMOUNT + r"\s*(?:-|–|—|to)\s*"
+    r"([$£€¥])\s*" + _AMOUNT,
     re.IGNORECASE,
 )
 _HOURLY = re.compile(r"(?:/\s*(?:hr|hour)|per\s+hour)\b", re.IGNORECASE)
 _YEARLY = re.compile(r"(?:/\s*(?:yr|year)|per\s+(?:year|annum)|annually|annual)\b", re.IGNORECASE)
-_CURRENCY = re.compile(r"\b(USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP)\b", re.IGNORECASE)  # explicit codes
+_CURRENCY = re.compile(
+    r"\b(USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|CNY|CHF|SEK|INR|TWD|KRW)\b", re.IGNORECASE
+)  # explicit codes
 
 _MONTH_NAMES = [
     "january", "february", "march", "april", "may", "june",
@@ -62,20 +70,19 @@ def parse_compensation(text: str) -> dict[str, object] | None:
     m = _MONEY.search(text)
     if not m:
         return None
-    lo = _amount(m.group(1), m.group(2))
-    hi = _amount(m.group(3), m.group(4))
-    if m.group(4) and not m.group(2) and lo < 1000:
+    sym_lo, lo_digits, lo_k, sym_hi, hi_digits, hi_k = m.groups()
+    if sym_lo != sym_hi:
+        return None  # "£100,000 - €120,000" is not a range
+    lo = _amount(lo_digits, lo_k)
+    hi = _amount(hi_digits, hi_k)
+    if hi_k and not lo_k and lo < 1000:
         lo *= 1000  # "$130 - $150K": the trailing K covers both bounds
     if lo > hi:
         return None  # inverted range: ambiguous
-    currency = _CURRENCY.search(text)
+    code = _CURRENCY.search(text)
+    currency = code.group(1).upper() if code else _SYMBOL_CURRENCY.get(sym_lo)
     period = "hour" if _HOURLY.search(text) else "year" if _YEARLY.search(text) else None
-    return {
-        "min": lo,
-        "max": hi,
-        "currency": currency.group(1).upper() if currency else None,
-        "period": period,
-    }
+    return {"min": lo, "max": hi, "currency": currency, "period": period}
 
 
 def parse_deadline(text: str) -> dict[str, object] | None:
@@ -94,8 +101,10 @@ def parse_deadline(text: str) -> dict[str, object] | None:
     return {"date": found[0]}
 
 
+# keyed off the constant: a version bump that forgot to re-key this table
+# raised KeyError at verify time (caught by tests, 2026-08-28)
 TRANSFORMS: dict[str, dict[str, Callable[[str], dict[str, object] | None]]] = {
-    "1": {
+    VALIDATOR_VERSION: {
         "experience_months": parse_experience_months,
         "compensation": parse_compensation,
         "deadline": parse_deadline,
