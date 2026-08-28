@@ -12,6 +12,7 @@ from typing import Any
 from jobhunter.hashing import sha256_hex
 from jobhunter.l2.prompt import PROMPT_VERSION
 from jobhunter.l2.quotes import resolve_quote
+from jobhunter.l2.transforms import VALIDATOR_VERSION
 
 DOC_MD = (
     "## Requirements\n\n"
@@ -87,7 +88,7 @@ _RECORD: dict[str, Any] = {
         "model": "test-model",
         "prompt_version": PROMPT_VERSION,
         "schema_version": "1",
-        "validator_version": "1",
+        "validator_version": VALIDATOR_VERSION,
         "at": "2026-08-26T00:00:00Z",
     },
 }

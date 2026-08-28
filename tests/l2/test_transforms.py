@@ -10,8 +10,10 @@ from jobhunter.l2.transforms import (
 
 
 def test_registry_shape() -> None:
-    assert VALIDATOR_VERSION == "1"
-    assert set(TRANSFORMS["1"]) == {"experience_months", "compensation", "deadline"}
+    assert VALIDATOR_VERSION == "2"
+    assert set(TRANSFORMS[VALIDATOR_VERSION]) == {
+        "experience_months", "compensation", "deadline",
+    }
 
 
 @pytest.mark.parametrize(
@@ -80,3 +82,44 @@ def test_descending_range_is_none() -> None:
 def test_lowercase_currency_normalized() -> None:
     result = parse_compensation("$90,000 - $110,000 usd")
     assert result is not None and result["currency"] == "USD"
+
+
+# --- multi-currency (validator/2) ------------------------------------------
+# Found by the first 5-document run: a London posting quoting
+# "£375,000—£640,000 GBP" was quarantined three times because the money
+# grammar was dollar-only. The model had anchored correctly; our parser
+# refused it. Currency is RETAINED as written, never converted.
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # explicit code always wins
+        ("£375,000—£640,000 GBP", {"min": 375000, "max": 640000,
+                                   "currency": "GBP", "period": None}),
+        ("€90,000 - €110,000 EUR", {"min": 90000, "max": 110000,
+                                    "currency": "EUR", "period": None}),
+        ("¥8,000,000 - ¥12,000,000 JPY", {"min": 8000000, "max": 12000000,
+                                          "currency": "JPY", "period": None}),
+        # unambiguous symbol implies the currency: that is stated, not guessed
+        ("£375,000—£640,000", {"min": 375000, "max": 640000,
+                               "currency": "GBP", "period": None}),
+        ("€90,000 - €110,000", {"min": 90000, "max": 110000,
+                                "currency": "EUR", "period": None}),
+        # ambiguous symbols stay null unless a code is written (null-over-guess):
+        # $ is USD/CAD/AUD/SGD/HKD/NZD, ¥ is JPY or CNY
+        ("$130,000 - $150,000", {"min": 130000, "max": 150000,
+                                 "currency": None, "period": None}),
+        ("¥8,000,000 - ¥12,000,000", {"min": 8000000, "max": 12000000,
+                                      "currency": None, "period": None}),
+        # mixed symbols are not a range
+        ("£100,000 - €120,000", None),
+        ("£45 - £55 per hour", {"min": 45, "max": 55,
+                                "currency": "GBP", "period": "hour"}),
+    ],
+)
+def test_compensation_currencies(text: str, expected: dict[str, object] | None) -> None:
+    assert parse_compensation(text) == expected
+
+
+def test_validator_version_bumped_for_the_grammar_change() -> None:
+    assert VALIDATOR_VERSION == "2"

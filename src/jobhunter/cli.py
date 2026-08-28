@@ -109,6 +109,31 @@ def version(as_json: bool = typer.Option(False, "--json")) -> None:
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
+
+def _resolve_doc(conn: _db.Conn, prefix: str) -> str:
+    """Accept any unambiguous document_hash prefix.
+
+    Listings print a 12-char prefix, so the CLI must accept back what it
+    prints; requiring all 64 characters made every printed id unusable.
+    """
+    if _HEX64.match(prefix):
+        return prefix
+    if not re.fullmatch(r"[0-9a-f]{4,64}", prefix):
+        typer.echo(f"error: {prefix!r} is not a document_hash or hex prefix", err=True)
+        raise typer.Exit(EXIT_SYSTEMIC)
+    rows = conn.execute(
+        "SELECT DISTINCT document_hash FROM documents WHERE document_hash LIKE %s LIMIT 10",
+        (prefix + "%",),
+    ).fetchall()
+    if not rows:
+        typer.echo(f"error: no document matches {prefix!r}", err=True)
+        raise typer.Exit(EXIT_SYSTEMIC)
+    if len(rows) > 1:
+        typer.echo(f"error: {prefix!r} is ambiguous ({len(rows)} documents)", err=True)
+        raise typer.Exit(EXIT_SYSTEMIC)
+    return str(rows[0]["document_hash"])
+
+
 def _load_stored_extraction(document_hash: str) -> tuple[dict[str, Any], str]:
     """Store-addressed verify: markdown from documents, record from the chosen
     attempt's archive object."""
@@ -120,6 +145,7 @@ def _load_stored_extraction(document_hash: str) -> tuple[dict[str, Any], str]:
     store = _store(settings)
     conn = _conn(settings, schema=_schema)
     try:
+        document_hash = _resolve_doc(conn, document_hash)
         markdown = xstore.markdown_for(conn, document_hash, NORMALIZER_VERSION)
         if markdown is None:
             typer.echo(f"error: no document {document_hash} under {NORMALIZER_VERSION}", err=True)
@@ -188,11 +214,16 @@ def verify(
     """
     from jobhunter.l2 import verify as l2_verify
 
-    if document_file is None and _HEX64.match(extraction_file):
+    looks_like_hash = re.fullmatch(r"[0-9a-f]{4,64}", extraction_file) is not None
+    if document_file is None and looks_like_hash:
         extraction, markdown = _load_stored_extraction(extraction_file)
     else:
         if document_file is None:
-            typer.echo("error: DOCUMENT_FILE required unless a document_hash is given", err=True)
+            typer.echo(
+                "error: give a document_hash (or unambiguous hex prefix), "
+                "or an extraction file plus its DOCUMENT_FILE",
+                err=True,
+            )
             raise typer.Exit(EXIT_SYSTEMIC)
         try:
             extraction = json.loads(Path(extraction_file).read_text(encoding="utf-8"))
@@ -727,6 +758,7 @@ def _review_verb(verb: str, doc: str, note: str | None, as_json: bool) -> None:
         if not _db.try_lock(conn, _db.EXTRACT_LOCK_KEY):
             typer.echo("extract lock held (a run or another review is active); try again")
             raise typer.Exit(EXIT_SYSTEMIC)
+        doc = _resolve_doc(conn, doc)
         row = conn.execute(
             "SELECT * FROM extractions WHERE document_hash=%s ORDER BY updated_at DESC LIMIT 1",
             (doc,),
@@ -775,24 +807,46 @@ def _review_verb(verb: str, doc: str, note: str | None, as_json: bool) -> None:
 @review_app.command("list")
 def review_list(as_json: bool = typer.Option(False, "--json")) -> None:
     """The inbox: needs_review and quarantined, oldest first."""
+    from jobhunter.l2.prompt import PROMPT_VERSION
+
     settings = _settings()
     conn = _conn(settings, schema=_schema)
     try:
+        # a row under an OLD config that has since been validated under the
+        # current one is history, not work: show it as superseded so a stale
+        # quarantine cannot nag forever after a prompt bump fixed it
         rows = conn.execute(
-            "SELECT document_hash, status, model, updated_at FROM extractions"
-            " WHERE status IN ('needs_review', 'quarantined') ORDER BY updated_at"
+            """
+            SELECT e.document_hash, e.status, e.model, e.prompt_version, e.updated_at,
+                   EXISTS (
+                     SELECT 1 FROM extractions cur
+                     WHERE cur.document_hash = e.document_hash
+                       AND cur.prompt_version = %s AND cur.status = 'validated'
+                   ) AS superseded
+            FROM extractions e
+            WHERE e.status IN ('needs_review', 'quarantined')
+            ORDER BY superseded, e.updated_at
+            """,
+            (PROMPT_VERSION,),
         ).fetchall()
     finally:
         conn.close()
     payload = [
         {"document_hash": r["document_hash"], "status": r["status"], "model": r["model"],
+         "prompt_version": r["prompt_version"], "superseded": r["superseded"],
          "updated_at": iso(r["updated_at"])}
         for r in rows
     ]
-    human = "\n".join(
-        f"{r['status']:13} {r['document_hash'][:12]}  {r['model']}  {r['updated_at']}"
+    open_items = [r for r in payload if not r["superseded"]]
+    lines = [
+        f"{r['status']:13} {r['document_hash'][:12]}  {r['prompt_version']:20} {r['model']}"
+        + ("   (superseded: validated under " + PROMPT_VERSION + ")" if r["superseded"] else "")
         for r in payload
-    ) or "inbox empty"
+    ]
+    human = "\n".join(lines) or "inbox empty"
+    if payload:
+        n_super = len(payload) - len(open_items)
+        human += f"\n\n{len(open_items)} needing attention, {n_super} superseded"
     _emit({"inbox": payload}, as_json, human)
 
 
@@ -805,6 +859,7 @@ def review_show(
     settings = _settings()
     conn = _conn(settings, schema=_schema)
     try:
+        doc = _resolve_doc(conn, doc)
         row = conn.execute(
             "SELECT * FROM extractions WHERE document_hash=%s ORDER BY updated_at DESC LIMIT 1",
             (doc,),
@@ -859,3 +914,81 @@ def review_retry(doc: str, as_json: bool = typer.Option(False, "--json")) -> Non
 @review_app.command("flag")
 def review_flag(doc: str, as_json: bool = typer.Option(False, "--json")) -> None:
     _review_verb("flag", doc, None, as_json)
+
+@extract_app.command("show")
+def extract_show(
+    doc: str = typer.Argument(..., help="document_hash or unambiguous hex prefix"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Read the extracted demand profile: facts, areas, claims, evidence."""
+    from jobhunter.l2.quotes import line_col
+    from jobhunter.markdown import NORMALIZER_VERSION
+    from jobhunter.store import extraction as xstore
+
+    settings = _settings()
+    conn = _conn(settings, schema=_schema)
+    try:
+        doc = _resolve_doc(conn, doc)
+        row = conn.execute(
+            "SELECT e.*, v.title, v.company, v.url FROM extractions e"
+            " LEFT JOIN documents d ON d.document_hash = e.document_hash"
+            " LEFT JOIN posting_versions v ON v.version_hash = d.version_hash"
+            " WHERE e.document_hash = %s ORDER BY e.updated_at DESC LIMIT 1",
+            (doc,),
+        ).fetchone()
+        markdown = xstore.markdown_for(conn, doc, NORMALIZER_VERSION) or ""
+    finally:
+        conn.close()
+    if row is None:
+        typer.echo(f"no extraction for {doc[:12]} (pending — run `extract run --doc {doc}`)")
+        raise typer.Exit(EXIT_SYSTEMIC)
+    profile = row["profile"]
+    if as_json:
+        _emit({"document_hash": doc, "status": row["status"], "model": row["model"],
+               "prompt_version": row["prompt_version"], "profile": profile}, True, "")
+        return
+    if profile is None:
+        typer.echo(f"{row['status']}: no profile stored (see `extract review show {doc[:12]}`)")
+        raise typer.Exit(1)
+
+    def at(quote: dict[str, Any]) -> str:
+        line, col = line_col(markdown, int(quote["span"][0]))
+        return f"line {line}:{col}"
+
+    out: list[str] = [
+        f"{row['title'] or '?'} — {row['company'] or '?'}",
+        f"{doc[:12]}  {row['status']}  {row['model']}  {row['prompt_version']}",
+        "",
+        "facts",
+    ]
+    facts = profile.get("facts") or {}
+    exp = facts.get("experience_months")
+    if exp:
+        hi = exp["max"] if exp["max"] is not None else "+"
+        out.append(f"  experience    {exp['min']}–{hi} months ({exp.get('scope') or 'unscoped'})")
+        out.append(f"                {exp['anchor']['text'][:70]!r}  {at(exp['anchor'])}")
+    for comp in facts.get("compensation") or []:
+        span = f"{comp['min']:,}–{comp['max']:,}" if comp.get("min") else "?"
+        unit = f"{comp.get('currency') or ''}/{comp.get('period') or '?'}".strip("/")
+        out.append(f"  compensation  {span} {unit}  {at(comp['anchor'])}")
+    dl = facts.get("deadline")
+    out.append(f"  deadline      {dl['date'] if dl else '— (none stated)'}")
+    out.append(f"  boilerplate   {len(facts.get('boilerplate_spans') or [])} spans excluded")
+
+    areas = (profile.get("demand_profile") or {}).get("areas") or []
+    n_claims = sum(len(a["claims"]) for a in areas)
+    out += ["", f"areas ({len(areas)})  claims ({n_claims})"]
+    for area in areas:
+        level = f"/{area['level']}" if area.get("level") else ""
+        out.append(f"\n  [{area['kind']}] {area['name']}  — {area['importance']}{level}")
+        for claim in area["claims"]:
+            lvl = f"/{claim['level']}" if claim.get("level") else ""
+            out.append(f"    · {claim['importance']}{lvl}  {at(claim['quote'])}")
+            out.append(f"      {claim['quote']['text'][:96]!r}")
+            if claim.get("level_evidence"):
+                out.append(f"      evidence: {claim['level_evidence']!r}")
+        if area.get("structure"):
+            out.append(f"    structure: {json.dumps(area['structure'])}")
+        if area.get("mentions"):
+            out.append(f"    mentions: {', '.join(area['mentions'][:8])}")
+    typer.echo("\n".join(out))
