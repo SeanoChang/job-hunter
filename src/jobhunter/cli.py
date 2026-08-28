@@ -208,7 +208,7 @@ def verify(
     document_file: str | None = typer.Argument(None, help="Canonical markdown document"),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Re-run every validator/1 check over an extraction against its document.
+    """Re-run every validator check over an extraction against its document.
 
     Exit 0: all checks pass. Exit 1: ran fine, findings failed. Exit 2: systemic.
     """
@@ -969,8 +969,15 @@ def extract_show(
         out.append(f"                {exp['anchor']['text'][:70]!r}  {at(exp['anchor'])}")
     for comp in facts.get("compensation") or []:
         span = f"{comp['min']:,}–{comp['max']:,}" if comp.get("min") else "?"
-        unit = f"{comp.get('currency') or ''}/{comp.get('period') or '?'}".strip("/")
-        out.append(f"  compensation  {span} {unit}  {at(comp['anchor'])}")
+        # currency/period are null when the posting never states them; say so
+        # rather than printing a bare "/?" that reads like a parse failure
+        unit = " ".join(
+            x for x in (comp.get("currency"), f"per {comp['period']}" if comp.get("period") else "")
+            if x
+        )
+        unstated = [k for k in ("currency", "period") if not comp.get(k)]
+        note = f"  ({', '.join(unstated)} not stated)" if unstated else ""
+        out.append(f"  compensation  {span} {unit}{note}  {at(comp['anchor'])}")
     dl = facts.get("deadline")
     out.append(f"  deadline      {dl['date'] if dl else '— (none stated)'}")
     out.append(f"  boilerplate   {len(facts.get('boilerplate_spans') or [])} spans excluded")
