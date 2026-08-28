@@ -192,9 +192,9 @@ def _verify_output(report: Any, markdown: str, as_json: bool) -> None:
             if isinstance(expected, str) and isinstance(found, str):
                 typer.echo(f"  expected: {_clip(expected)!r}")
                 typer.echo(f"  found:    {_clip(found)!r}")
-            prefix = f.detail.get("longest_prefix")
-            if isinstance(prefix, int):
-                typer.echo(f"  longest matching prefix: {prefix} codepoints")
+            divergence = f.detail.get("divergence")
+            if isinstance(divergence, str):
+                typer.echo(f"  {divergence}")
         typer.echo(f"{report.status}  ({len(report.findings)} findings)")
     if report.status == "fail":
         raise typer.Exit(1)

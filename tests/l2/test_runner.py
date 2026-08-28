@@ -143,10 +143,10 @@ def test_fabricated_quote_repaired_on_retry(pg: Conn, store: ArchiveStore) -> No
     first = next(a for a in attempts if a.attempt_no == 1)
     assert first.outcome == "attribution_failed"
     produced = [v["error"] for v in first.validation if "error" in v]
-    assert any("longest matching prefix" in e for e in produced)
+    assert any("matches the document for" in e for e in produced)
     second = next(a for a in attempts if a.attempt_no == 2)
     assert first.prior_errors == []  # nothing was fed into attempt 1
-    assert any("longest matching prefix" in e for e in second.prior_errors)  # fed into the retry
+    assert any("matches the document for" in e for e in second.prior_errors)  # fed into retry
 
 
 def test_ladder_exhaustion_quarantines(pg: Conn, store: ArchiveStore) -> None:

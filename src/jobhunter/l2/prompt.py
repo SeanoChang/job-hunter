@@ -17,13 +17,23 @@ TYPOGRAPHY, straightening curly quotes and apostrophes. Two quotes failed that
 way on one posting ("Anthropic\u2019s" and "\u201cOTE\u201d"), indistinguishable
 from fabrication under exact matching. Fuzzy repair is not an option — it is
 the hole every invented quote would walk through — so v3 names the trap.
+
+v4 (2026-08-28) — v3 fixed its posting and broke another. Told that postings
+are "full of typographic characters", the model harmonised the other way,
+curling straight apostrophes: a posting mixing 11 straight with 5 curly ones
+quarantined on quotes like "team\u2019s eval roadmap" where the document writes
+"team's". The real rule is not a direction but an absence of one — a single
+document mixes both forms and neither spelling is the canonical one. v4 says
+that, and pairs it with a reprompt that names the offending character
+(`quotes.describe_not_found`), because v3 spent three attempts rejecting a
+one-character difference without ever saying which character.
 """
 
 from __future__ import annotations
 
 from jobhunter.hashing import sha256_hex
 
-PROMPT_VERSION = "demand-profile/v3"
+PROMPT_VERSION = "demand-profile/v4"
 
 TEMPLATE = """\
 You are extracting a demand profile from ONE job posting document.
@@ -36,11 +46,16 @@ Return ONLY JSON conforming to the provided schema. Rules:
 - Quote VERBATIM from the document, markup included (**bold**, [links](url)).
   Never paraphrase inside a "text" field. A quote must not contain a newline;
   evidence spanning lines becomes multiple quotes.
-- Copy punctuation EXACTLY as the document writes it. Job postings are full of
-  typographic characters — curly apostrophes and quotes, en and em dashes,
-  non-breaking spaces, ellipsis characters. Reproduce each one as it appears;
-  do NOT straighten or normalise them. A quote that differs by a single
-  character does not exist as far as validation is concerned.
+- Copy punctuation EXACTLY, character for character. Apostrophes, quotes and
+  dashes are the single most common cause of a rejected quote. One document
+  freely mixes forms: it may write don't with a straight apostrophe on one
+  line and don’t with a curly one on the next, and each is correct where it
+  appears. Never harmonise them in EITHER direction — do not curl a straight
+  apostrophe, do not straighten a curly one, and copy hyphen vs en dash vs em
+  dash, straight vs curly double quotes, and "..." vs … exactly as written.
+  Read the character off the document rather than typing what the phrase
+  usually looks like. A quote differing by one character does not exist as far
+  as validation is concerned.
 - Do not compute character offsets. Code locates your quotes in the document.
   If your quoted text occurs more than once, set "occurrence" (0-based index
   among identical occurrences, in document order).

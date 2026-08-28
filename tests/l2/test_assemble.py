@@ -77,7 +77,7 @@ def test_fabricated_and_ambiguous_quotes_batched() -> None:
     with pytest.raises(AssembleError) as exc:
         assemble(emit, DOC_MD, **_kwargs())
     joined = "\n".join(exc.value.errors)
-    assert "quote not found" in joined and "longest matching prefix" in joined
+    assert "quote not found" in joined and "matches the document for" in joined
     assert "ambiguous quote" in joined and "occurrence" in joined
     assert len(exc.value.errors) == 2  # both collected in one pass
 

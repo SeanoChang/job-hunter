@@ -4,7 +4,7 @@ from jobhunter.l2.prompt import PROMPT_VERSION, TEMPLATE, prompt_sha, render
 
 
 def test_version_and_sha() -> None:
-    assert PROMPT_VERSION == "demand-profile/v3"
+    assert PROMPT_VERSION == "demand-profile/v4"
     assert re.fullmatch(r"[0-9a-f]{64}", prompt_sha())
     assert prompt_sha() == prompt_sha()  # stable
 
@@ -30,7 +30,7 @@ def test_template_is_the_hashed_bytes() -> None:
     assert prompt_sha() == sha256_hex(TEMPLATE.encode("utf-8"))
 
 
-def test_v2_and_v3_rules_present() -> None:
+def test_v2_to_v4_rules_present() -> None:
     """v2 exists because a real run failed twice on these two points:
     the model anchored a `deadline` fact on "Deadline to apply: None", and it
     paraphrased evidence fragments instead of copying them."""
@@ -42,7 +42,9 @@ def test_v2_and_v3_rules_present() -> None:
     # evidence fragments must be copied, not paraphrased
     assert "character-for-character" in lowered
     assert "level_evidence" in lowered
-    # v3: the model silently straightened curly quotes, and exact-match read
-    # that as fabrication
-    assert "typographic characters" in lowered
-    assert "do not straighten" in lowered
+    # v3/v4: the model silently harmonised typography — first straightening
+    # curly apostrophes, then (told not to) curling straight ones. The rule has
+    # to forbid both directions, so assert it names each one.
+    assert "do not curl a straight" in lowered
+    assert "do not straighten a curly" in lowered
+    assert "either direction" in lowered
