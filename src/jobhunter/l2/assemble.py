@@ -53,7 +53,9 @@ def _fact(resolver: _Resolver, kind: str, item: dict[str, Any] | None,
     if derived is None:
         resolver.errors.append(
             f"fact anchor not parseable as {kind}: {anchor['text'][:80]!r} — "
-            "re-anchor on the exact phrase or drop the fact"
+            f"if the posting states no {kind}, set {kind} to null instead of "
+            "anchoring on the sentence that says so; otherwise anchor on the "
+            "exact phrase carrying the value"
         )
         return None
     out: dict[str, Any] = dict(derived)

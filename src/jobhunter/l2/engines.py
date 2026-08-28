@@ -45,6 +45,19 @@ class EngineFatalError(Exception):
     or laddering cannot help; the run aborts and the CLI exits systemic."""
 
 
+def engine_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """The structural schema an engine needs, without our meta declaration.
+
+    Our schemas carry `$schema: .../draft/2020-12/schema` because the
+    jsonschema library resolves it when WE validate. Engines only need the
+    structure, and some refuse the meta-ref outright: `claude -p --json-schema`
+    exits 1 with 'no schema with key or ref "https://json-schema.org/draft/
+    2020-12/schema"' (found by the first real extraction run), and OpenAI-style
+    strict json_schema modes reject unknown top-level keys.
+    """
+    return {k: v for k, v in schema.items() if k != "$schema"}
+
+
 class Engine(Protocol):
     name: str
 
@@ -86,7 +99,11 @@ class OpenAICompat:
             "max_tokens": 8192,  # gpt-oss-class models default to 256 (spec §8)
             "response_format": {
                 "type": "json_schema",
-                "json_schema": {"name": "demand_profile", "strict": True, "schema": schema},
+                "json_schema": {
+                    "name": "demand_profile",
+                    "strict": True,
+                    "schema": engine_schema(schema),
+                },
             },
             **self._extra_body,
         }
@@ -157,7 +174,8 @@ class ClaudeCli:
         args = [
             "-p", prompt, "--model", model, "--output-format", "json",
             "--no-session-persistence", "--tools", "", "--strict-mcp-config",
-            "--mcp-config", '{"mcpServers":{}}', "--json-schema", json.dumps(schema),
+            "--mcp-config", '{"mcpServers":{}}',
+            "--json-schema", json.dumps(engine_schema(schema)),
         ]
         for attempt in range(3):  # the CLI self-updates in place; the binary can vanish briefly
             exe = self._which("claude")
@@ -299,7 +317,7 @@ class CodexCli:
     def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
         with tempfile.TemporaryDirectory(prefix="jh-codex-") as work:
             schema_path = Path(work) / "schema.json"
-            schema_path.write_text(json.dumps(schema), encoding="utf-8")
+            schema_path.write_text(json.dumps(engine_schema(schema)), encoding="utf-8")
             out_path = Path(work) / "last-message.txt"
             args = [
                 "exec",

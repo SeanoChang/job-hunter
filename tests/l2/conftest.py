@@ -10,6 +10,7 @@ import copy
 from typing import Any
 
 from jobhunter.hashing import sha256_hex
+from jobhunter.l2.prompt import PROMPT_VERSION
 from jobhunter.l2.quotes import resolve_quote
 
 DOC_MD = (
@@ -84,7 +85,7 @@ _RECORD: dict[str, Any] = {
     },
     "extraction": {
         "model": "test-model",
-        "prompt_version": "demand-profile/v1",
+        "prompt_version": PROMPT_VERSION,
         "schema_version": "1",
         "validator_version": "1",
         "at": "2026-08-26T00:00:00Z",
