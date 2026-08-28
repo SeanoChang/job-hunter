@@ -221,3 +221,33 @@ def test_trust_flag_never_overrides_a_reported_model() -> None:
     run = FakeRun('{"ok": true}', stdout=events)
     result = _engine(run, trust_requested_model=True).complete("p", SCHEMA, "gpt-5.6-sol")
     assert result.observed_model == "gpt-5.7-actual"
+
+
+# --- engine-ready schema --------------------------------------------------
+# Found by the first real run: `claude -p --json-schema` rejects our emit
+# schema with 'no schema with key or ref "https://json-schema.org/draft/
+# 2020-12/schema"'. The $schema meta-ref is for OUR validators (jsonschema
+# resolves it); engines only need the structural schema, and some of them
+# refuse to fetch or resolve remote refs.
+
+REAL_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "job-hunter L2 emit schema",
+    "type": "object",
+    "properties": {"ok": {"type": "boolean"}},
+}
+
+
+def test_codex_strips_schema_meta_ref() -> None:
+    seen: dict[str, Any] = {}
+
+    class Capture(FakeRun):
+        def __call__(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            seen["schema"] = json.loads(
+                Path(argv[argv.index("--output-schema") + 1]).read_text(encoding="utf-8")
+            )
+            return super().__call__(argv, **kwargs)
+
+    _engine(Capture('{"ok": true}')).complete("p", REAL_SCHEMA, "m")
+    assert "$schema" not in seen["schema"]
+    assert seen["schema"]["properties"] == {"ok": {"type": "boolean"}}  # structure intact

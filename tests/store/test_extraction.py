@@ -3,6 +3,7 @@ from typing import Any
 
 import psycopg
 
+from jobhunter.l2.prompt import PROMPT_VERSION
 from jobhunter.l2.state import DerivedState
 from jobhunter.store import extraction
 from tests.l2.test_attempts import _attempt
@@ -10,7 +11,7 @@ from tests.l2.test_attempts import _attempt
 Conn = psycopg.Connection[dict[str, Any]]
 
 CONFIG = {
-    "prompt_version": "demand-profile/v1",
+    "prompt_version": PROMPT_VERSION,
     "schema_version": "1",
     "validator_version": "1",
 }
@@ -86,7 +87,9 @@ def test_queue_priorities_and_blocking(pg: Conn) -> None:
     )
     assert ("d" * 63 + "1") not in extraction.queue(pg, **kwargs)  # any status blocks
 
-    other = dict(kwargs, prompt_version="demand-profile/v2")
+    # a synthetic version, so this stays a different config no matter what
+    # the live PROMPT_VERSION becomes
+    other = dict(kwargs, prompt_version="demand-profile/vOTHER")
     assert ("d" * 63 + "1") in extraction.queue(pg, **other)  # new config re-selects
 
 
