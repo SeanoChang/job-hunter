@@ -754,9 +754,9 @@ Checks, in order (each independent; run all, never stop at the first failure):
 
 Human rendering: one line per check, `ok`/`FAIL` + detail, hints on failures.
 
-- [ ] **Step 1:** Failing tests: empty env → checks 1 and 4 fail, exit 3, every failing check carries a non-empty hint; file archive + working test DB (store fixture) → exit 0; good config but unreachable DB (DSN `postgresql://nobody:x@127.0.0.1:1/x`) → exit 5 and `database_probe.ok is False`.
-- [ ] **Step 2:** Run — FAIL. **Step 3:** Implement. **Step 4:** `uv run pytest tests/test_cli.py -q` — PASS.
-- [ ] **Step 5: Commit** — `git commit -am "feat(cli): doctor — config, connectivity, schema and role checks with fixes"`
+- [x] **Step 1:** Failing tests: empty env → checks 1 and 4 fail, exit 3, every failing check carries a non-empty hint; file archive + working test DB (store fixture) → exit 0; good config but unreachable DB (DSN `postgresql://nobody:x@127.0.0.1:1/x`) → exit 5 and `database_probe.ok is False`.
+- [x] **Step 2:** Run — FAIL. **Step 3:** Implement. **Step 4:** `uv run pytest tests/test_cli.py -q` — PASS.
+- [x] **Step 5: Commit** — `git commit -am "feat(cli): doctor — config, connectivity, schema and role checks with fixes"`
 
 ---
 

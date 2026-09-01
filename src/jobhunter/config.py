@@ -55,6 +55,15 @@ def load_env_files(environ: Mapping[str, str]) -> dict[str, str]:
     return merged
 
 
+def env_snapshot() -> dict[str, str]:
+    """The merged layers as one mapping.
+
+    `doctor` reports per variable — including the AWS_* ones no `Settings` field
+    carries — and this module stays the only reader of `os.environ`.
+    """
+    return load_env_files(os.environ)
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     archive_url: str

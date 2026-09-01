@@ -572,3 +572,66 @@ def test_sync_stops_and_exits_systemic_on_gap_manifests(
     # fetching would advance the watermark past the gap: nothing after ingest runs
     assert data["fetch"] == {"skipped_reason": "ingest gaps"}
     assert data["extract"] == {"skipped_reason": "ingest gaps"}
+
+
+def test_doctor_on_a_healthy_environment(env: Path) -> None:
+    r = runner.invoke(cli.app, ["doctor", "-o", "json"])
+    assert r.exit_code == 0, r.stdout
+    checks = json.loads(r.stdout)["data"]["checks"]
+    assert [c["name"] for c in checks] == [
+        "archive_url", "archive_probe", "database_url", "database_probe", "schema_version",
+        "role", "l2",
+    ]
+    assert all(c["ok"] for c in checks), checks
+    by_name = {c["name"]: c for c in checks}
+    assert "extraction not configured" in by_name["l2"]["detail"]
+    assert "writer" in by_name["role"]["detail"]  # the test DSN owns the schema
+
+
+def test_doctor_empty_env_is_a_config_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("JOB_HUNTER_ARCHIVE_URL", raising=False)
+    monkeypatch.delenv("JOB_HUNTER_DATABASE_URL", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))  # no ~/.config/job-hunter/env
+    monkeypatch.chdir(tmp_path)  # no ./.env
+    r = runner.invoke(cli.app, ["doctor", "-o", "json"])
+    assert r.exit_code == 3, r.stdout
+    checks = {c["name"]: c for c in json.loads(r.stdout)["data"]["checks"]}
+    assert checks["archive_url"]["ok"] is False
+    assert checks["database_url"]["ok"] is False
+    # every check runs: a missing variable never stops the report at the first failure
+    assert set(checks) >= {"archive_probe", "database_probe", "schema_version", "role", "l2"}
+    assert all(c["hint"] for c in checks.values() if not c["ok"]), checks
+
+
+def test_doctor_reports_an_unreachable_database_as_backend(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("JOB_HUNTER_DATABASE_URL", "postgresql://nobody:secret@127.0.0.1:1/x")
+    r = runner.invoke(cli.app, ["doctor", "-o", "json"])
+    assert r.exit_code == 5, r.stdout
+    checks = {c["name"]: c for c in json.loads(r.stdout)["data"]["checks"]}
+    assert checks["database_url"]["ok"] is True  # the variable is set; the server is not there
+    assert checks["database_probe"]["ok"] is False and checks["database_probe"]["hint"]
+    assert "secret" not in r.stdout  # a DSN carries a password; doctor never echoes it
+    h = runner.invoke(cli.app, ["doctor", "-o", "table"])
+    assert h.exit_code == 5
+    assert "FAIL  database_probe" in h.stdout and "hint:" in h.stdout
+
+
+def test_doctor_names_the_missing_r2_variables(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jobhunter.archive.local import LocalFS
+
+    monkeypatch.setenv("JOB_HUNTER_ARCHIVE_URL", "s3://bucket/prefix")
+    # the R2 variables are a config question, so the probe stays local and offline
+    monkeypatch.setattr(cli, "open_store", lambda url: LocalFS(env / "archive"))
+    for var in ("AWS_ENDPOINT_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+                "AWS_DEFAULT_REGION"):
+        monkeypatch.delenv(var, raising=False)
+    r = runner.invoke(cli.app, ["doctor", "-o", "json"])
+    assert r.exit_code == 3, r.stdout
+    checks = {c["name"]: c for c in json.loads(r.stdout)["data"]["checks"]}
+    assert checks["aws_credentials"]["ok"] is False
+    assert "AWS_SECRET_ACCESS_KEY" in checks["aws_credentials"]["detail"]
+    assert checks["archive_probe"]["ok"] is True  # credentials missing, backend still answers

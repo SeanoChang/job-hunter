@@ -12,7 +12,7 @@ import contextlib
 import json
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -25,7 +25,7 @@ from jobhunter.archive import ArchiveError, ArchiveStore, open_store
 from jobhunter.archive.manifests import iter_manifests, latest_per_board
 from jobhunter.cli_output import Exit, emit, fail, output_option, use_json
 from jobhunter.cli_q import MAX_LIMIT, _clamp, q_app
-from jobhunter.config import ConfigError, Settings
+from jobhunter.config import ConfigError, Settings, env_snapshot
 from jobhunter.cursors import Watermark, read_cursor, write_cursor
 from jobhunter.fetch import RunSummary, UnknownBoardError, is_healthy
 from jobhunter.fetch import run as fetch_run
@@ -65,7 +65,7 @@ def _settings(output: str | None) -> Settings:
         return Settings.load()
     except ConfigError as e:
         fail("config", f"config error: {e}", code=Exit.CONFIG, output=output,
-             hint="run `job-hunter doctor` once it lands; env vars are listed in README.md")
+             hint="run: job-hunter doctor — it checks every variable and names the fix")
 
 
 def _conn(settings: Settings, schema: str = _db.SCHEMA, *, output: str | None = None) -> _db.Conn:
@@ -683,6 +683,160 @@ def _merge_store_health(
         r["health"] = h["health"] if h else None
         r["open"] = opens.get(r["board"], 0)
     return None, size
+
+
+# -- doctor ----------------------------------------------------------------
+
+_AWS_VARS = ("AWS_ENDPOINT_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+             "AWS_DEFAULT_REGION")
+# A failing check named here means the environment is wrong (exit 3); every other
+# check is a live probe, which fails with exit 5 once the configuration is sound.
+_CONFIG_CHECKS = frozenset({"archive_url", "aws_credentials", "database_url", "l2"})
+_ARCHIVE_HINT = "export JOB_HUNTER_ARCHIVE_URL=s3://bucket/prefix (or file:///path)"
+_DSN_HINT = "export JOB_HUNTER_DATABASE_URL=postgresql://user:pass@host:5432/db"
+_PROBE_KEY = "attempts/.doctor-probe"  # never written; the read is the point
+
+
+def _check(name: str, ok: bool, detail: str, hint: str | None = None) -> dict[str, Any]:
+    return {"name": name, "ok": ok, "detail": detail, "hint": hint}
+
+
+def _not_run(names: tuple[str, ...], reason: str, hint: str) -> list[dict[str, Any]]:
+    """Probes whose prerequisite failed still report themselves: the check list an
+    agent parses has the same names every run."""
+    return [_check(n, False, f"not run: {reason}", hint) for n in names]
+
+
+def _doctor_archive(env: Mapping[str, str]) -> list[dict[str, Any]]:
+    """The archive URL, the R2 variables it implies, and one live read."""
+    url = env.get("JOB_HUNTER_ARCHIVE_URL")
+    store: ArchiveStore | None = None
+    if not url:
+        checks = [_check("archive_url", False, "JOB_HUNTER_ARCHIVE_URL is not set", _ARCHIVE_HINT)]
+    else:
+        try:
+            store = open_store(url)
+            checks = [_check("archive_url", True, url)]
+        except Exception as e:  # unsupported scheme, unusable root, boto3 client setup
+            checks = [_check("archive_url", False, f"{type(e).__name__}: {e}", _ARCHIVE_HINT)]
+    if url and url.startswith("s3://"):
+        missing = [v for v in _AWS_VARS if not env.get(v)]  # presence only; never the values
+        checks.append(_check(
+            "aws_credentials", not missing,
+            "set" if not missing else f"missing: {', '.join(missing)}",
+            None if not missing else "s3/R2 needs endpoint, key id, secret and region in the env",
+        ))
+    if store is None:
+        checks.append(_check("archive_probe", False, "not run: no usable archive URL",
+                             _ARCHIVE_HINT))
+        return checks
+    try:
+        store.exists(_PROBE_KEY)  # the cheapest call that still reaches the backend
+    except Exception as e:
+        checks.append(_check(
+            "archive_probe", False, f"{type(e).__name__}: {e}",
+            "check the archive credentials and endpoint; `archive ls` uses the same path",
+        ))
+    else:
+        checks.append(_check("archive_probe", True, "reachable"))
+    return checks
+
+
+def _doctor_schema(conn: _db.Conn) -> dict[str, Any]:
+    try:
+        if not _db.schema_exists(conn, _schema):
+            return _check("schema_version", False, f"schema {_schema} does not exist",
+                          "run: job-hunter db init")
+        stored = _db.stored_schema_version(conn)
+    except psycopg.Error as e:  # half-created schema: no schema_meta yet
+        conn.rollback()
+        return _check("schema_version", False, f"{type(e).__name__}: {e}",
+                      "run: job-hunter rebuild")
+    if stored == _db.SCHEMA_VERSION:
+        return _check("schema_version", True, f"{stored} (code {_db.SCHEMA_VERSION})")
+    return _check("schema_version", False,
+                  f"database {stored or 'absent'} != code {_db.SCHEMA_VERSION}",
+                  "run: job-hunter rebuild")
+
+
+def _doctor_role(conn: _db.Conn) -> dict[str, Any]:
+    """Write authority is not an error — it is more than `q`/`pulse` need."""
+    try:
+        row = conn.execute(
+            "SELECT current_user AS who,"
+            " has_table_privilege(current_user, 'postings', 'INSERT') AS writer"
+        ).fetchone() or {}
+    except psycopg.Error as e:  # no postings table under this search_path
+        conn.rollback()
+        return _check("role", False, f"{type(e).__name__}: {e}", "run: job-hunter db init")
+    who = row.get("who", "?")
+    if row.get("writer"):
+        return _check("role", True, f"{who}: writer DSN — fine for operators;"
+                                    " use a read-only role on agent machines")
+    return _check("role", True, f"{who}: read-only")
+
+
+def _doctor_database(env: Mapping[str, str]) -> list[dict[str, Any]]:
+    dsn = env.get("JOB_HUNTER_DATABASE_URL")
+    if not dsn:
+        return [_check("database_url", False, "JOB_HUNTER_DATABASE_URL is not set", _DSN_HINT),
+                *_not_run(("database_probe", "schema_version", "role"), "no DSN", _DSN_HINT)]
+    checks = [_check("database_url", True, "set")]  # a DSN carries a password; never echo it
+    try:
+        # not `_conn`: that one reports through the envelope and exits, and doctor
+        # owes the caller the remaining checks
+        conn = _db.connect(dsn, schema=_schema)
+    except Exception as e:
+        checks.append(_check(
+            "database_probe", False, f"{type(e).__name__}: {e}",
+            "is Postgres reachable? `docker compose up -d postgres` runs one locally"))
+        return checks + _not_run(("schema_version", "role"), "no connection",
+                                 "fix database_probe first")
+    try:
+        conn.execute("SELECT 1")
+        checks.append(_check("database_probe", True, f"connected, search_path {_schema}"))
+        checks.append(_doctor_schema(conn))
+        checks.append(_doctor_role(conn))
+    finally:
+        conn.close()
+    return checks
+
+
+def _doctor_l2(env: Mapping[str, str]) -> dict[str, Any]:
+    try:
+        settings = Settings.load(env)
+    except ConfigError as e:
+        # the archive/database checks above already name what is broken
+        return _check("l2", False, f"not run: {e}", "fix the configuration failures above")
+    if not settings.l2_model_candidates:
+        return _check("l2", True, "extraction not configured (optional)")
+    try:
+        settings.require_l2()
+    except ConfigError as e:
+        return _check("l2", False, str(e),
+                      "set JOB_HUNTER_L2_BASE_URL, or JOB_HUNTER_L2_ENGINE=claude-cli|codex-cli")
+    return _check("l2", True,
+                  f"{settings.l2_engine}: {', '.join(settings.l2_model_candidates)}")
+
+
+@app.command()
+def doctor(output: str | None = output_option()) -> None:
+    """Check config, connectivity, schema and role. Every check runs; each failure names its fix."""
+    env = env_snapshot()
+    checks = [*_doctor_archive(env), *_doctor_database(env), _doctor_l2(env)]
+    failed = [c for c in checks if not c["ok"]]
+    human: list[str] = []
+    for c in checks:
+        human.append(f"{'ok  ' if c['ok'] else 'FAIL'}  {c['name']:16} {c['detail']}")
+        if not c["ok"] and c["hint"]:
+            human.append(f"      hint: {c['hint']}")
+    emit({"checks": checks}, human="\n".join(human), output=output, count=len(checks),
+         hint=f"{len(failed)} check(s) failed; each carries its fix" if failed else None)
+    if failed:
+        # configuration first: a probe cannot succeed while the variables it reads are wrong
+        raise typer.Exit(int(
+            Exit.CONFIG if any(c["name"] in _CONFIG_CHECKS for c in failed) else Exit.BACKEND
+        ))
 
 
 @archive_app.command("ls")
