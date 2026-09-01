@@ -453,3 +453,122 @@ def test_throttled_zero_progress_run_is_systemic(
     monkeypatch.setattr(cli, "_make_engine", lambda s: FakeEngine([EngineThrottled("429")]))
     r = runner.invoke(cli.app, ["extract", "run"])
     assert r.exit_code == 6, r.output  # a scheduled run that did nothing must not report success
+
+
+@pytest.fixture
+def syncenv(
+    env: Path,
+    pg: psycopg.Connection[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """`env` narrowed to the board whose fake payload is empty, plus L2 on a
+    scripted engine: sync's extraction pass then sees exactly the seeded document."""
+    (env / "companies.toml").write_text(
+        '[[boards]]\ncompany="Palantir"\nsource="lever"\nboard="palantir"\n'
+    )
+    monkeypatch.setenv("JOB_HUNTER_L2_BASE_URL", "https://openrouter.test/api/v1")
+    monkeypatch.setenv("JOB_HUNTER_L2_MODELS", "z-ai/*")
+    monkeypatch.setenv("JOB_HUNTER_L2_MODEL_CANDIDATES", "z-ai/glm-5.2:free")
+    from tests.l2.test_runner import GOOD, FakeEngine, _seed_doc
+
+    _seed_doc(pg)
+    monkeypatch.setattr(cli, "_make_engine", lambda settings: FakeEngine([GOOD]))
+    return env
+
+
+def test_sync_runs_ingest_then_fetch_then_extract(syncenv: Path) -> None:
+    r = runner.invoke(cli.app, ["sync", "-o", "json"])
+    assert r.exit_code == 0, r.stdout
+    data = json.loads(r.stdout)["data"]
+    assert list(data) == ["ingest", "fetch", "extract"]
+    assert data["ingest"]["ingested"] == 0 and data["ingest"]["gaps"] == []
+    assert data["fetch"]["counts"] == {
+        "boards": 1, "ok": 1, "envelope_error": 0, "http_error": 0, "transport_error": 0,
+        "new_blobs": 1,
+    }
+    assert data["extract"]["validated"] == 1
+
+
+def test_sync_human_output_names_every_phase(syncenv: Path) -> None:
+    r = runner.invoke(cli.app, ["sync", "-o", "table"])
+    assert r.exit_code == 0, r.stderr
+    assert "ingest:" in r.stdout and "fetch:" in r.stdout and "extract:" in r.stdout
+
+
+def test_sync_no_extract_skips_the_pass(syncenv: Path) -> None:
+    r = runner.invoke(cli.app, ["sync", "--no-extract", "-o", "json"])
+    assert r.exit_code == 0, r.stdout
+    data = json.loads(r.stdout)["data"]
+    assert data["extract"] == {"skipped_reason": "--no-extract"}
+    assert data["fetch"]["counts"]["ok"] == 1  # collection still ran
+
+
+def test_sync_without_l2_candidates_says_so(env: Path) -> None:
+    r = runner.invoke(cli.app, ["sync", "-o", "json"])
+    assert r.exit_code == 0, r.stdout
+    data = json.loads(r.stdout)["data"]
+    assert data["extract"] == {"skipped_reason": "no JOB_HUNTER_L2_MODEL_CANDIDATES"}
+    assert data["fetch"]["counts"]["ok"] == 2
+
+
+def test_sync_reports_extraction_failure_without_failing_the_run(
+    syncenv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobhunter.l2.engines import EngineFatalError
+    from tests.l2.test_runner import FakeEngine
+
+    monkeypatch.setattr(
+        cli, "_make_engine", lambda s: FakeEngine([EngineFatalError("credentials rejected")])
+    )
+    r = runner.invoke(cli.app, ["sync", "-o", "json"])
+    # collection is irreplaceable, extraction recomputable: a bad engine day is reported
+    assert r.exit_code == 0, r.stdout
+    data = json.loads(r.stdout)["data"]
+    assert "credentials rejected" in data["extract"]["error"]
+    assert data["fetch"]["counts"]["ok"] == 1
+
+
+def test_sync_throttled_extraction_with_no_progress_is_systemic(
+    syncenv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobhunter.l2.engines import EngineThrottled
+    from tests.l2.test_runner import FakeEngine
+
+    monkeypatch.setattr(cli, "_make_engine", lambda s: FakeEngine([EngineThrottled("429")]))
+    r = runner.invoke(cli.app, ["sync", "-o", "json"])
+    assert r.exit_code == 6, r.stdout
+    data = json.loads(r.stdout)["data"]
+    assert data["extract"]["throttled"] is True and data["extract"]["validated"] == 0
+    assert data["fetch"]["counts"]["ok"] == 1
+
+
+def test_sync_stops_and_exits_systemic_on_gap_manifests(
+    env: Path, tmp_path: Path, pg: psycopg.Connection[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import timedelta
+
+    from jobhunter.archive.local import LocalFS
+    from jobhunter.models import Board
+    from jobhunter.store.lifecycle import Ingestor
+    from tests.store.helpers import ab_record, board_payload, make_manifest, write_registry
+
+    archive_root = tmp_path / "gap-archive"
+    store = LocalFS(archive_root)
+    rev = write_registry(store, [Board("Ramp", "ashby", "ramp")])
+    t0 = datetime(2026, 8, 18, 6, tzinfo=UTC)
+    body = board_payload("ashby", [ab_record("x", "T", "<p>t</p>")])
+    ing = Ingestor(pg, store)
+    ing.ingest(make_manifest(store, "ashby", "ramp", t0, body, registry_revision=rev))
+    make_manifest(store, "ashby", "ramp", t0 + timedelta(days=1), body, registry_revision=rev)
+    ing.ingest(make_manifest(store, "ashby", "ramp", t0 + timedelta(days=2), body,
+                             registry_revision=rev))
+    pg.commit()
+    monkeypatch.setenv("JOB_HUNTER_ARCHIVE_URL", f"file://{archive_root}")
+    r = runner.invoke(cli.app, ["sync", "-o", "json"])
+    assert r.exit_code == 6, r.stdout
+    data = json.loads(r.stdout)["data"]
+    assert len(data["ingest"]["gaps"]) == 1
+    # fetching would advance the watermark past the gap: nothing after ingest runs
+    assert data["fetch"] == {"skipped_reason": "ingest gaps"}
+    assert data["extract"] == {"skipped_reason": "ingest gaps"}

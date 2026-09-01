@@ -725,11 +725,11 @@ CREATE INDEX IF NOT EXISTS ix_mentions_mention ON profile_mentions (mention, imp
 
 Semantics (mirror the workflow's philosophy): collection failure → exit per Task 3's mapping; extraction failure is captured as `data["extract"]["error"]` and does **not** fail the run (collection is irreplaceable, extraction recomputable — CI comment in `fetch.yml`), except `breaker_abort`/all-throttled which sets exit `Exit.SYSTEMIC` exactly as `extract_run` does today. Ingest gaps → hint + `Exit.SYSTEMIC` (unchanged behavior, now aggregated). Reuse the bodies by extracting the current `ingest` and `extract_run` command internals into private helpers `_ingest_once(settings, store, output) -> dict` and `_extract_once(settings, store, output, max_docs, max_usd) -> dict` that both the standalone commands and `sync` call — no logic duplication.
 
-- [ ] **Step 1:** Failing tests: `sync` with the fake fetcher + tmp archive (the idiom `tests/test_cli.py` already uses for `fetch`) returns an envelope with all three keys ordered ingest→fetch→extract; `--no-extract` yields `{"extract": {"skipped_reason": "--no-extract"}}`; missing L2 candidates yields `skipped_reason: "no JOB_HUNTER_L2_MODEL_CANDIDATES"`; an ingest gap exits 6.
-- [ ] **Step 2:** Run — FAIL.
-- [ ] **Step 3:** Implement (helpers first, then the command).
-- [ ] **Step 4:** `uv run pytest tests/test_cli.py -q && uv run mypy` — PASS.
-- [ ] **Step 5: Commit** — `git commit -am "feat(cli): sync — ingest, fetch, budgeted extract in one verb"`
+- [x] **Step 1:** Failing tests: `sync` with the fake fetcher + tmp archive (the idiom `tests/test_cli.py` already uses for `fetch`) returns an envelope with all three keys ordered ingest→fetch→extract; `--no-extract` yields `{"extract": {"skipped_reason": "--no-extract"}}`; missing L2 candidates yields `skipped_reason: "no JOB_HUNTER_L2_MODEL_CANDIDATES"`; an ingest gap exits 6.
+- [x] **Step 2:** Run — FAIL.
+- [x] **Step 3:** Implement (helpers first, then the command).
+- [x] **Step 4:** `uv run pytest tests/test_cli.py -q && uv run mypy` — PASS.
+- [x] **Step 5: Commit** — `git commit -am "feat(cli): sync — ingest, fetch, budgeted extract in one verb"`
 
 ---
 

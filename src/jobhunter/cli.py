@@ -12,6 +12,7 @@ import contextlib
 import json
 import re
 import sys
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,7 @@ from jobhunter.cli_output import Exit, emit, fail, output_option, use_json
 from jobhunter.cli_q import MAX_LIMIT, _clamp, q_app
 from jobhunter.config import ConfigError, Settings
 from jobhunter.cursors import Watermark, read_cursor, write_cursor
-from jobhunter.fetch import UnknownBoardError, is_healthy
+from jobhunter.fetch import RunSummary, UnknownBoardError, is_healthy
 from jobhunter.fetch import run as fetch_run
 from jobhunter.http import Fetcher
 from jobhunter.pulse import build_pulse
@@ -238,20 +239,19 @@ def verify(
     _verify_output(report, markdown, output)
 
 
-@app.command()
-def fetch(
-    board: str | None = typer.Option(None, "--board", help="Only this board, as source:board"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Fetch but write nothing"),
-    output: str | None = output_option(),
-) -> None:
-    """Fetch every registered board and archive manifests + blobs."""
-    settings = _settings(output)
-    store = _store(settings, output)
-    _split_board(board, output)  # validates the source:board shape; exits 2 otherwise
+def _fetch_once(
+    settings: Settings,
+    store: ArchiveStore,
+    output: str | None,
+    *,
+    only: str | None = None,
+    dry_run: bool = False,
+) -> RunSummary:
+    """One fetch run with the contract's error mapping (`fetch`, `sync`)."""
     fetcher = _make_fetcher()
     try:
-        summary = fetch_run(settings, store=store, fetcher=fetcher, only=board,
-                            dry_run=dry_run, now=_now, schema=_schema)
+        return fetch_run(settings, store=store, fetcher=fetcher, only=only,
+                         dry_run=dry_run, now=_now, schema=_schema)
     except ConfigError as e:
         fail("config", f"config error: {e}", code=Exit.CONFIG, output=output)
     except RegistryError as e:
@@ -263,10 +263,17 @@ def fetch(
         fail("backend", f"archive error: {e}", code=Exit.BACKEND, output=output)
     finally:
         fetcher.close()
+
+
+def _fetch_failed(summary: RunSummary) -> bool:
+    """A run that archived nothing usable, or could not reach the store."""
+    counts = summary.counts()
+    return bool(summary.db_error) or bool(counts["boards"] and counts["ok"] == 0)
+
+
+def _fetch_human(summary: RunSummary, dry_run: bool) -> str:
     if summary.lock_held:
-        emit(summary.to_dict(), output=output,
-             human="already running (advisory lock held); nothing fetched")
-        return
+        return "already running (advisory lock held); nothing fetched"
     counts = summary.counts()
     lines = [f"run {summary.run_id} — {counts['ok']}/{counts['boards']} boards ok, "
              f"{counts['new_blobs']} new blobs, {summary.ingested} ingested"
@@ -279,24 +286,41 @@ def fetch(
         lines.append(f"  {o.board.key:32} {m.transport:11} {m.http_status or '-':>4}  {detail}")
     if summary.db_error:
         lines.append(f"db error: {summary.db_error} (the archive was still written)")
-    emit(summary.to_dict(), human="\n".join(lines), output=output)
-    if summary.db_error or (counts["boards"] and counts["ok"] == 0):
-        raise typer.Exit(int(Exit.SYSTEMIC))
+    return "\n".join(lines)
 
 
 @app.command()
-def ingest(output: str | None = output_option()) -> None:
-    """Replay archive manifests newer than the last ingested one into the store."""
-    from jobhunter.ingest import replay_pending
-
+def fetch(
+    board: str | None = typer.Option(None, "--board", help="Only this board, as source:board"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Fetch but write nothing"),
+    output: str | None = output_option(),
+) -> None:
+    """Fetch every registered board and archive manifests + blobs."""
     settings = _settings(output)
     store = _store(settings, output)
+    _split_board(board, output)  # validates the source:board shape; exits 2 otherwise
+    summary = _fetch_once(settings, store, output, only=board, dry_run=dry_run)
+    emit(summary.to_dict(), human=_fetch_human(summary, dry_run), output=output)
+    if _fetch_failed(summary):
+        raise typer.Exit(int(Exit.SYSTEMIC))
+
+
+_GAP_HINT = (
+    "archive has manifests behind the watermark that are missing from the store; "
+    "run `job-hunter rebuild` to repair"
+)
+
+
+def _ingest_once(
+    settings: Settings, store: ArchiveStore, output: str | None
+) -> dict[str, Any]:
+    """One drain of the pending manifests under the ingest lock (`ingest`, `sync`)."""
+    from jobhunter.ingest import replay_pending
+
     conn = _conn(settings, schema=_schema, output=output)
     try:
         if not _db.try_lock(conn):
-            emit({"lock_held": True, "ingested": 0, "skipped": 0, "last_attempt": None},
-                 human="already running (advisory lock held); nothing ingested", output=output)
-            return
+            return {"lock_held": True, "ingested": 0, "skipped": 0, "last_attempt": None}
         _db.init(conn, _schema)
         conn.commit()
         s = replay_pending(conn, store, drop_ratio=settings.drop_ratio)
@@ -310,20 +334,94 @@ def ingest(output: str | None = output_option()) -> None:
         with contextlib.suppress(Exception):
             _db.unlock(conn)
         conn.close()
-    hint = (
-        "archive has manifests behind the watermark that are missing from the store; "
-        "run `job-hunter rebuild` to repair"
-    ) if s.gaps else None
-    emit(
-        {"ingested": s.ingested, "skipped": s.skipped, "last_attempt": s.last_attempt,
-         "gaps": s.gaps, "hint": hint},
-        human=f"ingested {s.ingested}, skipped {s.skipped}, last {s.last_attempt or '-'}"
-        + (f"\nGAPS: {len(s.gaps)} manifest(s) missing from the store — {hint}" if s.gaps else ""),
-        output=output,
-        hint=hint,
+    return {"ingested": s.ingested, "skipped": s.skipped, "last_attempt": s.last_attempt,
+            "gaps": s.gaps, "hint": _GAP_HINT if s.gaps else None}
+
+
+def _ingest_human(data: dict[str, Any]) -> str:
+    if data.get("lock_held"):
+        return "already running (advisory lock held); nothing ingested"
+    gaps = data["gaps"]
+    return (
+        f"ingested {data['ingested']}, skipped {data['skipped']}, "
+        f"last {data['last_attempt'] or '-'}"
+        + (f"\nGAPS: {len(gaps)} manifest(s) missing from the store — {_GAP_HINT}" if gaps else "")
     )
-    if s.gaps:
+
+
+@app.command()
+def ingest(output: str | None = output_option()) -> None:
+    """Replay archive manifests newer than the last ingested one into the store."""
+    settings = _settings(output)
+    store = _store(settings, output)
+    data = _ingest_once(settings, store, output)
+    emit(data, human=_ingest_human(data), output=output, hint=data.get("hint"))
+    if data.get("gaps"):
         raise typer.Exit(int(Exit.SYSTEMIC))
+
+
+def _sync_human(data: dict[str, Any], summary: RunSummary | None) -> str:
+    # `text` is a thunk: a skipped or failed phase has no summary to render.
+    def phase(name: str, block: dict[str, Any], text: Callable[[], str]) -> str:
+        if block.get("skipped_reason"):
+            return f"{name}: skipped ({block['skipped_reason']})"
+        if block.get("error"):
+            return f"{name}: {block['error']}"
+        return f"{name}: {text()}"
+
+    return "\n".join([
+        phase("ingest", data["ingest"], lambda: _ingest_human(data["ingest"])),
+        phase("fetch", data["fetch"], lambda: _fetch_human(summary, False) if summary else ""),
+        phase("extract", data["extract"], lambda: _extract_human(data["extract"], False)),
+    ])
+
+
+@app.command()
+def sync(
+    no_extract: bool = typer.Option(False, "--no-extract", help="Skip the extraction pass"),
+    extract_max_docs: int | None = typer.Option(
+        None, "--extract-max-docs", help="Documents to extract this run (default: config)"
+    ),
+    output: str | None = output_option(),
+) -> None:
+    """Drain pending manifests, fetch every board, extract within budget: one operator run."""
+    settings = _settings(output)
+    store = _store(settings, output)
+    summary: RunSummary | None = None
+    code = Exit.OK
+    ingest_data = _ingest_once(settings, store, output)
+    if ingest_data.get("gaps"):
+        # The store is behind the archive; fetching would advance the watermark
+        # past the missing manifests. The CI step order stops here for this reason.
+        code = Exit.SYSTEMIC
+        fetch_data: dict[str, Any] = {"skipped_reason": "ingest gaps"}
+        extract_data: dict[str, Any] = {"skipped_reason": "ingest gaps"}
+    else:
+        summary = _fetch_once(settings, store, output)
+        fetch_data = summary.to_dict()
+        if _fetch_failed(summary):
+            code = Exit.SYSTEMIC
+            extract_data = {"skipped_reason": "collection failed"}
+        elif no_extract:
+            extract_data = {"skipped_reason": "--no-extract"}
+        elif not settings.l2_model_candidates:
+            extract_data = {"skipped_reason": "no JOB_HUNTER_L2_MODEL_CANDIDATES"}
+        else:
+            try:
+                extract_data = _extract_once(settings, store, extract_max_docs, None)
+            except _ExtractFailure as e:
+                # Collection is irreplaceable and extraction recomputable, so a bad
+                # engine day is reported, never fatal (the reasoning fetch.yml's
+                # continue-on-error carried).
+                extract_data = {"error": e.message}
+            else:
+                if _extract_stalled(extract_data):
+                    code = Exit.SYSTEMIC
+    data = {"ingest": ingest_data, "fetch": fetch_data, "extract": extract_data}
+    emit(data, human=_sync_human(data, summary), output=output,
+         hint=ingest_data.get("hint") or "job-hunter pulse to read what changed")
+    if code is not Exit.OK:
+        raise typer.Exit(int(code))
 
 
 @app.command()
@@ -748,25 +846,46 @@ def _make_engine(settings: Settings) -> Any:
     return OpenAICompat(settings.l2_base_url, settings.l2_api_key, prices=settings.l2_price)
 
 
-@extract_app.command("run")
-def extract_run(
-    max_docs: int | None = typer.Option(None, "--max-docs"),
-    max_usd: float | None = typer.Option(None, "--max-usd"),
-    doc: str | None = typer.Option(None, "--doc", help="Extract exactly this document_hash"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show the queue, write nothing"),
-    output: str | None = output_option(),
-) -> None:
-    """Drain the extraction queue under the caps (harness spec §4.6)."""
+class _ExtractFailure(Exception):
+    """An extraction pass that could not run, carrying its contract error fields.
+
+    `extract run` reports it through `fail`; `sync` records it in the envelope and
+    keeps going — collection is irreplaceable, extraction is recomputable.
+    """
+
+    def __init__(self, kind: str, message: str, code: Exit, hint: str | None = None) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.message = message
+        self.code = code
+        self.hint = hint
+
+
+def _extract_once(
+    settings: Settings,
+    store: ArchiveStore,
+    max_docs: int | None,
+    max_usd: float | None,
+    *,
+    doc: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """One extraction batch under the extract lock (`extract run`, `sync`).
+
+    Failures raise `_ExtractFailure` rather than printing: the two callers report
+    them differently, and only one of them owns the envelope.
+    """
     from jobhunter.l2 import runner as l2_runner
     from jobhunter.l2.engines import EngineFatalError
 
-    settings = _settings(output)
     try:
         settings.require_l2()
+        conn = _db.connect(settings.require_database_url(), schema=_schema)
     except ConfigError as e:
-        fail("config", f"config error: {e}", code=Exit.CONFIG, output=output)
-    store = _store(settings, output)
-    conn = _conn(settings, schema=_schema, output=output)
+        raise _ExtractFailure("config", f"config error: {e}", Exit.CONFIG) from e
+    except Exception as e:  # psycopg.OperationalError and friends
+        raise _ExtractFailure("backend", f"database error: {e}", Exit.BACKEND,
+                              "is Postgres reachable? check JOB_HUNTER_DATABASE_URL") from e
     try:
         _db.init(conn, _schema)
         conn.commit()
@@ -779,31 +898,55 @@ def extract_run(
         )
         conn.commit()
     except ArchiveError as e:
-        fail("backend", f"archive error: {e}", code=Exit.BACKEND, output=output)
+        raise _ExtractFailure("backend", f"archive error: {e}", Exit.BACKEND) from e
     except (psycopg.Error, _db.SchemaMismatch, ValueError) as e:
-        fail("backend", f"database error: {e}", code=Exit.BACKEND, output=output)
+        raise _ExtractFailure("backend", f"database error: {e}", Exit.BACKEND) from e
     except EngineFatalError as e:
-        fail("systemic", f"engine error: {e}", code=Exit.SYSTEMIC, output=output)
+        raise _ExtractFailure("systemic", f"engine error: {e}", Exit.SYSTEMIC) from e
     finally:
         conn.close()
-    if summary.lock_held:
-        emit(summary.to_dict(), human="already running (extract lock held); nothing done",
-             output=output)
-        return
+    return summary.to_dict()
+
+
+def _extract_stalled(data: dict[str, Any]) -> bool:
+    """A run that did nothing and cannot: the breaker tripped, or every call was throttled."""
+    return bool(data["breaker_abort"] or (data["throttled"] and data["validated"] == 0))
+
+
+def _extract_human(data: dict[str, Any], dry_run: bool) -> str:
+    if data.get("lock_held"):
+        return "already running (extract lock held); nothing done"
     if dry_run:
-        human = f"queue ({len(summary.queued)}):\n" + "\n".join(summary.queued)
-    else:
-        human = (
-            f"run {summary.run_id}: {summary.validated} validated, "
-            f"{summary.quarantined} quarantined, {summary.pending} pending, "
-            f"{summary.replayed} replayed, ${summary.spend_usd:.2f}"
-        )
-        if summary.throttled:
-            human += "  THROTTLED (batch stopped)"
-        if summary.breaker_abort:
-            human += "  BREAKER: 5 consecutive model rejections"
-    emit(summary.to_dict(), human=human, output=output)
-    if summary.breaker_abort or (summary.throttled and summary.validated == 0):
+        return f"queue ({len(data['queued'])}):\n" + "\n".join(data["queued"])
+    human = (
+        f"run {data['run_id']}: {data['validated']} validated, "
+        f"{data['quarantined']} quarantined, {data['pending']} pending, "
+        f"{data['replayed']} replayed, ${data['spend_usd']:.2f}"
+    )
+    if data["throttled"]:
+        human += "  THROTTLED (batch stopped)"
+    if data["breaker_abort"]:
+        human += "  BREAKER: 5 consecutive model rejections"
+    return human
+
+
+@extract_app.command("run")
+def extract_run(
+    max_docs: int | None = typer.Option(None, "--max-docs"),
+    max_usd: float | None = typer.Option(None, "--max-usd"),
+    doc: str | None = typer.Option(None, "--doc", help="Extract exactly this document_hash"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the queue, write nothing"),
+    output: str | None = output_option(),
+) -> None:
+    """Drain the extraction queue under the caps (harness spec §4.6)."""
+    settings = _settings(output)
+    store = _store(settings, output)
+    try:
+        data = _extract_once(settings, store, max_docs, max_usd, doc=doc, dry_run=dry_run)
+    except _ExtractFailure as e:
+        fail(e.kind, e.message, code=e.code, output=output, hint=e.hint)
+    emit(data, human=_extract_human(data, dry_run), output=output)
+    if _extract_stalled(data):
         # a scheduled run that did nothing must not report success
         raise typer.Exit(int(Exit.SYSTEMIC))
 
