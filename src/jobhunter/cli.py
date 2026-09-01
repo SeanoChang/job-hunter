@@ -1,10 +1,17 @@
-"""job-hunter command line. Every command accepts --json; exit 0 normal, 2 systemic."""
+"""job-hunter command line.
+
+Every command speaks the contract in `cli_output`: one JSON envelope when
+stdout is piped, human text on a TTY, `-o/--output` to force either. Exit codes
+are the typed table in `cli_output.Exit` (0 ok, 1 verify findings, 2 usage,
+3 config, 4 not found, 5 backend, 6 systemic).
+"""
 
 from __future__ import annotations
 
 import contextlib
 import json
 import re
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -15,6 +22,7 @@ import typer
 from jobhunter import __version__
 from jobhunter.archive import ArchiveError, ArchiveStore, open_store
 from jobhunter.archive.manifests import iter_manifests, latest_per_board
+from jobhunter.cli_output import Exit, emit, fail, output_option, use_json
 from jobhunter.config import ConfigError, Settings
 from jobhunter.fetch import UnknownBoardError, is_healthy
 from jobhunter.fetch import run as fetch_run
@@ -23,8 +31,6 @@ from jobhunter.registry import RegistryError
 from jobhunter.registry import load as load_registry
 from jobhunter.store import db as _db
 from jobhunter.timeutil import iso, utcnow
-
-EXIT_SYSTEMIC = 2
 
 _SINCE = re.compile(r"^(\d+)([mhd])$")
 
@@ -49,35 +55,29 @@ def _now() -> datetime:
     return utcnow()
 
 
-def _settings() -> Settings:
+def _settings(output: str | None) -> Settings:
     try:
         return Settings.load()
     except ConfigError as e:
-        typer.echo(f"config error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("config", f"config error: {e}", code=Exit.CONFIG, output=output,
+             hint="run `job-hunter doctor` once it lands; env vars are listed in README.md")
 
 
-def _conn(settings: Settings, schema: str = _db.SCHEMA) -> _db.Conn:
+def _conn(settings: Settings, schema: str = _db.SCHEMA, *, output: str | None = None) -> _db.Conn:
     try:
         return _db.connect(settings.require_database_url(), schema=schema)
     except ConfigError as e:
-        typer.echo(f"config error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("config", f"config error: {e}", code=Exit.CONFIG, output=output)
     except Exception as e:  # psycopg.OperationalError and friends
-        typer.echo(f"database error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("backend", f"database error: {e}", code=Exit.BACKEND, output=output,
+             hint="is Postgres reachable? check JOB_HUNTER_DATABASE_URL")
 
 
-def _store(settings: Settings) -> ArchiveStore:
+def _store(settings: Settings, output: str | None = None) -> ArchiveStore:
     try:
         return open_store(settings.archive_url)
     except (ValueError, ArchiveError) as e:
-        typer.echo(f"archive error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
-
-
-def _emit(obj: Any, as_json: bool, human: str) -> None:
-    typer.echo(json.dumps(obj, indent=None) if as_json else human)
+        fail("backend", f"archive error: {e}", code=Exit.BACKEND, output=output)
 
 
 def _parse_since(value: str) -> timedelta:
@@ -90,27 +90,26 @@ def _parse_since(value: str) -> timedelta:
     return timedelta(hours=n) if unit == "h" else timedelta(days=n)
 
 
-def _split_board(value: str | None) -> tuple[str | None, str | None]:
+def _split_board(value: str | None, output: str | None = None) -> tuple[str | None, str | None]:
     if not value:
         return None, None
     if ":" not in value:
-        typer.echo("--board must look like source:board, e.g. greenhouse:anthropic")
-        raise typer.Exit(EXIT_SYSTEMIC)
+        fail("usage", f"--board must look like source:board, got {value!r}",
+             code=Exit.USAGE, output=output, hint="e.g. greenhouse:anthropic")
     src, brd = value.split(":", 1)
     return src, brd
 
 
 @app.command()
-def version(as_json: bool = typer.Option(False, "--json")) -> None:
+def version(output: str | None = output_option()) -> None:
     """Print the job-hunter version."""
-    _emit({"version": __version__}, as_json, __version__)
+    emit({"version": __version__}, human=__version__, output=output)
 
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
-
-def _resolve_doc(conn: _db.Conn, prefix: str) -> str:
+def _resolve_doc(conn: _db.Conn, prefix: str, output: str | None = None) -> str:
     """Accept any unambiguous document_hash prefix.
 
     Listings print a 12-char prefix, so the CLI must accept back what it
@@ -119,37 +118,36 @@ def _resolve_doc(conn: _db.Conn, prefix: str) -> str:
     if _HEX64.match(prefix):
         return prefix
     if not re.fullmatch(r"[0-9a-f]{4,64}", prefix):
-        typer.echo(f"error: {prefix!r} is not a document_hash or hex prefix", err=True)
-        raise typer.Exit(EXIT_SYSTEMIC)
+        fail("usage", f"{prefix!r} is not a document_hash or hex prefix",
+             code=Exit.USAGE, output=output, hint="give 4-64 lowercase hex characters")
     rows = conn.execute(
         "SELECT DISTINCT document_hash FROM documents WHERE document_hash LIKE %s LIMIT 10",
         (prefix + "%",),
     ).fetchall()
     if not rows:
-        typer.echo(f"error: no document matches {prefix!r}", err=True)
-        raise typer.Exit(EXIT_SYSTEMIC)
+        fail("not_found", f"no document matches {prefix!r}", code=Exit.NOT_FOUND, output=output)
     if len(rows) > 1:
-        typer.echo(f"error: {prefix!r} is ambiguous ({len(rows)} documents)", err=True)
-        raise typer.Exit(EXIT_SYSTEMIC)
+        fail("not_found", f"{prefix!r} is ambiguous ({len(rows)} documents)",
+             code=Exit.NOT_FOUND, output=output, hint="lengthen the prefix")
     return str(rows[0]["document_hash"])
 
 
-def _load_stored_extraction(document_hash: str) -> tuple[dict[str, Any], str]:
+def _load_stored_extraction(document_hash: str, output: str | None) -> tuple[dict[str, Any], str]:
     """Store-addressed verify: markdown from documents, record from the chosen
     attempt's archive object."""
     from jobhunter.l2.attempts import from_bytes
     from jobhunter.markdown import NORMALIZER_VERSION
     from jobhunter.store import extraction as xstore
 
-    settings = _settings()
-    store = _store(settings)
-    conn = _conn(settings, schema=_schema)
+    settings = _settings(output)
+    store = _store(settings, output)
+    conn = _conn(settings, schema=_schema, output=output)
     try:
-        document_hash = _resolve_doc(conn, document_hash)
+        document_hash = _resolve_doc(conn, document_hash, output)
         markdown = xstore.markdown_for(conn, document_hash, NORMALIZER_VERSION)
         if markdown is None:
-            typer.echo(f"error: no document {document_hash} under {NORMALIZER_VERSION}", err=True)
-            raise typer.Exit(EXIT_SYSTEMIC)
+            fail("not_found", f"no document {document_hash} under {NORMALIZER_VERSION}",
+                 code=Exit.NOT_FOUND, output=output)
         row = conn.execute(
             "SELECT chosen_attempt FROM extractions WHERE document_hash=%s"
             " AND chosen_attempt IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
@@ -158,46 +156,45 @@ def _load_stored_extraction(document_hash: str) -> tuple[dict[str, Any], str]:
     finally:
         conn.close()
     if row is None:
-        typer.echo(f"error: no extraction with a chosen attempt for {document_hash}", err=True)
-        raise typer.Exit(EXIT_SYSTEMIC)
+        fail("not_found", f"no extraction with a chosen attempt for {document_hash}",
+             code=Exit.NOT_FOUND, output=output,
+             hint=f"run: job-hunter extract run --doc {document_hash}")
     try:
         attempt = from_bytes(store.get(row["chosen_attempt"]))
     except (KeyError, OSError, ValueError, EOFError, ArchiveError) as exc:
         # missing object, unreachable backend, or corrupt gzip/JSON: systemic
-        typer.echo(f"error: cannot load {row['chosen_attempt']}: {exc!r}", err=True)
-        raise typer.Exit(EXIT_SYSTEMIC) from exc
+        fail("systemic", f"cannot load {row['chosen_attempt']}: {exc!r}",
+             code=Exit.SYSTEMIC, output=output)
     if attempt.record is None:
-        typer.echo("error: chosen attempt carries no record", err=True)
-        raise typer.Exit(EXIT_SYSTEMIC)
+        fail("systemic", "chosen attempt carries no record", code=Exit.SYSTEMIC, output=output)
     return attempt.record, markdown
 
 
-def _verify_output(report: Any, markdown: str, as_json: bool) -> None:
+def _verify_output(report: Any, markdown: str, output: str | None) -> None:
     from jobhunter.l2.quotes import line_col
 
     def _clip(s: str, n: int = 120) -> str:
         return s if len(s) <= n else s[:n] + "…"
 
-    if as_json:
-        typer.echo(json.dumps(report.to_json(), ensure_ascii=False))
-    else:
-        for f in report.findings:
-            loc = ""
-            span = f.detail.get("span")
-            if isinstance(span, list):
-                line, col = line_col(markdown, int(span[0]))
-                loc = f"  line {line}:{col}"
-            typer.echo(f"{f.severity.upper()} {f.check}:{f.code} {f.path}{loc}")
-            expected, found = f.detail.get("expected"), f.detail.get("found")
-            if isinstance(expected, str) and isinstance(found, str):
-                typer.echo(f"  expected: {_clip(expected)!r}")
-                typer.echo(f"  found:    {_clip(found)!r}")
-            divergence = f.detail.get("divergence")
-            if isinstance(divergence, str):
-                typer.echo(f"  {divergence}")
-        typer.echo(f"{report.status}  ({len(report.findings)} findings)")
+    lines: list[str] = []
+    for f in report.findings:
+        loc = ""
+        span = f.detail.get("span")
+        if isinstance(span, list):
+            line, col = line_col(markdown, int(span[0]))
+            loc = f"  line {line}:{col}"
+        lines.append(f"{f.severity.upper()} {f.check}:{f.code} {f.path}{loc}")
+        expected, found = f.detail.get("expected"), f.detail.get("found")
+        if isinstance(expected, str) and isinstance(found, str):
+            lines.append(f"  expected: {_clip(expected)!r}")
+            lines.append(f"  found:    {_clip(found)!r}")
+        divergence = f.detail.get("divergence")
+        if isinstance(divergence, str):
+            lines.append(f"  {divergence}")
+    lines.append(f"{report.status}  ({len(report.findings)} findings)")
+    emit(report.to_json(), human="\n".join(lines), output=output)
     if report.status == "fail":
-        raise typer.Exit(1)
+        raise typer.Exit(int(Exit.FINDINGS))
 
 
 @app.command()
@@ -206,71 +203,65 @@ def verify(
         ..., help="Extraction record JSON file, or a 64-hex document_hash"
     ),
     document_file: str | None = typer.Argument(None, help="Canonical markdown document"),
-    as_json: bool = typer.Option(False, "--json"),
+    output: str | None = output_option(),
 ) -> None:
     """Re-run every validator check over an extraction against its document.
 
-    Exit 0: all checks pass. Exit 1: ran fine, findings failed. Exit 2: systemic.
+    Exit 0: all checks pass. Exit 1: ran fine, findings failed. Exit 6: systemic.
     """
     from jobhunter.l2 import verify as l2_verify
 
     looks_like_hash = re.fullmatch(r"[0-9a-f]{4,64}", extraction_file) is not None
     if document_file is None and looks_like_hash:
-        extraction, markdown = _load_stored_extraction(extraction_file)
+        extraction, markdown = _load_stored_extraction(extraction_file, output)
     else:
         if document_file is None:
-            typer.echo(
-                "error: give a document_hash (or unambiguous hex prefix), "
-                "or an extraction file plus its DOCUMENT_FILE",
-                err=True,
-            )
-            raise typer.Exit(EXIT_SYSTEMIC)
+            fail("usage",
+                 "give a document_hash (or unambiguous hex prefix), "
+                 "or an extraction file plus its DOCUMENT_FILE",
+                 code=Exit.USAGE, output=output)
         try:
             extraction = json.loads(Path(extraction_file).read_text(encoding="utf-8"))
             markdown = Path(document_file).read_text(encoding="utf-8")
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            typer.echo(f"error: {exc}", err=True)
-            raise typer.Exit(EXIT_SYSTEMIC) from exc
+            fail("systemic", f"{exc}", code=Exit.SYSTEMIC, output=output)
     try:
         report = l2_verify(extraction, markdown)
     except (KeyError, TypeError, AttributeError, RecursionError) as exc:
         # unknown schema version, a top level that is not the record shape, or
         # pathological nesting that outruns the interpreter before any check
-        typer.echo(f"error: {exc!r}", err=True)
-        raise typer.Exit(EXIT_SYSTEMIC) from exc
-    _verify_output(report, markdown, as_json)
+        fail("systemic", f"{exc!r}", code=Exit.SYSTEMIC, output=output)
+    _verify_output(report, markdown, output)
 
 
 @app.command()
 def fetch(
     board: str | None = typer.Option(None, "--board", help="Only this board, as source:board"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Fetch but write nothing"),
-    as_json: bool = typer.Option(False, "--json"),
+    output: str | None = output_option(),
 ) -> None:
     """Fetch every registered board and archive manifests + blobs."""
-    settings = _settings()
-    store = _store(settings)
-    _split_board(board)  # validates the source:board shape; exits 2 otherwise
+    settings = _settings(output)
+    store = _store(settings, output)
+    _split_board(board, output)  # validates the source:board shape; exits 2 otherwise
     fetcher = _make_fetcher()
     try:
         summary = fetch_run(settings, store=store, fetcher=fetcher, only=board,
                             dry_run=dry_run, now=_now, schema=_schema)
     except ConfigError as e:
-        typer.echo(f"config error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("config", f"config error: {e}", code=Exit.CONFIG, output=output)
     except RegistryError as e:
-        typer.echo(f"registry error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("systemic", f"registry error: {e}", code=Exit.SYSTEMIC, output=output)
     except UnknownBoardError as e:
-        typer.echo(f"error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("systemic", str(e), code=Exit.SYSTEMIC, output=output,
+             hint="list registered boards with: job-hunter registry check")
     except ArchiveError as e:
-        typer.echo(f"archive error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("backend", f"archive error: {e}", code=Exit.BACKEND, output=output)
     finally:
         fetcher.close()
     if summary.lock_held:
-        _emit(summary.to_dict(), as_json, "already running (advisory lock held); nothing fetched")
+        emit(summary.to_dict(), output=output,
+             human="already running (advisory lock held); nothing fetched")
         return
     counts = summary.counts()
     lines = [f"run {summary.run_id} — {counts['ok']}/{counts['boards']} boards ok, "
@@ -284,34 +275,32 @@ def fetch(
         lines.append(f"  {o.board.key:32} {m.transport:11} {m.http_status or '-':>4}  {detail}")
     if summary.db_error:
         lines.append(f"db error: {summary.db_error} (the archive was still written)")
-    _emit(summary.to_dict(), as_json, "\n".join(lines))
+    emit(summary.to_dict(), human="\n".join(lines), output=output)
     if summary.db_error or (counts["boards"] and counts["ok"] == 0):
-        raise typer.Exit(EXIT_SYSTEMIC)
+        raise typer.Exit(int(Exit.SYSTEMIC))
 
 
 @app.command()
-def ingest(as_json: bool = typer.Option(False, "--json")) -> None:
+def ingest(output: str | None = output_option()) -> None:
     """Replay archive manifests newer than the last ingested one into the store."""
     from jobhunter.ingest import replay_pending
 
-    settings = _settings()
-    store = _store(settings)
-    conn = _conn(settings, schema=_schema)
+    settings = _settings(output)
+    store = _store(settings, output)
+    conn = _conn(settings, schema=_schema, output=output)
     try:
         if not _db.try_lock(conn):
-            _emit({"lock_held": True, "ingested": 0, "skipped": 0, "last_attempt": None}, as_json,
-                  "already running (advisory lock held); nothing ingested")
+            emit({"lock_held": True, "ingested": 0, "skipped": 0, "last_attempt": None},
+                 human="already running (advisory lock held); nothing ingested", output=output)
             return
         _db.init(conn, _schema)
         conn.commit()
         s = replay_pending(conn, store, drop_ratio=settings.drop_ratio)
         conn.commit()
     except ArchiveError as e:
-        typer.echo(f"archive error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("backend", f"archive error: {e}", code=Exit.BACKEND, output=output)
     except Exception as e:  # psycopg errors, OutOfOrder
-        typer.echo(f"database error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("backend", f"database error: {e}", code=Exit.BACKEND, output=output)
     finally:
         # Unlocking a dead connection must not mask the error that killed it.
         with contextlib.suppress(Exception):
@@ -321,63 +310,68 @@ def ingest(as_json: bool = typer.Option(False, "--json")) -> None:
         "archive has manifests behind the watermark that are missing from the store; "
         "run `job-hunter rebuild` to repair"
     ) if s.gaps else None
-    _emit(
+    emit(
         {"ingested": s.ingested, "skipped": s.skipped, "last_attempt": s.last_attempt,
          "gaps": s.gaps, "hint": hint},
-        as_json,
-        f"ingested {s.ingested}, skipped {s.skipped}, last {s.last_attempt or '-'}"
+        human=f"ingested {s.ingested}, skipped {s.skipped}, last {s.last_attempt or '-'}"
         + (f"\nGAPS: {len(s.gaps)} manifest(s) missing from the store — {hint}" if s.gaps else ""),
+        output=output,
+        hint=hint,
     )
     if s.gaps:
-        raise typer.Exit(EXIT_SYSTEMIC)
+        raise typer.Exit(int(Exit.SYSTEMIC))
 
 
 @app.command()
-def rebuild(as_json: bool = typer.Option(False, "--json")) -> None:
+def rebuild(
+    yes: bool = typer.Option(False, "--yes", help="Confirm; required when stdin is not a TTY"),
+    output: str | None = output_option(),
+) -> None:
     """Rebuild the store from the whole archive into a fresh schema and swap it live."""
     from jobhunter.rebuild import LockHeld
     from jobhunter.rebuild import rebuild as _rebuild
 
-    settings = _settings()
-    store = _store(settings)
+    if not yes and not sys.stdin.isatty():
+        fail("usage", "rebuild replaces the live schema",
+             hint="re-run with --yes to confirm non-interactively",
+             code=Exit.USAGE, output=output)
+    settings = _settings(output)
+    store = _store(settings, output)
     try:
         s = _rebuild(store, settings.require_database_url(), l2_globs=settings.l2_models,
                      drop_ratio=settings.drop_ratio,
                      schema=_schema)
     except ConfigError as e:
-        typer.echo(f"config error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("config", f"config error: {e}", code=Exit.CONFIG, output=output)
     except ArchiveError as e:
-        typer.echo(f"archive error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("backend", f"archive error: {e}", code=Exit.BACKEND, output=output)
     except LockHeld as e:  # another writer holds the advisory lock; not an error
-        _emit({"lock_held": True, "ingested": 0, "skipped": 0, "swapped": False}, as_json,
-              f"{e}; nothing rebuilt")
+        emit({"lock_held": True, "ingested": 0, "skipped": 0, "swapped": False},
+             human=f"{e}; nothing rebuilt", output=output)
         return
     except Exception as e:
-        typer.echo(f"database error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
-    _emit({"ingested": s.ingested, "skipped": s.skipped, "work_schema": s.work_schema,
-           "swapped": s.swapped},
-          as_json, f"rebuilt {s.ingested} attempts into {s.work_schema}; swapped live")
+        fail("backend", f"database error: {e}", code=Exit.BACKEND, output=output)
+    emit({"ingested": s.ingested, "skipped": s.skipped, "work_schema": s.work_schema,
+          "swapped": s.swapped},
+         human=f"rebuilt {s.ingested} attempts into {s.work_schema}; swapped live",
+         output=output)
 
 
 @app.command()
 def report(
     since: str = typer.Option("24h", "--since", help="Window: Nm, Nh or Nd"),
-    as_json: bool = typer.Option(False, "--json"),
+    output: str | None = output_option(),
 ) -> None:
     """Opened / changed / closed / reopened postings in the window."""
     from jobhunter.store.queries import events_since
 
-    settings = _settings()
+    settings = _settings(output)
     window = _parse_since(since)
-    conn = _conn(settings, schema=_schema)
+    conn = _conn(settings, schema=_schema, output=output)
     try:
         events = events_since(conn, _now() - window)
     except Exception as e:
-        typer.echo(f"database error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("backend", f"database error: {e}", code=Exit.BACKEND, output=output)
     finally:
         conn.close()
     rows = [
@@ -394,23 +388,22 @@ def report(
         human.append(
             f"  {r['kind']:8} {r['company'] or '-':18} {r['title'] or '-'}  {r['url'] or ''}"
         )
-    _emit({"since": since, "counts": counts, "events": rows}, as_json, "\n".join(human))
+    emit({"since": since, "counts": counts, "events": rows},
+         human="\n".join(human), output=output)
 
 
 @app.command()
-def status(as_json: bool = typer.Option(False, "--json")) -> None:
+def status(output: str | None = output_option()) -> None:
     """Per-board fetch health from the archive, plus store health when a DB is configured."""
-    settings = _settings()
-    store = _store(settings)
+    settings = _settings(output)
+    store = _store(settings, output)
     try:
         registry = load_registry(settings.registry_path)
         latest = latest_per_board(store)
     except RegistryError as e:
-        typer.echo(f"registry error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("systemic", f"registry error: {e}", code=Exit.SYSTEMIC, output=output)
     except ArchiveError as e:
-        typer.echo(f"archive error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("backend", f"archive error: {e}", code=Exit.BACKEND, output=output)
     rows: list[dict[str, Any]] = []
     for b in registry.boards:
         m = latest.get(b.key)
@@ -459,7 +452,7 @@ def status(as_json: bool = typer.Option(False, "--json")) -> None:
         )
     if untracked:
         human.append(f"not in registry but present in archive: {', '.join(untracked)}")
-    _emit(payload, as_json, "\n".join(human))
+    emit(payload, human="\n".join(human), output=output)
 
 
 def _merge_store_health(
@@ -492,12 +485,12 @@ def _merge_store_health(
 @archive_app.command("ls")
 def archive_ls(
     board: str | None = typer.Option(None, "--board", help="Filter, as source:board"),
-    as_json: bool = typer.Option(False, "--json"),
+    output: str | None = output_option(),
 ) -> None:
     """List attempts (manifests) in the archive."""
-    settings = _settings()
-    store = _store(settings)
-    src, brd = _split_board(board)
+    settings = _settings(output)
+    store = _store(settings, output)
+    src, brd = _split_board(board, output)
     try:
         items = [
             {
@@ -509,43 +502,40 @@ def archive_ls(
             for m in iter_manifests(store, src, brd)
         ]
     except ArchiveError as e:
-        typer.echo(f"archive error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("backend", f"archive error: {e}", code=Exit.BACKEND, output=output)
     human = [f"{i['started_at']}  {i['board']:28} {i['transport']:11} "
              f"{i['payload_bytes']:>9}B  "
              f"{i['record_count'] if i['record_count'] is not None else '-'}"
              for i in items]
-    _emit(items, as_json, "\n".join(human) or "(no attempts)")
+    emit(items, human="\n".join(human) or "(no attempts)", output=output)
 
 
 @registry_app.command("check")
-def registry_check(as_json: bool = typer.Option(False, "--json")) -> None:
+def registry_check(output: str | None = output_option()) -> None:
     """Validate companies.toml and print its revision."""
-    settings = _settings()
+    settings = _settings(output)
     try:
         reg = load_registry(settings.registry_path)
     except (RegistryError, OSError) as e:
-        _emit({"ok": False, "error": str(e)}, as_json, f"registry error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
-    _emit(
-        {"ok": True, "boards": [b.key for b in reg.boards], "revision": reg.revision},
-        as_json,
-        f"ok: {len(reg.boards)} boards, revision {reg.revision[:12]}",
+        fail("systemic", f"registry error: {e}", code=Exit.SYSTEMIC, output=output)
+    emit(
+        {"boards": [b.key for b in reg.boards], "revision": reg.revision},
+        human=f"ok: {len(reg.boards)} boards, revision {reg.revision[:12]}",
+        output=output,
     )
 
 
 @registry_app.command("list")
-def registry_list(as_json: bool = typer.Option(False, "--json")) -> None:
+def registry_list(output: str | None = output_option()) -> None:
     """Board membership history (panel)."""
     from jobhunter.store.queries import panel_rows
 
-    settings = _settings()
-    conn = _conn(settings, schema=_schema)
+    settings = _settings(output)
+    conn = _conn(settings, schema=_schema, output=output)
     try:
         rows = panel_rows(conn)
     except Exception as e:
-        typer.echo(f"database error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("backend", f"database error: {e}", code=Exit.BACKEND, output=output)
     finally:
         conn.close()
     items = [{"board": f"{r['source']}:{r['board']}", "company": r["company"],
@@ -554,36 +544,35 @@ def registry_list(as_json: bool = typer.Option(False, "--json")) -> None:
               "registry_revision": r["registry_revision"]} for r in rows]
     human = [f"{i['board']:32} {i['company']:20} {i['added_at']}  {i['removed_at'] or 'open'}"
              for i in items]
-    _emit(items, as_json, "\n".join(human) or "(no panel rows)")
+    emit(items, human="\n".join(human) or "(no panel rows)", output=output)
 
 
 @db_app.command("init")
-def db_init(as_json: bool = typer.Option(False, "--json")) -> None:
+def db_init(output: str | None = output_option()) -> None:
     """Create the jobhunter schema and tables (idempotent)."""
-    settings = _settings()
-    conn = _conn(settings, schema=_schema)
+    settings = _settings(output)
+    conn = _conn(settings, schema=_schema, output=output)
     try:
         try:
             _db.init(conn, _schema)
         except _db.SchemaMismatch as e:
-            typer.echo(f"schema error: {e}")
-            raise typer.Exit(EXIT_SYSTEMIC) from e
+            fail("systemic", f"schema error: {e}", code=Exit.SYSTEMIC, output=output)
         conn.commit()
         payload = {"schema": _schema, "schema_version": _db.stored_schema_version(conn)}
     finally:
         conn.close()
-    _emit(
+    emit(
         payload,
-        as_json,
-        f"schema {payload['schema']} ready, version {payload['schema_version']}",
+        human=f"schema {payload['schema']} ready, version {payload['schema_version']}",
+        output=output,
     )
 
 
 @db_app.command("version")
-def db_version(as_json: bool = typer.Option(False, "--json")) -> None:
-    """Print the code's schema version and the database's; exit 2 on mismatch."""
-    settings = _settings()
-    conn = _conn(settings, schema=_schema)
+def db_version(output: str | None = output_option()) -> None:
+    """Print the code's schema version and the database's; exit 6 on mismatch."""
+    settings = _settings(output)
+    conn = _conn(settings, schema=_schema, output=output)
     try:
         stored = None
         if _db.schema_exists(conn, _schema):
@@ -595,9 +584,10 @@ def db_version(as_json: bool = typer.Option(False, "--json")) -> None:
     finally:
         conn.close()
     payload = {"code": _db.SCHEMA_VERSION, "db": stored, "match": stored == _db.SCHEMA_VERSION}
-    _emit(payload, as_json, f"code {payload['code']}  db {stored or 'absent'}")
+    emit(payload, human=f"code {payload['code']}  db {stored or 'absent'}", output=output,
+         hint=None if payload["match"] else "run: job-hunter rebuild")
     if not payload["match"]:
-        raise typer.Exit(EXIT_SYSTEMIC)
+        raise typer.Exit(int(Exit.SYSTEMIC))
 
 
 if __name__ == "__main__":
@@ -659,20 +649,19 @@ def extract_run(
     max_usd: float | None = typer.Option(None, "--max-usd"),
     doc: str | None = typer.Option(None, "--doc", help="Extract exactly this document_hash"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show the queue, write nothing"),
-    as_json: bool = typer.Option(False, "--json"),
+    output: str | None = output_option(),
 ) -> None:
     """Drain the extraction queue under the caps (harness spec §4.6)."""
     from jobhunter.l2 import runner as l2_runner
     from jobhunter.l2.engines import EngineFatalError
 
-    settings = _settings()
+    settings = _settings(output)
     try:
         settings.require_l2()
     except ConfigError as e:
-        typer.echo(f"config error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
-    store = _store(settings)
-    conn = _conn(settings, schema=_schema)
+        fail("config", f"config error: {e}", code=Exit.CONFIG, output=output)
+    store = _store(settings, output)
+    conn = _conn(settings, schema=_schema, output=output)
     try:
         _db.init(conn, _schema)
         conn.commit()
@@ -685,18 +674,16 @@ def extract_run(
         )
         conn.commit()
     except ArchiveError as e:
-        typer.echo(f"archive error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("backend", f"archive error: {e}", code=Exit.BACKEND, output=output)
     except (psycopg.Error, _db.SchemaMismatch, ValueError) as e:
-        typer.echo(f"database error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("backend", f"database error: {e}", code=Exit.BACKEND, output=output)
     except EngineFatalError as e:
-        typer.echo(f"engine error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("systemic", f"engine error: {e}", code=Exit.SYSTEMIC, output=output)
     finally:
         conn.close()
     if summary.lock_held:
-        _emit(summary.to_dict(), as_json, "already running (extract lock held); nothing done")
+        emit(summary.to_dict(), human="already running (extract lock held); nothing done",
+             output=output)
         return
     if dry_run:
         human = f"queue ({len(summary.queued)}):\n" + "\n".join(summary.queued)
@@ -710,62 +697,61 @@ def extract_run(
             human += "  THROTTLED (batch stopped)"
         if summary.breaker_abort:
             human += "  BREAKER: 5 consecutive model rejections"
-    _emit(summary.to_dict(), as_json, human)
+    emit(summary.to_dict(), human=human, output=output)
     if summary.breaker_abort or (summary.throttled and summary.validated == 0):
         # a scheduled run that did nothing must not report success
-        raise typer.Exit(EXIT_SYSTEMIC)
+        raise typer.Exit(int(Exit.SYSTEMIC))
 
 
 @extract_app.command("rebuild")
-def extract_rebuild(as_json: bool = typer.Option(False, "--json")) -> None:
+def extract_rebuild(output: str | None = output_option()) -> None:
     """Truncate the extraction surface and replay it from the archive. No LLM."""
     from jobhunter.l2.rebuild import rebuild_extractions
 
-    settings = _settings()
-    store = _store(settings)
-    conn = _conn(settings, schema=_schema)
+    settings = _settings(output)
+    store = _store(settings, output)
+    conn = _conn(settings, schema=_schema, output=output)
     try:
         if not _db.try_lock(conn, _db.EXTRACT_LOCK_KEY):
-            _emit({"lock_held": True}, as_json, "extract lock held; try again later")
+            emit({"lock_held": True}, human="extract lock held; try again later", output=output)
             return
         attempts, reviews = rebuild_extractions(conn, store, settings.l2_models)
         conn.commit()
     except Exception as e:  # archive errors, corrupt objects, psycopg failures
         with contextlib.suppress(Exception):
             conn.rollback()  # replay is all-or-nothing: discard TRUNCATE + partial rows
-        typer.echo(f"rebuild error: {e}")
-        raise typer.Exit(EXIT_SYSTEMIC) from e
+        fail("systemic", f"rebuild error: {e}", code=Exit.SYSTEMIC, output=output)
     finally:
         with contextlib.suppress(Exception):
             _db.unlock(conn, _db.EXTRACT_LOCK_KEY)
         conn.close()
-    _emit(
+    emit(
         {"attempts": attempts, "reviews": reviews},
-        as_json,
-        f"replayed {attempts} attempts, {reviews} review events",
+        human=f"replayed {attempts} attempts, {reviews} review events",
+        output=output,
     )
 
 
-def _review_verb(verb: str, doc: str, note: str | None, as_json: bool) -> None:
+def _review_verb(verb: str, doc: str, note: str | None, output: str | None) -> None:
     from jobhunter.archive.keys import x_review_key
     from jobhunter.store import extraction as xstore
     from jobhunter.timeutil import utcnow_precise
 
-    settings = _settings()
-    store = _store(settings)
-    conn = _conn(settings, schema=_schema)
+    settings = _settings(output)
+    store = _store(settings, output)
+    conn = _conn(settings, schema=_schema, output=output)
     try:
         if not _db.try_lock(conn, _db.EXTRACT_LOCK_KEY):
-            typer.echo("extract lock held (a run or another review is active); try again")
-            raise typer.Exit(EXIT_SYSTEMIC)
-        doc = _resolve_doc(conn, doc)
+            fail("systemic", "extract lock held (a run or another review is active)",
+                 code=Exit.SYSTEMIC, output=output, hint="try again in a moment")
+        doc = _resolve_doc(conn, doc, output)
         row = conn.execute(
             "SELECT * FROM extractions WHERE document_hash=%s ORDER BY updated_at DESC LIMIT 1",
             (doc,),
         ).fetchone()
         if row is None:
-            typer.echo(f"no extraction row for {doc}")
-            raise typer.Exit(EXIT_SYSTEMIC)
+            fail("not_found", f"no extraction row for {doc}", code=Exit.NOT_FOUND, output=output,
+                 hint=f"run: job-hunter extract run --doc {doc}")
         at = utcnow_precise()  # the fold orders review verbs against attempts
         n = conn.execute(
             "SELECT count(*) AS n FROM extraction_reviews WHERE document_hash=%s", (doc,)
@@ -797,20 +783,20 @@ def _review_verb(verb: str, doc: str, note: str | None, as_json: bool) -> None:
         with contextlib.suppress(Exception):
             _db.unlock(conn, _db.EXTRACT_LOCK_KEY)
         conn.close()
-    _emit(
+    emit(
         {"document_hash": doc, "verb": verb, "status": state.status},
-        as_json,
-        f"{doc[:12]} {verb} -> {state.status or 'pending'}",
+        human=f"{doc[:12]} {verb} -> {state.status or 'pending'}",
+        output=output,
     )
 
 
 @review_app.command("list")
-def review_list(as_json: bool = typer.Option(False, "--json")) -> None:
+def review_list(output: str | None = output_option()) -> None:
     """The inbox: needs_review and quarantined, oldest first."""
     from jobhunter.l2.prompt import PROMPT_VERSION
 
-    settings = _settings()
-    conn = _conn(settings, schema=_schema)
+    settings = _settings(output)
+    conn = _conn(settings, schema=_schema, output=output)
     try:
         # a row under an OLD config that has since been validated under the
         # current one is history, not work: show it as superseded so a stale
@@ -847,19 +833,19 @@ def review_list(as_json: bool = typer.Option(False, "--json")) -> None:
     if payload:
         n_super = len(payload) - len(open_items)
         human += f"\n\n{len(open_items)} needing attention, {n_super} superseded"
-    _emit({"inbox": payload}, as_json, human)
+    emit({"inbox": payload}, human=human, output=output)
 
 
 @review_app.command("show")
 def review_show(
     doc: str = typer.Argument(..., help="document_hash"),
-    as_json: bool = typer.Option(False, "--json"),
+    output: str | None = output_option(),
 ) -> None:
     """The dossier: state row + attempt history with per-attempt errors."""
-    settings = _settings()
-    conn = _conn(settings, schema=_schema)
+    settings = _settings(output)
+    conn = _conn(settings, schema=_schema, output=output)
     try:
-        doc = _resolve_doc(conn, doc)
+        doc = _resolve_doc(conn, doc, output)
         row = conn.execute(
             "SELECT * FROM extractions WHERE document_hash=%s ORDER BY updated_at DESC LIMIT 1",
             (doc,),
@@ -887,48 +873,49 @@ def review_show(
             f"  a{a['attempt_no']} {a['outcome']:19} {a['requested_model']}"
             f" -> {a['observed_model'] or '-'}  {errs}"
         )
-    _emit(payload, as_json, "\n".join(lines))
+    emit(payload, human="\n".join(lines), output=output)
 
 
 @review_app.command("accept")
-def review_accept(doc: str, as_json: bool = typer.Option(False, "--json")) -> None:
+def review_accept(doc: str, output: str | None = output_option()) -> None:
     """Promote needs_review -> validated. Human-only by design."""
-    _review_verb("accept", doc, None, as_json)
+    _review_verb("accept", doc, None, output)
 
 
 @review_app.command("reject")
 def review_reject(
     doc: str,
     note: str = typer.Option(..., "--note", help="Why (required; rejection reasons are eval data)"),
-    as_json: bool = typer.Option(False, "--json"),
+    output: str | None = output_option(),
 ) -> None:
-    _review_verb("reject", doc, note, as_json)
+    _review_verb("reject", doc, note, output)
 
 
 @review_app.command("retry")
-def review_retry(doc: str, as_json: bool = typer.Option(False, "--json")) -> None:
+def review_retry(doc: str, output: str | None = output_option()) -> None:
     """Clear the row back to pending; the next run grants fresh attempts."""
-    _review_verb("retry", doc, None, as_json)
+    _review_verb("retry", doc, None, output)
 
 
 @review_app.command("flag")
-def review_flag(doc: str, as_json: bool = typer.Option(False, "--json")) -> None:
-    _review_verb("flag", doc, None, as_json)
+def review_flag(doc: str, output: str | None = output_option()) -> None:
+    _review_verb("flag", doc, None, output)
+
 
 @extract_app.command("show")
 def extract_show(
     doc: str = typer.Argument(..., help="document_hash or unambiguous hex prefix"),
-    as_json: bool = typer.Option(False, "--json"),
+    output: str | None = output_option(),
 ) -> None:
     """Read the extracted demand profile: facts, areas, claims, evidence."""
     from jobhunter.l2.quotes import line_col
     from jobhunter.markdown import NORMALIZER_VERSION
     from jobhunter.store import extraction as xstore
 
-    settings = _settings()
-    conn = _conn(settings, schema=_schema)
+    settings = _settings(output)
+    conn = _conn(settings, schema=_schema, output=output)
     try:
-        doc = _resolve_doc(conn, doc)
+        doc = _resolve_doc(conn, doc, output)
         row = conn.execute(
             "SELECT e.*, v.title, v.company, v.url FROM extractions e"
             " LEFT JOIN documents d ON d.document_hash = e.document_hash"
@@ -940,16 +927,17 @@ def extract_show(
     finally:
         conn.close()
     if row is None:
-        typer.echo(f"no extraction for {doc[:12]} (pending — run `extract run --doc {doc}`)")
-        raise typer.Exit(EXIT_SYSTEMIC)
+        fail("not_found", f"no extraction for {doc[:12]}", code=Exit.NOT_FOUND, output=output,
+             hint=f"run: job-hunter extract run --doc {doc}")
     profile = row["profile"]
-    if as_json:
-        _emit({"document_hash": doc, "status": row["status"], "model": row["model"],
-               "prompt_version": row["prompt_version"], "profile": profile}, True, "")
+    payload = {"document_hash": doc, "status": row["status"], "model": row["model"],
+               "prompt_version": row["prompt_version"], "profile": profile}
+    if use_json(output):
+        emit(payload, human="", output=output)
         return
     if profile is None:
-        typer.echo(f"{row['status']}: no profile stored (see `extract review show {doc[:12]}`)")
-        raise typer.Exit(1)
+        fail("not_found", f"{row['status']}: no profile stored", code=Exit.NOT_FOUND,
+             output=output, hint=f"job-hunter extract review show {doc[:12]}")
 
     def at(quote: dict[str, Any]) -> str:
         line, col = line_col(markdown, int(quote["span"][0]))
@@ -998,4 +986,4 @@ def extract_show(
             out.append(f"    structure: {json.dumps(area['structure'])}")
         if area.get("mentions"):
             out.append(f"    mentions: {', '.join(area['mentions'][:8])}")
-    typer.echo("\n".join(out))
+    emit(payload, human="\n".join(out), output=output)

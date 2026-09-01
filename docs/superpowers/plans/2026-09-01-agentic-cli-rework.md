@@ -411,11 +411,11 @@ def test_version_pipes_envelope_by_default(runner):
     assert body["ok"] is True and body["data"]["version"]
 ```
 
-- [ ] **Step 1:** Convert `cli.py` per the mapping above (single pass, keep commits atomic to this task).
-- [ ] **Step 2:** Run `uv run pytest tests/test_cli.py -q` — expect many failures listing exactly the assertions to update.
-- [ ] **Step 3:** Update the tests per the rules above.
-- [ ] **Step 4:** Run: `uv run pytest -q && uv run ruff check . && uv run mypy` — full suite green (store tests need Postgres; if unavailable, run `uv run pytest -q --ignore=tests/store --ignore=tests/integration` and say so in the commit body).
-- [ ] **Step 5: Commit**
+- [x] **Step 1:** Convert `cli.py` per the mapping above (single pass, keep commits atomic to this task).
+- [x] **Step 2:** Run `uv run pytest tests/test_cli.py -q` — expect many failures listing exactly the assertions to update.
+- [x] **Step 3:** Update the tests per the rules above.
+- [x] **Step 4:** Run: `uv run pytest -q && uv run ruff check . && uv run mypy` — full suite green (store tests need Postgres; if unavailable, run `uv run pytest -q --ignore=tests/store --ignore=tests/integration` and say so in the commit body).
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A

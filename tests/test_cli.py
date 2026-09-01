@@ -53,16 +53,22 @@ def env(
 
 
 def test_version() -> None:
-    r = runner.invoke(cli.app, ["version"])
+    r = runner.invoke(cli.app, ["version", "-o", "table"])
     assert r.exit_code == 0 and "0.1.0" in r.stdout
-    rj = runner.invoke(cli.app, ["version", "--json"])
-    assert rj.exit_code == 0 and json.loads(rj.stdout) == {"version": "0.1.0"}
+    rj = runner.invoke(cli.app, ["version", "-o", "json"])
+    assert rj.exit_code == 0 and json.loads(rj.stdout)["data"] == {"version": "0.1.0"}
+
+
+def test_version_pipes_envelope_by_default() -> None:
+    r = runner.invoke(cli.app, ["version"])
+    body = json.loads(r.stdout)
+    assert body["ok"] is True and body["data"]["version"]
 
 
 def test_fetch_json_summary(env: Path) -> None:
-    r = runner.invoke(cli.app, ["fetch", "--json"])
+    r = runner.invoke(cli.app, ["fetch", "-o", "json"])
     assert r.exit_code == 0, r.stdout
-    data = json.loads(r.stdout)
+    data = json.loads(r.stdout)["data"]
     assert data["counts"] == {
         "boards": 2, "ok": 2, "envelope_error": 0, "http_error": 0, "transport_error": 0,
         "new_blobs": 2,
@@ -70,43 +76,53 @@ def test_fetch_json_summary(env: Path) -> None:
 
 
 def test_fetch_human_summary_and_status(env: Path) -> None:
-    r = runner.invoke(cli.app, ["fetch"])
+    r = runner.invoke(cli.app, ["fetch", "-o", "table"])
     assert r.exit_code == 0 and "greenhouse:anthropic" in r.stdout and "ok" in r.stdout
-    s = runner.invoke(cli.app, ["status"])
+    s = runner.invoke(cli.app, ["status", "-o", "table"])
     assert s.exit_code == 0
     assert "greenhouse:anthropic" in s.stdout and "2026-08-18T06:00:00Z" in s.stdout
-    sj = runner.invoke(cli.app, ["status", "--json"])
-    rows = json.loads(sj.stdout)["boards"]
+    sj = runner.invoke(cli.app, ["status", "-o", "json"])
+    rows = json.loads(sj.stdout)["data"]["boards"]
     assert {row["board"] for row in rows} == {"greenhouse:anthropic", "lever:palantir"}
     assert all(row["last_transport"] == "ok" for row in rows)
 
 
 def test_status_marks_boards_never_fetched(env: Path) -> None:
-    sj = runner.invoke(cli.app, ["status", "--json"])
-    rows = json.loads(sj.stdout)["boards"]
+    sj = runner.invoke(cli.app, ["status", "-o", "json"])
+    rows = json.loads(sj.stdout)["data"]["boards"]
     assert all(row["last_attempt"] is None for row in rows)
 
 
 def test_archive_ls(env: Path) -> None:
     runner.invoke(cli.app, ["fetch"])
-    r = runner.invoke(cli.app, ["archive", "ls", "--board", "lever:palantir", "--json"])
-    items = json.loads(r.stdout)
+    r = runner.invoke(cli.app, ["archive", "ls", "--board", "lever:palantir", "-o", "json"])
+    items = json.loads(r.stdout)["data"]
     assert len(items) == 1 and items[0]["board"] == "lever:palantir"
     assert items[0]["attempt_id"].startswith("attempts/lever/palantir/2026/08/18T060000Z")
 
 
 def test_registry_check_ok_and_bad(env: Path, tmp_path: Path) -> None:
-    ok = runner.invoke(cli.app, ["registry", "check"])
+    ok = runner.invoke(cli.app, ["registry", "check", "-o", "table"])
     assert ok.exit_code == 0 and "2 boards" in ok.stdout
     (tmp_path / "companies.toml").write_text('[[boards]]\ncompany="X"\nsource="nope"\nboard="x"\n')
     bad = runner.invoke(cli.app, ["registry", "check"])
-    assert bad.exit_code == 2 and "unknown source" in bad.stdout
+    assert bad.exit_code == 6
+    body = json.loads(bad.stdout)
+    assert body["ok"] is False and "unknown source" in body["error"]["message"]
 
 
-def test_missing_archive_url_is_systemic(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_archive_url_is_a_config_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("JOB_HUNTER_ARCHIVE_URL", raising=False)
     r = runner.invoke(cli.app, ["status"])
-    assert r.exit_code == 2 and "JOB_HUNTER_ARCHIVE_URL" in r.stdout
+    assert r.exit_code == 3
+    assert "JOB_HUNTER_ARCHIVE_URL" in json.loads(r.stdout)["error"]["message"]
+
+
+def test_config_error_on_a_tty_stays_off_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("JOB_HUNTER_ARCHIVE_URL", raising=False)
+    r = runner.invoke(cli.app, ["status", "-o", "table"])
+    assert r.exit_code == 3 and r.stdout == ""
+    assert "JOB_HUNTER_ARCHIVE_URL" in r.stderr
 
 
 def test_fetch_all_boards_failed_is_systemic(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -116,17 +132,17 @@ def test_fetch_all_boards_failed_is_systemic(env: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr(cli, "_make_fetcher", lambda: Fetcher(
         httpx.Client(transport=httpx.MockTransport(down)), sleep=lambda s: None))
     r = runner.invoke(cli.app, ["fetch"])
-    assert r.exit_code == 2
+    assert r.exit_code == 6
 
 
 def test_fetch_board_option_is_validated(env: Path) -> None:
     r = runner.invoke(cli.app, ["fetch", "--board", "anthropic"])
-    assert r.exit_code == 2 and "source:board" in r.stdout
+    assert r.exit_code == 2 and "source:board" in json.loads(r.stdout)["error"]["message"]
 
 
 def test_fetch_unregistered_board_is_systemic(env: Path) -> None:
     r = runner.invoke(cli.app, ["fetch", "--board", "greenhouse:not-registered", "--dry-run"])
-    assert r.exit_code == 2 and "not-registered" in r.stdout
+    assert r.exit_code == 6 and "not-registered" in json.loads(r.stdout)["error"]["message"]
 
 
 def test_fetch_all_envelope_failures_is_systemic(
@@ -137,9 +153,9 @@ def test_fetch_all_envelope_failures_is_systemic(
 
     monkeypatch.setattr(cli, "_make_fetcher", lambda: Fetcher(
         httpx.Client(transport=httpx.MockTransport(html)), sleep=lambda s: None))
-    r = runner.invoke(cli.app, ["fetch", "--json"])
-    assert r.exit_code == 2
-    assert json.loads(r.stdout)["counts"]["envelope_error"] == 2
+    r = runner.invoke(cli.app, ["fetch", "-o", "json"])
+    assert r.exit_code == 6
+    assert json.loads(r.stdout)["data"]["counts"]["envelope_error"] == 2
 
 
 def test_fetch_requires_database_url_and_ingest_command(
@@ -147,33 +163,41 @@ def test_fetch_requires_database_url_and_ingest_command(
 ) -> None:
     monkeypatch.delenv("JOB_HUNTER_DATABASE_URL", raising=False)
     r = runner.invoke(cli.app, ["fetch"])
-    assert r.exit_code == 2 and "JOB_HUNTER_DATABASE_URL" in r.stdout
+    assert r.exit_code == 3
+    assert "JOB_HUNTER_DATABASE_URL" in json.loads(r.stdout)["error"]["message"]
     monkeypatch.setenv("JOB_HUNTER_DATABASE_URL", "postgresql://nobody:x@127.0.0.1:1/none")
-    r = runner.invoke(cli.app, ["fetch", "--json"])
-    assert r.exit_code == 2
-    assert json.loads(r.stdout)["db_error"]
+    r = runner.invoke(cli.app, ["fetch", "-o", "json"])
+    assert r.exit_code == 6
+    assert json.loads(r.stdout)["data"]["db_error"]
     r = runner.invoke(cli.app, ["ingest"])
-    assert r.exit_code == 2 and "database error" in r.stdout
+    assert r.exit_code == 5 and "database error" in json.loads(r.stdout)["error"]["message"]
 
 
 def test_report_and_registry_list_and_rebuild(env: Path) -> None:
     assert runner.invoke(cli.app, ["fetch"]).exit_code == 0
-    r = runner.invoke(cli.app, ["report", "--since", "1d", "--json"])
+    r = runner.invoke(cli.app, ["report", "--since", "1d", "-o", "json"])
     assert r.exit_code == 0
-    data = json.loads(r.stdout)
+    data = json.loads(r.stdout)["data"]
     assert data["counts"]["opened"] == 1 and data["events"][0]["kind"] == "opened"
-    r = runner.invoke(cli.app, ["registry", "list", "--json"])
+    r = runner.invoke(cli.app, ["registry", "list", "-o", "json"])
     assert r.exit_code == 0
-    assert {row["board"] for row in json.loads(r.stdout)} == {
+    assert {row["board"] for row in json.loads(r.stdout)["data"]} == {
         "greenhouse:anthropic", "lever:palantir"
     }
-    r = runner.invoke(cli.app, ["rebuild", "--json"])
+    r = runner.invoke(cli.app, ["rebuild", "--yes", "-o", "json"])
     assert r.exit_code == 0, r.stdout
-    assert json.loads(r.stdout)["swapped"] is True
-    r = runner.invoke(cli.app, ["status", "--json"])
-    rows = {row["board"]: row for row in json.loads(r.stdout)["boards"]}
+    assert json.loads(r.stdout)["data"]["swapped"] is True
+    r = runner.invoke(cli.app, ["status", "-o", "json"])
+    rows = {row["board"]: row for row in json.loads(r.stdout)["data"]["boards"]}
     assert rows["greenhouse:anthropic"]["health"] == "ok"
     assert rows["greenhouse:anthropic"]["open"] == 1
+
+
+def test_rebuild_off_tty_requires_yes(env: Path) -> None:
+    r = runner.invoke(cli.app, ["rebuild"])
+    assert r.exit_code == 2
+    body = json.loads(r.stdout)
+    assert body["ok"] is False and "--yes" in body["error"]["hint"]
 
 
 def test_report_since_parsing() -> None:
@@ -191,10 +215,11 @@ def test_lock_held_branches_honour_json(env: Path, pg: psycopg.Connection[dict[s
 
     assert _db.try_lock(pg)
     try:
-        for args in (["ingest", "--json"], ["rebuild", "--json"], ["fetch", "--json"]):
+        for args in (["ingest", "-o", "json"], ["rebuild", "--yes", "-o", "json"],
+                     ["fetch", "-o", "json"]):
             r = runner.invoke(cli.app, args)
             assert r.exit_code == 0, (args, r.stdout)
-            data = json.loads(r.stdout)
+            data = json.loads(r.stdout)["data"]
             assert data.get("lock_held") is True
     finally:
         _db.unlock(pg)
@@ -206,13 +231,13 @@ def test_db_version_on_half_created_schema_is_systemic(
     schema = pg.execute("SELECT current_schema() AS s").fetchone()["s"]
     pg.execute("DROP TABLE schema_meta")
     pg.commit()
-    r = runner.invoke(cli.app, ["db", "version", "--json"])
-    assert r.exit_code == 2
-    assert json.loads(r.stdout)["db"] is None
+    r = runner.invoke(cli.app, ["db", "version", "-o", "json"])
+    assert r.exit_code == 6
+    assert json.loads(r.stdout)["data"]["db"] is None
     assert schema  # silence unused warning
 
 
-def test_ingest_exits_2_on_gap_manifests(
+def test_ingest_exits_systemic_on_gap_manifests(
     env: Path, tmp_path: Path, pg: psycopg.Connection[dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -236,18 +261,18 @@ def test_ingest_exits_2_on_gap_manifests(
     ing.ingest(m2)
     pg.commit()
     monkeypatch.setenv("JOB_HUNTER_ARCHIVE_URL", f"file://{archive_root}")
-    r = runner.invoke(cli.app, ["ingest", "--json"])
-    assert r.exit_code == 2
-    data = json.loads(r.stdout)
+    r = runner.invoke(cli.app, ["ingest", "-o", "json"])
+    assert r.exit_code == 6
+    data = json.loads(r.stdout)["data"]
     assert len(data["gaps"]) == 1 and "rebuild" in data["hint"]
 
 
 def test_status_reports_db_size(env: Path) -> None:
     runner.invoke(cli.app, ["fetch"])
-    sj = runner.invoke(cli.app, ["status", "--json"])
-    data = json.loads(sj.stdout)
+    sj = runner.invoke(cli.app, ["status", "-o", "json"])
+    data = json.loads(sj.stdout)["data"]
     assert isinstance(data["db_size_bytes"], int) and data["db_size_bytes"] > 0
-    sh = runner.invoke(cli.app, ["status"])
+    sh = runner.invoke(cli.app, ["status", "-o", "table"])
     assert sh.exit_code == 0 and "db size" in sh.stdout
 
 
@@ -258,15 +283,15 @@ def test_verify_pass_and_fail(tmp_path: Path) -> None:
     doc.write_text(DOC_MD, encoding="utf-8")
     good = tmp_path / "good.json"
     good.write_text(json.dumps(minimal_record()), encoding="utf-8")
-    result = runner.invoke(cli.app, ["verify", str(good), str(doc), "--json"])
+    result = runner.invoke(cli.app, ["verify", str(good), str(doc), "-o", "json"])
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)["status"] == "pass"
+    assert json.loads(result.stdout)["data"]["status"] == "pass"
 
     bad_record = minimal_record()
     bad_record["demand_profile"]["areas"][0]["claims"][0]["quote"]["text"] = "fabricated"
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps(bad_record), encoding="utf-8")
-    result = runner.invoke(cli.app, ["verify", str(bad), str(doc)])
+    result = runner.invoke(cli.app, ["verify", str(bad), str(doc), "-o", "table"])
     assert result.exit_code == 1, result.output
     assert "text_mismatch" in result.stdout
     assert "line " in result.stdout  # derived line:col shown for span findings
@@ -276,7 +301,13 @@ def test_verify_systemic(tmp_path: Path) -> None:
     doc = tmp_path / "doc.md"
     doc.write_text("x", encoding="utf-8")
     result = runner.invoke(cli.app, ["verify", str(tmp_path / "missing.json"), str(doc)])
+    assert result.exit_code == 6
+
+
+def test_verify_needs_a_document_or_a_hash(tmp_path: Path) -> None:
+    result = runner.invoke(cli.app, ["verify", str(tmp_path / "rec.json")])
     assert result.exit_code == 2
+    assert "DOCUMENT_FILE" in json.loads(result.stdout)["error"]["message"]
 
 
 def test_verify_systemic_non_dict_and_non_utf8(tmp_path: Path) -> None:
@@ -285,14 +316,14 @@ def test_verify_systemic_non_dict_and_non_utf8(tmp_path: Path) -> None:
     arr = tmp_path / "arr.json"
     arr.write_text("[1, 2]", encoding="utf-8")
     result = runner.invoke(cli.app, ["verify", str(arr), str(doc)])
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 6, result.output
 
     bad = tmp_path / "bad.md"
     bad.write_bytes(b"\xff\xfe\x00")
     good = tmp_path / "good.json"
     good.write_text("{}", encoding="utf-8")
     result = runner.invoke(cli.app, ["verify", str(good), str(bad)])
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 6, result.output
 
 
 def test_verify_human_output_shows_mismatch_diagnostics(tmp_path: Path) -> None:
@@ -304,7 +335,7 @@ def test_verify_human_output_shows_mismatch_diagnostics(tmp_path: Path) -> None:
     rec["demand_profile"]["areas"][0]["claims"][1]["quote"]["text"] = "0-2 YOE preferrd"
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps(rec), encoding="utf-8")
-    result = runner.invoke(cli.app, ["verify", str(bad), str(doc)])
+    result = runner.invoke(cli.app, ["verify", str(bad), str(doc), "-o", "table"])
     assert result.exit_code == 1
     assert "expected:" in result.stdout and "found:" in result.stdout
     assert "matches the document for" in result.stdout
@@ -340,48 +371,54 @@ def test_extract_run_review_verify_status_end_to_end(
 ) -> None:
     from tests.l2.test_runner import DH
 
-    r = runner.invoke(cli.app, ["extract", "run", "--json"])
+    r = runner.invoke(cli.app, ["extract", "run", "-o", "json"])
     assert r.exit_code == 0, r.output
-    data = json.loads(r.stdout)
+    data = json.loads(r.stdout)["data"]
     assert data["validated"] == 1
 
-    r = runner.invoke(cli.app, ["extract", "review", "list", "--json"])
-    assert json.loads(r.stdout)["inbox"] == []
+    r = runner.invoke(cli.app, ["extract", "review", "list", "-o", "json"])
+    assert json.loads(r.stdout)["data"]["inbox"] == []
 
-    r = runner.invoke(cli.app, ["extract", "review", "flag", DH, "--json"])
+    r = runner.invoke(cli.app, ["extract", "review", "flag", DH, "-o", "json"])
     assert r.exit_code == 0, r.output
-    assert json.loads(r.stdout)["status"] == "needs_review"
+    assert json.loads(r.stdout)["data"]["status"] == "needs_review"
 
-    r = runner.invoke(cli.app, ["extract", "review", "list", "--json"])
-    inbox = json.loads(r.stdout)["inbox"]
+    r = runner.invoke(cli.app, ["extract", "review", "list", "-o", "json"])
+    inbox = json.loads(r.stdout)["data"]["inbox"]
     assert len(inbox) == 1 and inbox[0]["document_hash"] == DH
 
-    r = runner.invoke(cli.app, ["extract", "review", "show", DH])
+    r = runner.invoke(cli.app, ["extract", "review", "show", DH, "-o", "table"])
     assert r.exit_code == 0 and "needs_review" in r.stdout and "a1 ok" in r.stdout
 
-    r = runner.invoke(cli.app, ["extract", "review", "accept", DH, "--json"])
-    assert json.loads(r.stdout)["status"] == "validated"
+    r = runner.invoke(cli.app, ["extract", "review", "accept", DH, "-o", "json"])
+    assert json.loads(r.stdout)["data"]["status"] == "validated"
 
-    r = runner.invoke(cli.app, ["verify", DH, "--json"])
+    r = runner.invoke(cli.app, ["verify", DH, "-o", "json"])
     assert r.exit_code == 0, r.output
-    assert json.loads(r.stdout)["status"] == "pass"
+    assert json.loads(r.stdout)["data"]["status"] == "pass"
 
-    r = runner.invoke(cli.app, ["status", "--json"])
+    r = runner.invoke(cli.app, ["status", "-o", "json"])
     assert r.exit_code == 0, r.output
-    block = json.loads(r.stdout).get("extraction")
+    block = json.loads(r.stdout)["data"].get("extraction")
     assert block and block["by_status"] == {"validated": 1}
     assert block["observed_models_7d"] == ["z-ai/glm-5.2:free"]
 
-    r = runner.invoke(cli.app, ["extract", "rebuild", "--json"])
+    r = runner.invoke(cli.app, ["extract", "rebuild", "-o", "json"])
     assert r.exit_code == 0, r.output
-    counts = json.loads(r.stdout)
+    counts = json.loads(r.stdout)["data"]
     assert counts["attempts"] == 1 and counts["reviews"] == 2
 
 
 def test_extract_run_requires_l2_config(xenv: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("JOB_HUNTER_L2_BASE_URL")
     r = runner.invoke(cli.app, ["extract", "run"])
-    assert r.exit_code == 2 and "JOB_HUNTER_L2" in r.stdout
+    assert r.exit_code == 3 and "JOB_HUNTER_L2" in json.loads(r.stdout)["error"]["message"]
+
+
+def test_extract_show_unknown_prefix_is_not_found(xenv: Path) -> None:
+    r = runner.invoke(cli.app, ["extract", "show", "deadbeef"])
+    assert r.exit_code == 4
+    assert "no document matches" in json.loads(r.stdout)["error"]["message"]
 
 
 def test_reject_requires_note(xenv: Path) -> None:
@@ -404,7 +441,7 @@ def test_verify_hash_with_missing_archive_object_is_systemic(
     archive_root = xenv / "archive" / row["chosen_attempt"]
     archive_root.unlink()  # simulate a lost/unreplicated attempt object
     r = runner.invoke(cli.app, ["verify", DH])
-    assert r.exit_code == 2, r.output  # infrastructure failure, never "findings failed"
+    assert r.exit_code == 6, r.output  # infrastructure failure, never "findings failed"
 
 
 def test_throttled_zero_progress_run_is_systemic(
@@ -415,4 +452,4 @@ def test_throttled_zero_progress_run_is_systemic(
 
     monkeypatch.setattr(cli, "_make_engine", lambda s: FakeEngine([EngineThrottled("429")]))
     r = runner.invoke(cli.app, ["extract", "run"])
-    assert r.exit_code == 2, r.output  # a scheduled run that did nothing must not report success
+    assert r.exit_code == 6, r.output  # a scheduled run that did nothing must not report success
