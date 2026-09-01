@@ -1,4 +1,9 @@
-"""Settings from the environment. Nothing else reads os.environ."""
+"""Settings from the environment. Nothing else reads os.environ.
+
+Values come from three layers, highest first: process env, `./.env`,
+`~/.config/job-hunter/env`. Passing `env` to `Settings.load` bypasses the
+files entirely — callers that supply an environment mean exactly it.
+"""
 
 from __future__ import annotations
 
@@ -12,12 +17,51 @@ class ConfigError(ValueError):
     pass
 
 
+# A stray PATH= or SHELL= in a .env is the author's shell business, not ours.
+_FILE_KEY_PREFIXES = ("JOB_HUNTER_", "AWS_")
+
+
+def _read_env_file(path: Path) -> dict[str, str]:
+    """`KEY=VALUE` lines; `#` comments and blanks skipped, values taken verbatim."""
+    if not path.is_file():
+        return {}
+    out: dict[str, str] = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key.startswith(_FILE_KEY_PREFIXES):
+            out[key] = value.strip()
+    return out
+
+
+def load_env_files(environ: Mapping[str, str]) -> dict[str, str]:
+    """Merge config layers: process env > ./.env > ~/.config/job-hunter/env.
+
+    `environ` is the winning layer. Where the config file *lives* is a property
+    of the running process, so XDG_CONFIG_HOME/HOME fall back to os.environ when
+    a caller passes a partial mapping.
+    """
+
+    def hint(name: str, default: str = "") -> str:
+        return environ.get(name) or os.environ.get(name) or default
+
+    xdg = hint("XDG_CONFIG_HOME") or str(Path(hint("HOME", "~")).expanduser() / ".config")
+    merged = _read_env_file(Path(xdg) / "job-hunter" / "env")
+    merged.update(_read_env_file(Path.cwd() / ".env"))
+    merged.update(environ)
+    return merged
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     archive_url: str
     registry_path: Path
     home: Path
     database_url: str | None
+    state_dir: Path = Path("~/.local/state/job-hunter")
     drop_ratio: float = 0.5
     ping_url: str | None = None
     l2_engine: str = "openai-compat"
@@ -48,7 +92,7 @@ class Settings:
 
     @classmethod
     def load(cls, env: Mapping[str, str] | None = None) -> Settings:
-        e = os.environ if env is None else env
+        e: Mapping[str, str] = load_env_files(os.environ) if env is None else env
         archive_url = e.get("JOB_HUNTER_ARCHIVE_URL")
         if not archive_url:
             raise ConfigError(
@@ -110,11 +154,19 @@ class Settings:
             raise ConfigError(f"JOB_HUNTER_L2_MAX_DOCS / _MAX_USD must be numeric: {ex}") from ex
         if l2_max_docs <= 0 or l2_max_usd < 0:
             raise ConfigError("JOB_HUNTER_L2_MAX_DOCS must be > 0 and _MAX_USD must be >= 0")
+        if e.get("JOB_HUNTER_STATE_DIR"):
+            state_dir = Path(e["JOB_HUNTER_STATE_DIR"])
+        else:
+            xdg_state = e.get("XDG_STATE_HOME") or str(
+                Path(e.get("HOME", "~")).expanduser() / ".local/state"
+            )
+            state_dir = Path(xdg_state) / "job-hunter"
         return cls(
             archive_url=archive_url,
             registry_path=Path(e.get("JOB_HUNTER_REGISTRY", "companies.toml")),
             home=Path(e["JOB_HUNTER_HOME"]) if e.get("JOB_HUNTER_HOME") else home_default,
             database_url=e.get("JOB_HUNTER_DATABASE_URL") or None,
+            state_dir=state_dir,
             drop_ratio=drop_ratio,
             ping_url=e.get("JOB_HUNTER_PING_URL") or None,
             l2_engine=engine,

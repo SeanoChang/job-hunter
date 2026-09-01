@@ -234,7 +234,7 @@ git commit -m "feat(cli): output contract — envelope, typed exit codes, TTY de
 
 Precedence (spec §7): process env > `./.env` > `~/.config/job-hunter/env`. Files are simple `KEY=VALUE` lines; `#` comments and blank lines ignored; no quoting rules (values taken verbatim after the first `=`). Only keys starting with `JOB_HUNTER_` or `AWS_` are read from files — a stray `PATH=` in a .env must never leak into settings.
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/test_config.py`)
+- [x] **Step 1: Write the failing tests** (append to `tests/test_config.py`)
 
 ```python
 def test_env_file_layering(tmp_path, monkeypatch):
@@ -274,12 +274,12 @@ def test_state_dir_default_and_override(monkeypatch):
     assert str(s2.state_dir).endswith(".local/state/job-hunter")
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `uv run pytest tests/test_config.py -q`
 Expected: FAIL — `ImportError: cannot import name 'load_env_files'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `config.py`: add to the dataclass `state_dir: Path = Path("~/.local/state/job-hunter")`. Add:
 
@@ -331,12 +331,12 @@ In `Settings.load`, first line becomes:
 
 and add `state_dir=state_dir` to the constructor call.
 
-- [ ] **Step 4: Run full config tests**
+- [x] **Step 4: Run full config tests**
 
 Run: `uv run pytest tests/test_config.py -q && uv run mypy`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/jobhunter/config.py tests/test_config.py
