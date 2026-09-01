@@ -468,11 +468,11 @@ def validated_profiles(conn, doc_hashes: list[str], *, model_regex: str,
     # document_hash -> profile JSONB for status='validated' rows in the engine glob
 ```
 
-- [ ] **Step 1:** Write failing tests in `tests/store/test_queries.py` covering: keyset pagination returns page 2 without overlap (`postings_page` with `after` from page 1's last row); `search` matches title OR company case-insensitively; `events_after_watermark` excludes the tie-break ids at the watermark instant and includes a later event at the same timestamp; `posting_detail` returns `None` for unknown uid; `validated_profiles` filters on status and model regex. Seed data exactly as neighbouring tests in that file do (via lifecycle ingest of fixture manifests or direct helpers — copy the file's existing setup idiom).
-- [ ] **Step 2:** Run `uv run pytest tests/store/test_queries.py -q` — expect failures (missing functions). (Needs Postgres: `docker compose up -d postgres`.)
-- [ ] **Step 3:** Implement the seven functions with plain parametrized SQL, `%(name)s` style, reusing `events_since`'s join for title/company/url. `search` becomes `AND (v.title ILIKE %(q)s OR v.company ILIKE %(q)s)` with `q = f"%{search}%"`.
-- [ ] **Step 4:** `uv run pytest tests/store -q && uv run mypy` — PASS.
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(store): agent-facing read queries — pages, watermark delta, profiles"`
+- [x] **Step 1:** Write failing tests in `tests/store/test_queries.py` covering: keyset pagination returns page 2 without overlap (`postings_page` with `after` from page 1's last row); `search` matches title OR company case-insensitively; `events_after_watermark` excludes the tie-break ids at the watermark instant and includes a later event at the same timestamp; `posting_detail` returns `None` for unknown uid; `validated_profiles` filters on status and model regex. Seed data exactly as neighbouring tests in that file do (via lifecycle ingest of fixture manifests or direct helpers — copy the file's existing setup idiom).
+- [x] **Step 2:** Run `uv run pytest tests/store/test_queries.py -q` — expect failures (missing functions). (Needs Postgres: `docker compose up -d postgres`.)
+- [x] **Step 3:** Implement the seven functions with plain parametrized SQL, `%(name)s` style, reusing `events_since`'s join for title/company/url. `search` becomes `AND (v.title ILIKE %(q)s OR v.company ILIKE %(q)s)` with `q = f"%{search}%"`.
+- [x] **Step 4:** `uv run pytest tests/store -q && uv run mypy` — PASS.
+- [x] **Step 5: Commit** — `git add -A && git commit -m "feat(store): agent-facing read queries — pages, watermark delta, profiles"`
 
 ---
 
