@@ -773,9 +773,9 @@ Human rendering: one line per check, `ok`/`FAIL` + detail, hints on failures.
 
 SKILL.md content (write it fully in this task — frontmatter `name: job-hunter-cli`, `description: Query Sean's job-posting corpus and compose update digests via the job-hunter CLI`; body sections: the hourly loop — `pulse --cursor <name> -o json`, empty ⇒ quiet no-op, else compose update and drill down with `q profile --doc` / `q document`; the exit-code table and what to do per code — 3 ⇒ run `doctor` and relay, 4 ⇒ lengthen prefix or re-list, 5 ⇒ retry later, never loop; token economy — prefer `--fields`, summaries before `--full`, never raise `--limit` past what you will read; install hint: `job-hunter skill > ~/.claude/skills/job-hunter-cli/SKILL.md`).
 
-- [ ] **Step 1:** Failing tests: `schema -o json` envelope contains every registered command path including `q postings` and `pulse` (walk assertion: `"q postings" in {c["path"] for c in body["data"]["commands"]}`); exit-code map has 7 entries; `skill` output starts with `---` frontmatter and mentions `pulse --cursor`.
-- [ ] **Step 2:** Run — FAIL. **Step 3:** Implement both + write SKILL.md. **Step 4:** `uv run pytest tests/test_cli.py -q && uv run mypy` — PASS; also `uv run python -c "import importlib.resources as r; print(r.files('jobhunter.skill_data').joinpath('SKILL.md').read_text()[:40])"` to prove packaging.
-- [ ] **Step 5: Commit** — `git commit -am "feat(cli): schema introspection + shipped agent skill"`
+- [x] **Step 1:** Failing tests: `schema -o json` envelope contains every registered command path including `q postings` and `pulse` (walk assertion: `"q postings" in {c["path"] for c in body["data"]["commands"]}`); exit-code map has 7 entries; `skill` output starts with `---` frontmatter and mentions `pulse --cursor`.
+- [x] **Step 2:** Run — FAIL. **Step 3:** Implement both + write SKILL.md. **Step 4:** `uv run pytest tests/test_cli.py -q && uv run mypy` — PASS; also `uv run python -c "import importlib.resources as r; print(r.files('jobhunter.skill_data').joinpath('SKILL.md').read_text()[:40])"` to prove packaging.
+- [x] **Step 5: Commit** — `git commit -am "feat(cli): schema introspection + shipped agent skill"`
 
 ---
 

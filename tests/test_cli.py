@@ -635,3 +635,78 @@ def test_doctor_names_the_missing_r2_variables(env: Path, monkeypatch: pytest.Mo
     assert checks["aws_credentials"]["ok"] is False
     assert "AWS_SECRET_ACCESS_KEY" in checks["aws_credentials"]["detail"]
     assert checks["archive_probe"]["ok"] is True  # credentials missing, backend still answers
+
+
+def _schema_data() -> dict[str, Any]:
+    r = runner.invoke(cli.app, ["schema", "-o", "json"])
+    assert r.exit_code == 0, r.stdout
+    data: dict[str, Any] = json.loads(r.stdout)["data"]
+    return data
+
+
+def test_schema_walks_the_live_command_tree() -> None:
+    data = _schema_data()
+    paths = {c["path"] for c in data["commands"]}
+    assert {"pulse", "sync", "doctor", "q postings", "q claims",
+            "extract review accept", "db init"} <= paths
+    assert "q" not in paths and "extract review" not in paths  # groups are not invocable
+    postings = next(c for c in data["commands"] if c["path"] == "q postings")
+    assert "newest first" in postings["help"]
+    params = {p["name"]: p for p in postings["params"]}
+    assert set(params["after"]) == {"name", "opts", "type", "default", "choices"}
+    assert params["limit"]["default"] == 50
+    assert params["output"]["opts"] == ["--output", "-o"]
+    # an agent must be able to type any flag the app accepts, arguments included
+    assert {p["opts"][0] for p in params.values()} >= {"--board", "--status", "--fields"}
+    assert next(p for p in next(c for c in data["commands"] if c["path"] == "q posting")["params"]
+                if p["name"] == "uid")["opts"] == ["uid"]
+
+
+def test_schema_declares_the_exit_table_and_active_versions() -> None:
+    from jobhunter.l2.prompt import PROMPT_VERSION
+    from jobhunter.l2.transforms import VALIDATOR_VERSION
+    from jobhunter.markdown import NORMALIZER_VERSION
+    from jobhunter.store import db
+
+    data = _schema_data()
+    codes = data["contract"]["exit_codes"]
+    assert len(codes) == 7
+    assert codes["0"] == "success" and codes["4"].startswith("unknown or ambiguous")
+    assert codes["6"].startswith("systemic")
+    assert data["versions"] == {
+        "cli": "0.1.0", "schema_version": db.SCHEMA_VERSION, "normalizer": NORMALIZER_VERSION,
+        "prompt": PROMPT_VERSION, "validator": VALIDATOR_VERSION,
+    }
+
+
+def test_schema_envelope_describes_what_the_verbs_actually_print(env: Path) -> None:
+    import jsonschema
+
+    envelope = _schema_data()["contract"]["envelope"]
+    jsonschema.validate(json.loads(runner.invoke(cli.app, ["doctor"]).stdout), envelope)
+    bad = runner.invoke(cli.app, ["q", "postings", "--status", "bogus"])
+    assert bad.exit_code == 2
+    jsonschema.validate(json.loads(bad.stdout), envelope)
+    # the envelope is a contract, not a shape suggestion: a stray top-level key fails it
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"ok": True, "data": [], "meta": {"truncated": False},
+                             "extra": 1}, envelope)
+
+
+def test_schema_human_output_lists_the_verbs() -> None:
+    r = runner.invoke(cli.app, ["schema", "-o", "table"])
+    assert r.exit_code == 0, r.stderr
+    assert "q postings" in r.stdout and "--after" in r.stdout and "0 success" in r.stdout
+
+
+def test_skill_prints_the_shipped_guide() -> None:
+    r = runner.invoke(cli.app, ["skill", "-o", "table"])
+    assert r.exit_code == 0, r.stderr
+    assert r.stdout.startswith("---") and "name: job-hunter-cli" in r.stdout
+    assert "pulse --cursor" in r.stdout
+    assert "--fields" in r.stdout  # the token-economy section survives edits
+
+
+def test_skill_json_wraps_the_markdown() -> None:
+    body = json.loads(runner.invoke(cli.app, ["skill"]).stdout)
+    assert body["ok"] is True and body["data"]["markdown"].startswith("---")

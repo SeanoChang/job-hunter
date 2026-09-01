@@ -19,6 +19,8 @@ from typing import Any
 
 import psycopg
 import typer
+from typer.core import TyperGroup
+from typer.main import get_command
 
 from jobhunter import __version__
 from jobhunter.archive import ArchiveError, ArchiveStore, open_store
@@ -837,6 +839,134 @@ def doctor(output: str | None = output_option()) -> None:
         raise typer.Exit(int(
             Exit.CONFIG if any(c["name"] in _CONFIG_CHECKS for c in failed) else Exit.BACKEND
         ))
+
+
+# -- introspection ---------------------------------------------------------
+
+_EXIT_HELP = {
+    "OK": "success",
+    "FINDINGS": "verify ran and its findings failed",
+    "USAGE": "usage or validation error: read error.valid and fix the flag",
+    "CONFIG": "configuration missing or invalid: run job-hunter doctor",
+    "NOT_FOUND": "unknown or ambiguous identifier: lengthen the prefix, or re-list",
+    "BACKEND": "backend unavailable: database, archive or network",
+    "SYSTEMIC": "systemic failure an operator must act on",
+}
+
+# The success and error shapes `cli_output` emits, as a schema a reader can
+# validate against instead of inferring from examples.
+_ENVELOPE_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "job-hunter CLI envelope",
+    "description": "Exactly one of these on stdout per run; diagnostics go to stderr.",
+    "oneOf": [
+        {
+            "type": "object",
+            "required": ["ok", "data", "meta"],
+            "additionalProperties": False,
+            "properties": {
+                "ok": {"const": True},
+                "data": {"description": "verb-specific payload"},
+                "meta": {
+                    "type": "object",
+                    "required": ["truncated"],
+                    "properties": {
+                        "count": {"type": "integer"},
+                        "truncated": {"type": "boolean"},
+                        "next_cursor": {"type": ["string", "null"]},
+                        "hint": {"type": "string"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "object",
+            "required": ["ok", "error"],
+            "additionalProperties": False,
+            "properties": {
+                "ok": {"const": False},
+                "error": {
+                    "type": "object",
+                    "required": ["kind", "message", "hint", "valid"],
+                    "properties": {
+                        "kind": {"enum": ["usage", "config", "not_found", "backend", "systemic"]},
+                        "message": {"type": "string"},
+                        "hint": {"type": ["string", "null"]},
+                        "valid": {"type": ["array", "null"]},
+                    },
+                },
+            },
+        },
+    ],
+}
+
+
+def _param_spec(param: Any) -> dict[str, Any]:
+    """One flag as a caller needs it: what to type, what it takes, what it defaults to."""
+    choices = getattr(param.type, "choices", None)
+    return {
+        "name": param.name,
+        "opts": list(param.opts),
+        "type": param.type.name,
+        "default": param.default,
+        "choices": [str(c) for c in choices] if choices else None,
+    }
+
+
+def _walk_commands(cmd: Any, path: str) -> list[dict[str, Any]]:
+    """The leaf verbs of the live click tree.
+
+    Generated, never hand-written: a command or flag added anywhere shows up
+    here without anyone remembering to write it down. Groups are skipped —
+    they take no arguments and cannot be invoked. (`click` lives inside typer
+    as a vendored package, so the tree is walked structurally.)
+    """
+    if isinstance(cmd, TyperGroup):
+        return [
+            row
+            for name, sub in sorted(cmd.commands.items())
+            for row in _walk_commands(sub, f"{path} {name}".strip())
+        ]
+    return [{
+        "path": path,
+        "help": (cmd.help or "").strip().splitlines()[0] if cmd.help else "",
+        "params": [_param_spec(p) for p in cmd.params],
+    }]
+
+
+@app.command()
+def schema(output: str | None = output_option()) -> None:
+    """The machine catalog: envelope schema, exit codes, versions, every command and flag."""
+    from jobhunter.l2.prompt import PROMPT_VERSION
+    from jobhunter.l2.transforms import VALIDATOR_VERSION
+    from jobhunter.markdown import NORMALIZER_VERSION
+
+    exit_codes = {str(int(e)): _EXIT_HELP[e.name] for e in Exit}
+    versions = {"cli": __version__, "schema_version": _db.SCHEMA_VERSION,
+                "normalizer": NORMALIZER_VERSION, "prompt": PROMPT_VERSION,
+                "validator": VALIDATOR_VERSION}
+    commands = _walk_commands(get_command(app), "")
+    human = [
+        "  ".join(f"{k} {v}" for k, v in versions.items()),
+        "exit codes: " + ", ".join(f"{k} {v.split(':')[0]}" for k, v in exit_codes.items()),
+        "",
+    ]
+    for c in commands:
+        human.append(f"  {c['path']:26} {c['help']}")
+        human.append(f"      {' '.join(p['opts'][0] for p in c['params'])}")
+    emit({"contract": {"envelope": _ENVELOPE_SCHEMA, "exit_codes": exit_codes},
+          "versions": versions, "commands": commands},
+         human="\n".join(human), output=output, count=len(commands))
+
+
+@app.command()
+def skill(output: str | None = output_option()) -> None:
+    """Print the shipped agent guide: the pulse loop, error recovery, token economy."""
+    from importlib import resources
+
+    text = resources.files("jobhunter.skill_data").joinpath("SKILL.md").read_text(encoding="utf-8")
+    emit({"markdown": text}, human=text.rstrip("\n"), output=output,
+         hint="install it: job-hunter skill > ~/.claude/skills/job-hunter-cli/SKILL.md")
 
 
 @archive_app.command("ls")
