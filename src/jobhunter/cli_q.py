@@ -393,6 +393,10 @@ def q_claims(
 ) -> None:
     """Who demands one mention, across the corpus — the postings live on it today."""
     from jobhunter.cli import _split_board
+    from jobhunter.l2.prompt import PROMPT_VERSION
+    from jobhunter.l2.runner import SCHEMA_VERSION
+    from jobhunter.l2.state import globs_to_regex
+    from jobhunter.l2.transforms import VALIDATOR_VERSION
     from jobhunter.store import queries
 
     if importance is not None and importance not in IMPORTANCES:
@@ -400,9 +404,13 @@ def q_claims(
              valid=list(IMPORTANCES), code=Exit.USAGE, output=output)
     src, brd = _split_board(board, output)
     limit = _clamp(limit)
-    _, conn = _open(output)
+    settings, conn = _open(output)
+    # The engine tuple in force, exactly as `pulse` scopes its profiles: retired
+    # prompt/validator versions still sit in `profile_mentions` after a rebuild.
     rows = _query(conn, output, lambda: queries.claims_by_mention(
-        conn, mention=mention, importance=importance, source=src, board=brd, limit=limit))
+        conn, mention=mention, importance=importance, source=src, board=brd, limit=limit,
+        model_regex=globs_to_regex(settings.l2_models), prompt_version=PROMPT_VERSION,
+        schema_version=SCHEMA_VERSION, validator_version=VALIDATOR_VERSION))
     truncated = len(rows) > limit
     rows = rows[:limit]
     data = [

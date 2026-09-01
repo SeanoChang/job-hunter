@@ -19,6 +19,8 @@ CONFIG = {
     "schema_version": "1",
     "validator_version": VALIDATOR_VERSION,
 }
+# the engine tuple in force, as `q claims` passes it
+ENGINE = {**CONFIG, "model_regex": extraction.globs_to_regex(("z-ai/*",))}
 
 
 def test_globs_to_regex() -> None:
@@ -224,7 +226,7 @@ def test_claims_by_mention(pg: Conn) -> None:
     _seed(pg)
     for n in "123":
         _validate(pg, "d" * 63 + n)
-    rows = claims_by_mention(pg, mention="python")  # matching is case-insensitive
+    rows = claims_by_mention(pg, mention="python", **ENGINE)  # matching is case-insensitive
     # gh:x:2's document belongs to an older version, so no posting is on it now
     assert [r["uid"] for r in rows] == ["gh:x:1", "gh:x:3"]
     r = rows[0]
@@ -232,10 +234,43 @@ def test_claims_by_mention(pg: Conn) -> None:
     assert r["area_kind"] == "technical" and r["importance"] == "required"
     assert r["source"] == "greenhouse" and r["board"] == "x"
     assert r["title"] == "t" and r["company"] == "c"
-    assert claims_by_mention(pg, mention="Python", importance="preferred") == []
-    assert len(claims_by_mention(pg, mention="Python", importance="required")) == 2
-    assert len(claims_by_mention(pg, mention="Python", source="greenhouse", board="x")) == 2
-    assert claims_by_mention(pg, mention="Python", board="other") == []
-    assert claims_by_mention(pg, mention="Rust") == []
+    assert claims_by_mention(pg, mention="Python", importance="preferred", **ENGINE) == []
+    assert len(claims_by_mention(pg, mention="Python", importance="required", **ENGINE)) == 2
+    assert len(
+        claims_by_mention(pg, mention="Python", source="greenhouse", board="x", **ENGINE)
+    ) == 2
+    assert claims_by_mention(pg, mention="Python", board="other", **ENGINE) == []
+    assert claims_by_mention(pg, mention="Rust", **ENGINE) == []
     # limit + 1 rows, like every other page: the caller marks truncation honestly
-    assert len(claims_by_mention(pg, mention="Python", limit=1)) == 2
+    assert len(claims_by_mention(pg, mention="Python", limit=1, **ENGINE)) == 2
+
+
+def test_claims_by_mention_is_scoped_to_the_engine_in_force(pg: Conn) -> None:
+    """`profile_mentions` keeps a row set per engine tuple the archive produced
+    (`extract rebuild` replays historical configs on purpose). A retired prompt
+    must not double the posting, nor answer for an importance the current
+    extraction contradicts."""
+    _seed(pg)
+    dh = "d" * 63 + "1"
+    retired = _fixture_profile()
+    for area in retired["demand_profile"]["areas"]:
+        area["importance"] = "preferred"  # what demand-profile/v3 said back then
+    extraction.upsert_state(
+        pg, document_hash=dh, model="z-ai/glm-5.2:free",
+        **dict(CONFIG, prompt_version="demand-profile/vOLD"),
+        state=DerivedState("validated", None), profile=retired,
+        updated_at="2026-08-01T00:00:00Z",
+    )
+    _validate(pg, dh)  # the tuple in force: required
+
+    rows = claims_by_mention(pg, mention="Python", **ENGINE)
+    assert [(r["uid"], r["importance"]) for r in rows] == [("gh:x:1", "required")]
+    assert claims_by_mention(pg, mention="Python", importance="preferred", **ENGINE) == []
+    # a model outside the glob in force is another engine, not this corpus
+    other_model = dict(ENGINE, model_regex=extraction.globs_to_regex(("nvidia/*",)))
+    assert claims_by_mention(pg, mention="Python", **other_model) == []
+    # and the retired tuple is still readable when asked for by name
+    old = dict(ENGINE, prompt_version="demand-profile/vOLD")
+    assert [r["importance"] for r in claims_by_mention(pg, mention="Python", **old)] == [
+        "preferred"
+    ]

@@ -349,6 +349,40 @@ def test_q_claims_across_the_corpus(qenv: Path, pg: psycopg.Connection[dict[str,
     assert r.exit_code == 0 and "ab:ramp:x" in r.stdout
 
 
+def test_q_claims_reports_only_the_engine_in_force(
+    qenv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retired prompt version still sits in `profile_mentions` after a rebuild
+    replays it. `q claims` must not report the posting twice, nor let
+    `--importance` match what the current extraction contradicts."""
+    from jobhunter.l2.runner import SCHEMA_VERSION
+    from jobhunter.l2.state import DerivedState
+    from jobhunter.l2.transforms import VALIDATOR_VERSION
+    from jobhunter.store import extraction
+
+    dh = _doc_hash()
+    profile = _seed_profile(pg, dh)  # the tuple in force: Python is required
+    retired = json.loads(json.dumps(profile))
+    for area in retired["demand_profile"]["areas"]:
+        area["importance"] = "preferred"
+    extraction.upsert_state(
+        pg, document_hash=dh, model="z-ai/glm-5.2:free",
+        prompt_version="demand-profile/vOLD", schema_version=SCHEMA_VERSION,
+        validator_version=VALIDATOR_VERSION, state=DerivedState("validated", None),
+        profile=retired, updated_at="2026-08-01T00:00:00Z",
+    )
+    pg.commit()
+
+    body = _data(["q", "claims", "--mention", "Python"])
+    assert body["meta"]["count"] == 1  # one posting, not one per engine tuple
+    assert body["data"][0]["importance"] == "required"
+    assert _data(["q", "claims", "--mention", "Python", "--importance", "preferred"])[
+        "data"] == []
+    # a model outside JOB_HUNTER_L2_MODELS is another engine, not this corpus
+    monkeypatch.setenv("JOB_HUNTER_L2_MODELS", "nvidia/*")
+    assert _data(["q", "claims", "--mention", "Python"])["data"] == []
+
+
 def test_q_stdout_stays_one_json_object_on_every_error_path(qenv: Path) -> None:
     for args in (["q", "postings", "--status", "bogus"], ["q", "posting", "nope"],
                  ["q", "document", "zz"], ["q", "profile", "--doc", "deadbeef"]):

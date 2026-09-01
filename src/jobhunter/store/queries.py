@@ -328,6 +328,10 @@ def claims_by_mention(
     conn: Conn,
     *,
     mention: str,
+    model_regex: str,
+    prompt_version: str,
+    schema_version: str,
+    validator_version: str,
     importance: str | None = None,
     source: str | None = None,
     board: str | None = None,
@@ -340,13 +344,28 @@ def claims_by_mention(
     corpus as empty. That costs the (mention, importance) index a scan the size
     of the mention table, which is the cheaper of the two mistakes.
 
+    Scoped to the engine tuple in force, like `validated_profiles`: the table
+    keeps one row set per tuple the archive ever produced (`extract rebuild`
+    replays historical configs deliberately), and a retired prompt is not what
+    this corpus demands today. Without the scope the same posting comes back
+    once per tuple, with importances that contradict each other.
+
     A row is reported only while some posting's CURRENT version is the document
     the claim was extracted from: a claim attached to superseded text is history,
-    not demand. DISTINCT because a document extracted under two engine tuples
-    asserts the mention once, not twice. Returns limit+1 rows so the caller can
-    mark truncation."""
-    params: dict[str, Any] = {"mention": mention, "limit": limit + 1}
-    where = ["lower(m.mention) = lower(%(mention)s)"]
+    not demand. DISTINCT because two models under the same tuple assert the
+    mention once, not twice. Returns limit+1 rows so the caller can mark
+    truncation."""
+    params: dict[str, Any] = {
+        "mention": mention, "limit": limit + 1, "model_regex": model_regex,
+        "pv": prompt_version, "sv": schema_version, "vv": validator_version,
+    }
+    where = [
+        "lower(m.mention) = lower(%(mention)s)",
+        "m.prompt_version = %(pv)s",
+        "m.schema_version = %(sv)s",
+        "m.validator_version = %(vv)s",
+        "m.model ~ %(model_regex)s",
+    ]
     if importance is not None:
         where.append("m.importance = %(importance)s")
         params["importance"] = importance
