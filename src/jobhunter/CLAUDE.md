@@ -39,12 +39,13 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
   `docs/2026-08-26-l2-extraction-harness.md`): quote/span resolution
   (`quotes.py`), versioned fact transforms (`transforms.py`), JSON schemas v1
   (`schemas_data/`), the pure `verify()` suite (`verify.py`) — all no-I/O,
-  no-LLM; plus the harness: prompt `demand-profile/v1` (`prompt.py`), engine
-  backends (`engines.py`: openai-compat, claude-cli; observed model only),
+  no-LLM; plus the harness: prompt `demand-profile/v4` (`prompt.py`), engine
+  backends (`engines.py`: openai-compat, claude-cli, codex-cli; observed
+  model only),
   emit→record assembly (`assemble.py`), immutable attempt objects
   (`attempts.py`), pure state derivation (`state.py`), the serial drain loop
   (`runner.py`: ladder, breaker, caps, catch-up scan), archive replay
-  (`rebuild.py`). `VALIDATOR_VERSION = "1"` is frozen — any check or
+  (`rebuild.py`). `VALIDATOR_VERSION = "2"` is frozen — any check or
   threshold change bumps it.
 
 ## Conventions

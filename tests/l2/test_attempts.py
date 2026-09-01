@@ -5,6 +5,8 @@ import json
 import pytest
 
 from jobhunter.l2.attempts import Attempt, from_bytes, to_bytes
+from jobhunter.l2.prompt import PROMPT_VERSION
+from jobhunter.l2.transforms import VALIDATOR_VERSION
 
 
 def _attempt(**overrides: object) -> Attempt:
@@ -19,10 +21,10 @@ def _attempt(**overrides: object) -> Attempt:
         "requested_engine": "openai-compat",
         "requested_model": "z-ai/glm-5.2:free",
         "observed_model": "z-ai/glm-5.2:free",
-        "prompt_version": "demand-profile/v1",
+        "prompt_version": PROMPT_VERSION,
         "prompt_sha256": "0" * 64,
         "schema_version": "1",
-        "validator_version": "1",
+        "validator_version": VALIDATOR_VERSION,
         "prior_errors": [],
         "raw_response": "{}",
         "validation": [],

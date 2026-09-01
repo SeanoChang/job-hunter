@@ -7,7 +7,12 @@ from __future__ import annotations
 from typing import Any
 
 from jobhunter.l2.prompt import PROMPT_VERSION
-from jobhunter.l2.quotes import AmbiguousQuote, QuoteNotFound, resolve_quote
+from jobhunter.l2.quotes import (
+    AmbiguousQuote,
+    QuoteNotFound,
+    describe_not_found,
+    resolve_quote,
+)
 from jobhunter.l2.transforms import TRANSFORMS, VALIDATOR_VERSION
 
 
@@ -27,11 +32,8 @@ class _Resolver:
         occurrence = emit_quote.get("occurrence")
         try:
             q = resolve_quote(self.markdown, text, occurrence)
-        except QuoteNotFound as exc:
-            self.errors.append(
-                f"quote not found: {text[:80]!r} "
-                f"(longest matching prefix {exc.longest_prefix} codepoints)"
-            )
+        except QuoteNotFound:
+            self.errors.append(describe_not_found(self.markdown, text))
             return None
         except AmbiguousQuote as exc:
             self.errors.append(
@@ -53,7 +55,9 @@ def _fact(resolver: _Resolver, kind: str, item: dict[str, Any] | None,
     if derived is None:
         resolver.errors.append(
             f"fact anchor not parseable as {kind}: {anchor['text'][:80]!r} — "
-            "re-anchor on the exact phrase or drop the fact"
+            f"if the posting states no {kind}, set {kind} to null instead of "
+            "anchoring on the sentence that says so; otherwise anchor on the "
+            "exact phrase carrying the value"
         )
         return None
     out: dict[str, Any] = dict(derived)

@@ -16,6 +16,9 @@ data/
 *.db-wal
 *.db-shm
 
+# Local run configuration (may hold API keys)
+env.local
+
 # Session artifacts
 .playwright-mcp/
 .DS_Store

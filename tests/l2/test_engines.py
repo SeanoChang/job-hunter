@@ -187,3 +187,22 @@ def test_openai_compat_cost_from_usage_and_prices() -> None:
         prices=(0.35, 0.75),
     )
     assert priced.complete("p", SCHEMA, "m").cost_usd == pytest.approx(1.10)
+
+
+def test_claude_cli_strips_schema_meta_ref() -> None:
+    """`claude -p --json-schema` cannot resolve the draft-2020-12 meta-ref and
+    exits 1 — found by the first real extraction run."""
+    seen: dict[str, Any] = {}
+
+    def fake_run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        seen["schema"] = json.loads(cmd[cmd.index("--json-schema") + 1])
+        return _cli_result({"structured_output": {"ok": True}, "modelUsage": {"m": {}}})
+
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {"ok": {"type": "boolean"}},
+    }
+    ClaudeCli(run=fake_run, which=lambda _: "/usr/bin/claude").complete("p", schema, "m")
+    assert "$schema" not in seen["schema"]
+    assert seen["schema"]["properties"] == {"ok": {"type": "boolean"}}
