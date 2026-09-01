@@ -140,3 +140,9 @@ and a dated judge run. Its README carries the superseded banner.
   intra-run, ladder hash keys series that span rungs); human review via CLI
   dossier pipeline with document-only gold labeling; attention digests via
   generic webhook (Slack-compatible), distinct from the liveness ping.
+- 2026-08-27 — codex-cli is a supported extraction engine, but only fully
+  isolated (--ignore-user-config kills its MCP servers and plugin skills;
+  an agentic engine cannot be an extraction engine). It reports no model
+  id, so recording the requested one is opt-in
+  (JOB_HUNTER_L2_TRUST_REQUESTED_MODEL) and marked as asserted, not
+  observed, provenance.

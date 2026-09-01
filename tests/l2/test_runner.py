@@ -15,7 +15,9 @@ from jobhunter.config import Settings
 from jobhunter.hashing import sha256_hex
 from jobhunter.l2.attempts import from_bytes, to_bytes
 from jobhunter.l2.engines import EngineResult, EngineThrottled, EngineTransportError
+from jobhunter.l2.prompt import PROMPT_VERSION
 from jobhunter.l2.runner import run
+from jobhunter.l2.transforms import VALIDATOR_VERSION
 from tests.l2.conftest import DOC_MD
 from tests.l2.test_assemble import EMIT
 from tests.l2.test_attempts import _attempt
@@ -141,10 +143,10 @@ def test_fabricated_quote_repaired_on_retry(pg: Conn, store: ArchiveStore) -> No
     first = next(a for a in attempts if a.attempt_no == 1)
     assert first.outcome == "attribution_failed"
     produced = [v["error"] for v in first.validation if "error" in v]
-    assert any("longest matching prefix" in e for e in produced)
+    assert any("matches the document for" in e for e in produced)
     second = next(a for a in attempts if a.attempt_no == 2)
     assert first.prior_errors == []  # nothing was fed into attempt 1
-    assert any("longest matching prefix" in e for e in second.prior_errors)  # fed into the retry
+    assert any("matches the document for" in e for e in second.prior_errors)  # fed into retry
 
 
 def test_ladder_exhaustion_quarantines(pg: Conn, store: ArchiveStore) -> None:
@@ -243,7 +245,7 @@ def test_prompt_bump_requeues_without_contamination(
 
     from jobhunter.l2 import runner as runner_mod
 
-    monkeypatch.setattr(runner_mod, "PROMPT_VERSION", "demand-profile/v2")
+    monkeypatch.setattr(runner_mod, "PROMPT_VERSION", "demand-profile/vNEXT")
     bad = EngineResult("not json", "z-ai/glm-5.2:free", 1, 1, 0.0)
     summary = run(_settings(), pg, store, engine=FakeEngine([bad] * 3),
                   max_docs=10, max_usd=5.0)
@@ -252,10 +254,9 @@ def test_prompt_bump_requeues_without_contamination(
     rows = pg.execute(
         "SELECT prompt_version, status, chosen_attempt FROM extractions ORDER BY prompt_version"
     ).fetchall()
-    assert [(r["prompt_version"], r["status"]) for r in rows] == [
-        ("demand-profile/v1", "validated"),
-        ("demand-profile/v2", "quarantined"),
-    ]
+    assert [(r["prompt_version"], r["status"]) for r in rows] == sorted(
+        [(PROMPT_VERSION, "validated"), ("demand-profile/vNEXT", "quarantined")]
+    )
     assert rows[0]["chosen_attempt"] is not None
     assert rows[1]["chosen_attempt"] is None  # v1's ok attempt must not leak into v2
 
@@ -285,8 +286,8 @@ def test_retry_review_then_next_run_revalidates(pg: Conn, store: ArchiveStore) -
     at = utcnow_precise()
     event = {
         "review_key": x_review_key(at, DH, "retry", 1), "document_hash": DH,
-        "model": "z-ai/glm-5.2:free", "prompt_version": "demand-profile/v1",
-        "schema_version": "1", "validator_version": "1", "verb": "retry",
+        "model": "z-ai/glm-5.2:free", "prompt_version": PROMPT_VERSION,
+        "schema_version": "1", "validator_version": VALIDATOR_VERSION, "verb": "retry",
         "payload": None, "actor": "human", "at": at.isoformat(),
     }
     store.put(event["review_key"], json.dumps(event).encode())
@@ -324,7 +325,7 @@ def test_catch_up_replays_same_second_orphan(pg: Conn, store: ArchiveStore) -> N
     recorded = _attempt(
         attempt_key=keys.x_attempt_key(at, DH, 1, 1), document_hash=DH,
         outcome="transport", raw_response=None, observed_model=None,
-        started_at="2026-08-27T07:00:00Z",
+        started_at="2026-08-27T07:00:00Z", validator_version=VALIDATOR_VERSION,
     )
     store.put(recorded.attempt_key, to_bytes(recorded))
     from jobhunter.store import extraction as xstore
@@ -371,8 +372,8 @@ def test_retry_clears_row_keyed_by_observed_model(pg: Conn, store: ArchiveStore)
     at = utcnow_precise()
     event = {
         "review_key": x_review_key(at, DH, "flag", 1), "document_hash": DH,
-        "model": "z-ai/glm-5.2", "prompt_version": "demand-profile/v1",
-        "schema_version": "1", "validator_version": "1", "verb": "flag",
+        "model": "z-ai/glm-5.2", "prompt_version": PROMPT_VERSION,
+        "schema_version": "1", "validator_version": VALIDATOR_VERSION, "verb": "flag",
         "payload": None, "actor": "human", "at": at.isoformat(),
     }
     store.put(event["review_key"], json.dumps(event).encode())
@@ -397,8 +398,8 @@ def test_catch_up_replays_orphaned_review_event(pg: Conn, store: ArchiveStore) -
     at = utcnow_precise()
     event = {
         "review_key": x_review_key(at, DH, "reject", 1), "document_hash": DH,
-        "model": "z-ai/glm-5.2:free", "prompt_version": "demand-profile/v1",
-        "schema_version": "1", "validator_version": "1", "verb": "reject",
+        "model": "z-ai/glm-5.2:free", "prompt_version": PROMPT_VERSION,
+        "schema_version": "1", "validator_version": VALIDATOR_VERSION, "verb": "reject",
         "payload": {"note": "wrong"}, "actor": "human", "at": at.isoformat(),
     }
     store.put(event["review_key"], json.dumps(event).encode())  # archived, DB row lost (crash)
@@ -422,8 +423,8 @@ def test_one_row_per_config_across_model_spellings(pg: Conn, store: ArchiveStore
     at = utcnow_precise()
     event = {
         "review_key": x_review_key(at, DH, "retry", 1), "document_hash": DH,
-        "model": "z-ai/glm-5.2:free", "prompt_version": "demand-profile/v1",
-        "schema_version": "1", "validator_version": "1", "verb": "retry",
+        "model": "z-ai/glm-5.2:free", "prompt_version": PROMPT_VERSION,
+        "schema_version": "1", "validator_version": VALIDATOR_VERSION, "verb": "retry",
         "payload": None, "actor": "human", "at": at.isoformat(),
     }
     store.put(event["review_key"], json.dumps(event).encode())
