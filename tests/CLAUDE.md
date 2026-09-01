@@ -15,6 +15,9 @@ the root `pyproject.toml`, `-q` by default).
 - `tests/store/` — lifecycle, panel, queries, db. Needs Postgres;
   `JOB_HUNTER_TEST_DATABASE_URL` points at it (CI runs a postgres:17 service).
   `helpers.py` holds shared store-test setup.
+- `test_ci_workflow.py` — the scheduled `fetch` workflow: its `sync` step body is
+  extracted from the YAML and run under `bash -eo pipefail` against a stub `uv`
+  (which exit codes fail the hourly job is a decision made in shell, not Python).
 - `tests/integration/test_three_days.py` — end-to-end over three synthetic days.
 - `conftest.py` — shared fixtures.
 - `fixtures/md/` — HTML→Markdown conversion cases for `test_markdown.py`.

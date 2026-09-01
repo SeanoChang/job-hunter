@@ -103,7 +103,11 @@ def rebuild_extractions(
     conn: Conn, store: ArchiveStore, accepted_globs: tuple[str, ...]
 ) -> tuple[int, int]:
     """Truncate + replay. Returns (attempts_replayed, reviews_replayed)."""
-    conn.execute("TRUNCATE extraction_attempts, extraction_reviews, extractions")
+    # profile_mentions is derived from extractions.profile, so it is emptied with
+    # them and refilled by the same upserts the replay drives.
+    conn.execute(
+        "TRUNCATE extraction_attempts, extraction_reviews, extractions, profile_mentions"
+    )
     attempts_by_group: dict[tuple[str, str, str], list[Attempt]] = {}
     reviews_by_group: dict[tuple[str, str, str], list[Review]] = {}
     n_attempts = n_reviews = 0

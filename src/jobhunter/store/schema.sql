@@ -189,3 +189,20 @@ CREATE TABLE IF NOT EXISTS extractions (
 );
 CREATE INDEX IF NOT EXISTS ix_extractions_doc ON extractions (document_hash);
 CREATE INDEX IF NOT EXISTS ix_extractions_status ON extractions (status);
+
+-- derived from extractions.profile by store/extraction.upsert_state; rebuildable.
+-- Validated rows only, homogeneous in the engine tuple like every aggregate
+-- (2026-08-26 ruling): a mention here is something the corpus asserts.
+CREATE TABLE IF NOT EXISTS profile_mentions (
+  document_hash     TEXT NOT NULL,
+  model             TEXT NOT NULL,
+  prompt_version    TEXT NOT NULL,
+  schema_version    TEXT NOT NULL,
+  validator_version TEXT NOT NULL,
+  mention           TEXT NOT NULL,
+  area_kind         TEXT NOT NULL,
+  importance        TEXT NOT NULL,
+  PRIMARY KEY (document_hash, model, prompt_version, schema_version,
+               validator_version, mention, area_kind, importance)
+);
+CREATE INDEX IF NOT EXISTS ix_mentions_mention ON profile_mentions (mention, importance);

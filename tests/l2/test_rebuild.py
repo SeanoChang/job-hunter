@@ -77,6 +77,26 @@ def test_rebuild_reproduces_incremental_state(
     assert _dump(pg) == before
 
 
+def test_rebuild_repopulates_profile_mentions(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """profile_mentions is derived from extractions.profile, so replay owes it the
+    same reconstruction the extraction rows get — nothing about it is authored."""
+    _seed_doc(pg)
+    settings = _settings()
+    run(settings, pg, store, engine=FakeEngine([GOOD]), max_docs=10, max_usd=5.0)
+    pg.commit()
+    expected = [("Python", "technical", "required")]
+    rows = pg.execute("SELECT mention, area_kind, importance FROM profile_mentions").fetchall()
+    assert [(r["mention"], r["area_kind"], r["importance"]) for r in rows] == expected
+
+    pg.execute("DELETE FROM profile_mentions")  # as a store rebuilt from the archive starts
+    rebuild_extractions(pg, store, settings.l2_models)
+    pg.commit()
+    rows = pg.execute("SELECT mention, area_kind, importance FROM profile_mentions").fetchall()
+    assert [(r["mention"], r["area_kind"], r["importance"]) for r in rows] == expected
+
+
 def test_rebuild_rejudges_raw_responses_under_current_validators(
     pg: Conn, store: ArchiveStore  # noqa: F811
 ) -> None:

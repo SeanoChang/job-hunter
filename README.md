@@ -31,35 +31,59 @@ referrals surfaced from public collaboration data, and labor-market research
 Design in progress — see `docs/`. The ingestion pipeline is the first build; real
 ATS payload analysis lives in `docs/sources/`.
 
-## Running the fetcher
+## Quickstart
 
-The fetcher writes every response to an immutable archive and then ingests the
-new manifests into a Postgres store, so both an archive URL and a database URL
-are required. A local Postgres comes from `docker compose up -d postgres`.
+Both an archive URL and a database URL are required: every response is written
+to an immutable archive first, then ingested into a Postgres store. A local
+Postgres comes from `docker compose up -d postgres`.
 
 ```bash
-uv sync
+uv tool install .                  # or: uv sync && uv run job-hunter ...
+# config: process env > ./.env > ~/.config/job-hunter/env
 export JOB_HUNTER_ARCHIVE_URL=file:///tmp/jh-archive   # or s3://bucket/prefix + AWS_* for R2
 export JOB_HUNTER_DATABASE_URL=postgresql://jobhunter:jobhunter@localhost:5432/jobhunter
-uv run job-hunter db init          # create the jobhunter schema (fetch does this too)
-uv run job-hunter registry check
-uv run job-hunter fetch            # archive every board, then ingest what is new
-uv run job-hunter status           # per-board fetch health + store health
+job-hunter doctor                  # every variable, both backends, schema and role
+job-hunter sync                    # drain pending manifests, fetch every board, extract
+job-hunter pulse                   # what changed since the last pulse, in one call
 ```
 
-Reading and repairing the store:
+Reading the corpus (read-only; `q` and `pulse` need only a read role):
 
 ```bash
-uv run job-hunter report --since 24h    # opened / changed / closed / reopened
-uv run job-hunter registry list         # board panel: when each board joined/left
-uv run job-hunter ingest                # replay archived manifests not yet ingested
-uv run job-hunter rebuild               # replay the whole archive into a fresh schema, swap
-uv run job-hunter db version            # code vs database schema version
+job-hunter q postings --status open --search anthropic --fields uid,title,company
+job-hunter q posting <uid>              # lifecycle, versions, current document
+job-hunter q document <hash-prefix>     # the canonical markdown of one version
+job-hunter q profile --doc <prefix>     # what that posting demands (summary; --full for raw)
+job-hunter q claims --mention Python    # who asks for it, across the corpus
+job-hunter q events --since 24h         # raw lifecycle events, stateless
+job-hunter q boards --unhealthy         # boards whose last fetch was not ok
 ```
 
-Every command takes `--json`. `JOB_HUNTER_DROP_RATIO` (default `0.5`) sets the
-drop guard: a board returning less than that share of its previous count is
-`suspect_drop` and its postings are not closed on that attempt.
+Operating and repairing the store:
+
+```bash
+job-hunter status                       # per-board fetch health + store health
+job-hunter registry check               # validate companies.toml
+job-hunter registry list                # board panel: when each board joined/left
+job-hunter fetch                        # archive every board, then ingest what is new
+job-hunter ingest                       # replay archived manifests not yet ingested
+job-hunter rebuild --yes                # replay the whole archive into a fresh schema, swap
+job-hunter db init                      # create the jobhunter schema (sync/fetch do this too)
+job-hunter db version                   # code vs database schema version
+```
+
+Output is one JSON envelope (`{"ok", "data", "meta"}`) when stdout is piped and
+a human table on a TTY; `-o json` / `-o table` forces either. Exit codes: `0`
+success, `1` verify findings failed, `2` usage, `3` config, `4` not found or
+ambiguous, `5` backend unavailable, `6` systemic. `job-hunter schema` prints the
+machine catalog of every command, flag and exit code; `job-hunter skill` prints
+the agent guide as markdown — the one verb whose payload is a file, so
+`job-hunter skill > ~/.claude/skills/job-hunter-cli/SKILL.md` installs it and
+`-o json` wraps it instead.
+
+`JOB_HUNTER_DROP_RATIO` (default `0.5`) sets the drop guard: a board returning
+less than that share of its previous count is `suspect_drop` and its postings
+are not closed on that attempt.
 
 Deployment on R2 + Neon + GitHub Actions:
 `docs/runbooks/2026-08-18-deploy-fetcher.md`.

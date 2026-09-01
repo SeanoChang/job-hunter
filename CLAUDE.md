@@ -44,11 +44,18 @@ docker compose up -d postgres             # local Postgres (compose also has Min
 uv run job-hunter --help                  # CLI entry point
 ```
 
-CLI: `version`, `fetch`, `ingest`, `rebuild`, `report`, `status`, `verify`,
+CLI (agent-first contract, `docs/superpowers/specs/2026-09-01-agentic-cli-rework-design.md`):
+`pulse` (cursor-driven delta), `q postings|posting|events|claims|document|profile|boards`
+(read-only), `sync` (ingest→fetch→extract), `doctor`, `schema`, `skill`, plus
+`version`, `fetch`, `ingest`, `rebuild --yes`, `status`, `verify`,
 `extract run|review|rebuild`, `archive ls`, `registry check|list`,
-`db init|version` — all accept `--json`; exit 0 normal, 2 systemic
-(`verify` adds exit 1 = findings failed). Env config via `JOB_HUNTER_*` variables (see
-`src/jobhunter/config.py`); full run instructions in `README.md`.
+`db init|version`. Output is one JSON envelope (`{ok, data, meta}`) when stdout
+is piped, a human table on a TTY; `-o json|table` forces either (the old
+`--json` flag is gone). Exit codes: 0 ok · 1 verify findings · 2 usage ·
+3 config · 4 not found/ambiguous · 5 backend unavailable · 6 systemic. Config
+via `JOB_HUNTER_*` in the process env, `./.env`, then
+`~/.config/job-hunter/env` (see `src/jobhunter/config.py`); full run
+instructions in `README.md`.
 
 ## Conventions
 
