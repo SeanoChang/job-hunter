@@ -23,6 +23,7 @@ from jobhunter import __version__
 from jobhunter.archive import ArchiveError, ArchiveStore, open_store
 from jobhunter.archive.manifests import iter_manifests, latest_per_board
 from jobhunter.cli_output import Exit, emit, fail, output_option, use_json
+from jobhunter.cli_q import q_app
 from jobhunter.config import ConfigError, Settings
 from jobhunter.fetch import UnknownBoardError, is_healthy
 from jobhunter.fetch import run as fetch_run
@@ -41,6 +42,7 @@ db_app = typer.Typer(help="Postgres store")
 app.add_typer(archive_app, name="archive")
 app.add_typer(registry_app, name="registry")
 app.add_typer(db_app, name="db")
+app.add_typer(q_app, name="q")
 
 
 # Indirections so tests can substitute a mock transport, a fixed clock and a throwaway schema.

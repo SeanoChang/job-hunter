@@ -576,11 +576,11 @@ def q_postings(
 
 (`_now` imported from `jobhunter.cli` alongside the helpers.) `q document` reuses `_resolve_doc` + `markdown_for`, takes `--slice S:E` parsed as codepoint ints, and emits `{"document_hash": ..., "markdown": text}` (human mode prints the markdown raw). `q profile` reuses the loading part of `extract_show` (extract the row-loading into a helper `_profile_row(conn, doc)` in `cli_q.py`); default output is the summary produced by Task 6's `profile_summary`; `--full` emits the stored `profile` verbatim; no validated row → `fail("not_found", ..., hint="run: job-hunter extract run --doc <hash>", code=Exit.NOT_FOUND)`.
 
-- [ ] **Step 1:** Write `tests/test_cli_q.py` following `tests/test_cli.py`'s runner/monkeypatch idiom (substitute `_conn`/`_settings` the way existing CLI tests do; where CLI tests hit real Postgres via fixtures, do the same): cover — envelope shape on `q postings`; `--status bogus` exits 2 with `valid` list; `--limit 9999` clamps to 500; truncation sets `next_cursor` and a second call with `--after` returns the next page without overlap; `q posting unknown-uid` exits 4; `q document` with an ambiguous 4-hex prefix exits 4 with the lengthen-hint; `q profile --doc X` on a validated fixture returns summary keys `areas/mentions/facts`; `--fields uid,title` drops other keys and rejects unknown names.
-- [ ] **Step 2:** `uv run pytest tests/test_cli_q.py -q` — FAIL (no module).
-- [ ] **Step 3:** Implement all six verbs.
-- [ ] **Step 4:** `uv run pytest tests/test_cli_q.py tests/test_cli.py -q && uv run ruff check . && uv run mypy` — PASS.
-- [ ] **Step 5: Commit** — `git commit -am "feat(cli): q namespace — postings, posting, events, boards, document, profile"`
+- [x] **Step 1:** Write `tests/test_cli_q.py` following `tests/test_cli.py`'s runner/monkeypatch idiom (substitute `_conn`/`_settings` the way existing CLI tests do; where CLI tests hit real Postgres via fixtures, do the same): cover — envelope shape on `q postings`; `--status bogus` exits 2 with `valid` list; `--limit 9999` clamps to 500; truncation sets `next_cursor` and a second call with `--after` returns the next page without overlap; `q posting unknown-uid` exits 4; `q document` with an ambiguous 4-hex prefix exits 4 with the lengthen-hint; `q profile --doc X` on a validated fixture returns summary keys `areas/mentions/facts`; `--fields uid,title` drops other keys and rejects unknown names.
+- [x] **Step 2:** `uv run pytest tests/test_cli_q.py -q` — FAIL (no module).
+- [x] **Step 3:** Implement all six verbs.
+- [x] **Step 4:** `uv run pytest tests/test_cli_q.py tests/test_cli.py -q && uv run ruff check . && uv run mypy` — PASS.
+- [x] **Step 5: Commit** — `git commit -am "feat(cli): q namespace — postings, posting, events, boards, document, profile"`
 
 ---
 
