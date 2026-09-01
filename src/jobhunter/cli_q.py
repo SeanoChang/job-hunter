@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import typer
 
 from jobhunter.cli_output import Exit, emit, fail, output_option
-from jobhunter.pulse import profile_summary
+from jobhunter.pulse import closed_between, profile_summary
 from jobhunter.timeutil import iso, parse_iso
 
 if TYPE_CHECKING:
@@ -93,15 +93,6 @@ def _since(value: str | None) -> Any:
     return _now() - _parse_since(value) if value else None
 
 
-def _closed_between(row: dict[str, Any]) -> list[str | None] | None:
-    """The honest interval: a close is known to have happened between the last
-    sighting and the first miss, never at a point."""
-    if not row.get("closed_lower_at"):
-        return None
-    upper = row.get("closed_upper_at")
-    return [iso(row["closed_lower_at"]), iso(upper) if upper else None]
-
-
 @q_app.command("postings")
 def q_postings(
     board: str | None = typer.Option(None, "--board", help="source:board"),
@@ -135,7 +126,7 @@ def q_postings(
          "title": r["title"], "company": r["company"], "url": r["url"],
          "first_seen_at": iso(r["first_seen_at"]), "last_seen_at": iso(r["last_seen_at"]),
          "version_count": r["version_count"], "reopen_count": r["reopen_count"],
-         "closed_between": _closed_between(r)}
+         "closed_between": closed_between(r)}
         for r in rows
     ]
     human = "\n".join(
@@ -169,7 +160,7 @@ def q_posting(
         "first_seen_at": iso(row["first_seen_at"]),
         "last_seen_at": iso(row["last_seen_at"]),
         "source_updated_at": iso(row["source_updated_at"]) if row["source_updated_at"] else None,
-        "closed_between": _closed_between(row),
+        "closed_between": closed_between(row),
         "versions": [
             {"version_hash": v["version_hash"], "title": v["title"], "at": iso(v["at"])}
             for v in row["versions"]
@@ -177,7 +168,7 @@ def q_posting(
         "events": [
             {"event_id": e["event_id"], "kind": e["kind"], "at": iso(e["at"]),
              "from_version": e["from_version"], "to_version": e["to_version"],
-             "closed_between": _closed_between(e)}
+             "closed_between": closed_between(e)}
             for e in row["events"]
         ],
     }
@@ -236,7 +227,7 @@ def q_events(
     data = [
         {"event_id": e["event_id"], "kind": e["kind"], "uid": e["uid"], "at": iso(e["at"]),
          "board": f"{e['source']}:{e['board']}", "title": e["title"], "company": e["company"],
-         "url": e["url"], "closed_between": _closed_between(e)}
+         "url": e["url"], "closed_between": closed_between(e)}
         for e in rows
     ]
     human = "\n".join(

@@ -23,15 +23,17 @@ from jobhunter import __version__
 from jobhunter.archive import ArchiveError, ArchiveStore, open_store
 from jobhunter.archive.manifests import iter_manifests, latest_per_board
 from jobhunter.cli_output import Exit, emit, fail, output_option, use_json
-from jobhunter.cli_q import q_app
+from jobhunter.cli_q import MAX_LIMIT, _clamp, q_app
 from jobhunter.config import ConfigError, Settings
+from jobhunter.cursors import Watermark, read_cursor, write_cursor
 from jobhunter.fetch import UnknownBoardError, is_healthy
 from jobhunter.fetch import run as fetch_run
 from jobhunter.http import Fetcher
+from jobhunter.pulse import build_pulse
 from jobhunter.registry import RegistryError
 from jobhunter.registry import load as load_registry
 from jobhunter.store import db as _db
-from jobhunter.timeutil import iso, utcnow
+from jobhunter.timeutil import iso, parse_iso, utcnow
 
 _SINCE = re.compile(r"^(\d+)([mhd])$")
 
@@ -392,6 +394,107 @@ def report(
         )
     emit({"since": since, "counts": counts, "events": rows},
          human="\n".join(human), output=output)
+
+
+def _pulse_since(value: str, output: str | None) -> str:
+    """`--since` accepts what the rest of the CLI accepts: a relative window, or
+    an absolute timestamp. Returns it as the ISO instant a watermark stores."""
+    if _SINCE.match(value.strip()):
+        return (_now() - _parse_since(value)).isoformat()
+    try:
+        return parse_iso(value).isoformat()
+    except ValueError:
+        fail("usage", f"--since is not a timestamp or a window: {value!r}", code=Exit.USAGE,
+             output=output, hint="e.g. 2026-09-01T00:00:00Z, or 24h")
+
+
+def _pulse_human(payload: dict[str, Any], truncated: bool) -> str:
+    events = payload["events"]
+    kinds = ("opened", "changed", "closed", "reopened")
+    counts = {k: sum(e["kind"] == k for e in events) for k in kinds}
+    window = payload["window"]
+    lines = [
+        f"{window['from']} .. {window['to']}"
+        + ("  (first run: last 24h)" if payload["first_run"] else ""),
+        ", ".join(f"{v} {k}" for k, v in counts.items() if v) or "nothing new",
+    ]
+    for e in events:
+        line = f"  {e['kind']:8} {(e['company'] or '-'):18} {e['title'] or '-'}"
+        if e["closed_between"]:
+            line += f"  (closed between {e['closed_between'][0]} and {e['closed_between'][1]})"
+        lines.append(line)
+        summary = e.get("profile")
+        if summary:
+            areas = ", ".join(f"{a['name']} [{a['importance']}]" for a in summary["areas"][:3])
+            lines.append(f"      {areas}" if areas else "      (no areas)")
+            if summary["mentions"]:
+                lines.append(f"      mentions: {', '.join(summary['mentions'])}")
+    if truncated:
+        lines.append("  ... truncated: call again to continue")
+    attention = payload["attention"]
+    for b in attention["unhealthy_boards"]:
+        lines.append(f"attention  {b['board']:32} {b['health']:12} {b['error'] or ''}".rstrip())
+    x = attention["extraction"]
+    if x:
+        lines.append(
+            f"attention  extraction queue {x['queue_depth']}, "
+            f"spend today ${x['spend_today_usd']:.2f}"
+        )
+    return "\n".join(lines)
+
+
+@app.command()
+def pulse(
+    cursor: str = typer.Option("default", "--cursor", help="Named watermark in the state dir"),
+    since: str | None = typer.Option(
+        None, "--since", help="ISO timestamp or Nm/Nh/Nd; reports without touching the cursor"
+    ),
+    boards: str | None = typer.Option(None, "--boards", help="Comma list of source:board"),
+    peek: bool = typer.Option(False, "--peek", help="Report without advancing the cursor"),
+    limit: int = typer.Option(200, "--limit", help=f"1-{MAX_LIMIT}"),
+    output: str | None = output_option(),
+) -> None:
+    """Everything new since the last pulse: events, profiles, attention. One call."""
+    settings = _settings(output)
+    only = tuple(b.strip() for b in boards.split(",") if b.strip()) if boards else None
+    for b in only or ():
+        _split_board(b, output)  # a typo in one entry must not silently match nothing
+    wm = (
+        Watermark(_pulse_since(since, output), ())
+        if since is not None
+        else read_cursor(settings.state_dir, cursor)
+    )
+    conn = _conn(settings, schema=_schema, output=output)
+    try:
+        payload, new_wm = build_pulse(
+            conn, settings, wm=wm, limit=_clamp(limit), boards=only, now=_now()
+        )
+    except typer.Exit:
+        raise
+    except Exception as e:
+        fail("backend", f"database error: {e}", code=Exit.BACKEND, output=output)
+    finally:
+        conn.close()
+    truncated = bool(payload.pop("_truncated"))
+    events = payload["events"]
+    hint = None
+    if events:
+        hint = f"q posting {events[0]['uid']} for lifecycle detail"
+        docs = [e["document_hash"] for e in events if e.get("document_hash")]
+        if docs:
+            hint += f"; q profile --doc {docs[0][:12]} for what it demands"
+    emit(payload, human=_pulse_human(payload, truncated), output=output, count=len(events),
+         truncated=truncated, hint=hint,
+         extra_meta={"cursor": None if since is not None else cursor,
+                     "first_run": payload["first_run"]})
+    if not peek and since is None and new_wm is not None:
+        try:
+            # After the envelope is flushed, never before: a crash between the
+            # two re-reports one window, which is the harmless direction.
+            write_cursor(settings.state_dir, cursor, new_wm)
+        except OSError as e:
+            typer.echo(f"error: cursor {cursor!r} not advanced: {e}", err=True)
+            raise typer.Exit(int(Exit.BACKEND)) from e
 
 
 @app.command()

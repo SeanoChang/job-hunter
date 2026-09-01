@@ -648,11 +648,11 @@ def pulse(
 
 `build_pulse` internals: no watermark → `events_page(conn, since=now - timedelta(hours=24), limit=limit)` and `first_run=True`; with watermark → `events_after_watermark(conn, at=parse(wm.at), exclude_ids=wm.event_ids_at, limit=limit)`. Enrich: collect uids of opened/changed events → `docs_for_events` → `validated_profiles` (glob regex from `settings.l2_models` via `globs_to_regex`, versions from the same imports `_extraction_block` uses) → attach `profile_summary`. Attention: `boards_overview` filtered to `health != 'ok'`, plus `_extraction_block(settings)`-shaped dict (reuse that helper). If truncated: new watermark comes from the last *emitted* event (spec §3).
 
-- [ ] **Step 1:** Failing tests. `tests/test_cursors.py`: round-trip; missing file → None; atomicity (write, then corrupt tmp leftovers don't matter — assert `cursors.json` parses); two names coexist. `tests/test_pulse.py`: `profile_summary` on the fixture `tests/l2/fixtures/anthropic.extraction.json`'s record produces the documented keys and ≤8 mentions; `build_pulse` with a fake conn (monkeypatched query functions, as CLI tests do) — first-run flag set without watermark; watermark excludes tie-break ids; truncation caps events and the returned watermark matches the last emitted event, not the last DB event. CLI-level test: `pulse --peek` twice returns identical events; without `--peek` the second call returns empty; crash simulation — monkeypatch `write_cursor` to raise after `emit`, assert the *next* call re-reports (cursor unchanged on disk).
-- [ ] **Step 2:** Run both test files — FAIL.
-- [ ] **Step 3:** Implement `cursors.py`, `pulse.py`, wire the command.
-- [ ] **Step 4:** `uv run pytest tests/test_cursors.py tests/test_pulse.py -q && uv run mypy` — PASS.
-- [ ] **Step 5: Commit** — `git commit -am "feat(cli): pulse — cursor-driven delta with profile summaries and attention block"`
+- [x] **Step 1:** Failing tests. `tests/test_cursors.py`: round-trip; missing file → None; atomicity (write, then corrupt tmp leftovers don't matter — assert `cursors.json` parses); two names coexist. `tests/test_pulse.py`: `profile_summary` on the fixture `tests/l2/fixtures/anthropic.extraction.json`'s record produces the documented keys and ≤8 mentions; `build_pulse` with a fake conn (monkeypatched query functions, as CLI tests do) — first-run flag set without watermark; watermark excludes tie-break ids; truncation caps events and the returned watermark matches the last emitted event, not the last DB event. CLI-level test: `pulse --peek` twice returns identical events; without `--peek` the second call returns empty; crash simulation — monkeypatch `write_cursor` to raise after `emit`, assert the *next* call re-reports (cursor unchanged on disk).
+- [x] **Step 2:** Run both test files — FAIL.
+- [x] **Step 3:** Implement `cursors.py`, `pulse.py`, wire the command.
+- [x] **Step 4:** `uv run pytest tests/test_cursors.py tests/test_pulse.py -q && uv run mypy` — PASS.
+- [x] **Step 5: Commit** — `git commit -am "feat(cli): pulse — cursor-driven delta with profile summaries and attention block"`
 
 ---
 
