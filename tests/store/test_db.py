@@ -8,7 +8,7 @@ from tests.conftest import TEST_DSN
 EXPECTED_TABLES = {
     "fetch_attempts", "posting_versions", "documents", "presence", "runs", "panel",
     "postings", "posting_events", "schema_meta",
-    "extraction_attempts", "extraction_reviews", "extractions",
+    "extraction_attempts", "extraction_reviews", "extractions", "profile_mentions",
 }
 
 
@@ -120,6 +120,18 @@ def test_additive_upgrade_from_v1_stamps_version(pg: psycopg.Connection[dict[str
     db.init(pg, schema)  # must upgrade in place, not raise SchemaMismatch
     pg.commit()
     assert db.stored_schema_version(pg) == db.SCHEMA_VERSION
+
+
+def test_additive_upgrade_from_v2_stamps_version(pg: psycopg.Connection[dict[str, Any]]) -> None:
+    """v2 -> v3 adds profile_mentions and nothing else, so schema.sql IS the migration."""
+    schema = _schema_of(pg)
+    db.set_meta(pg, "schema_version", "2")
+    pg.execute("DROP TABLE profile_mentions")
+    pg.commit()
+    db.init(pg, schema)
+    pg.commit()
+    assert db.stored_schema_version(pg) == db.SCHEMA_VERSION
+    assert "profile_mentions" in _tables(pg, schema)
 
 
 def test_non_additive_mismatch_still_raises(pg: psycopg.Connection[dict[str, Any]]) -> None:

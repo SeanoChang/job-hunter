@@ -95,7 +95,10 @@ def upsert_state(
     (observed id, or the last requested alias when nothing settled), so stale
     rows under a different model spelling are removed on every write — a human
     retry must clear the row regardless of which spelling keyed it.
-    status None (pending) removes the config's row entirely."""
+    status None (pending) removes the config's row entirely.
+    profile_mentions is derived from the same write: it follows the extractions
+    row through every one of these deletes, and is refilled only for a validated
+    status (2026-08-26 ruling: aggregates carry what the corpus asserts)."""
     config = (document_hash, prompt_version, schema_version, validator_version)
     if state.status is None:
         conn.execute(
@@ -103,10 +106,21 @@ def upsert_state(
             " AND prompt_version=%s AND schema_version=%s AND validator_version=%s",
             config,
         )
+        conn.execute(
+            "DELETE FROM profile_mentions WHERE document_hash=%s"
+            " AND prompt_version=%s AND schema_version=%s AND validator_version=%s",
+            config,
+        )
         return
     key = (document_hash, model, prompt_version, schema_version, validator_version)
     conn.execute(
         "DELETE FROM extractions WHERE document_hash=%s"
+        " AND prompt_version=%s AND schema_version=%s AND validator_version=%s"
+        " AND model <> %s",
+        (*config, model),
+    )
+    conn.execute(
+        "DELETE FROM profile_mentions WHERE document_hash=%s"
         " AND prompt_version=%s AND schema_version=%s AND validator_version=%s"
         " AND model <> %s",
         (*config, model),
@@ -132,6 +146,29 @@ def upsert_state(
             reviewed_by, updated_at,
         ),
     )
+    # Rewritten wholesale, never merged: a re-extraction that drops an area must
+    # drop its mentions with it, and a status that is no longer validated leaves
+    # the key empty.
+    conn.execute(
+        "DELETE FROM profile_mentions WHERE document_hash=%s AND model=%s"
+        " AND prompt_version=%s AND schema_version=%s AND validator_version=%s",
+        key,
+    )
+    if profile is None or state.status != "validated":
+        return
+    rows = [
+        (*key, mention, area["kind"], area["importance"])
+        for area in ((profile.get("demand_profile") or {}).get("areas") or [])
+        for mention in dict.fromkeys(area.get("mentions") or [])
+    ]
+    if rows:
+        with conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO profile_mentions (document_hash, model, prompt_version,"
+                " schema_version, validator_version, mention, area_kind, importance)"
+                " VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                rows,
+            )
 
 
 def queue(

@@ -16,8 +16,9 @@ board membership over time. Spec §5 of `docs/2026-08-18-ingestion-layer-spec.md
   Implements the drop guard and interval-censored closes.
 - `panel.py` — versioned board membership (spec §5.5) derived from archived
   registry snapshots.
-- `queries.py` — read helpers backing CLI commands (`report`, `registry list`,
-  `status`).
+- `queries.py` — read helpers backing the read verbs (`q *`, `pulse`,
+  `registry list`, `status`): keyset-paged pages, the watermark delta feed,
+  board overview, and validated profiles/mentions per engine tuple.
 - `schema.sql` — DDL, applied by `db init` / `rebuild`.
 
 ## Patterns

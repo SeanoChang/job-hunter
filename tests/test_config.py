@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -162,6 +164,52 @@ def test_l2_codex_engine_and_effort() -> None:
         Settings.load(_L2_BASE | {"JOB_HUNTER_L2_REASONING_EFFORT": "ludicrous"})
     with _pytest.raises(ConfigError):
         Settings.load(_L2_BASE | {"JOB_HUNTER_L2_ENGINE": "carrier-pigeon"})
+
+
+def test_env_file_layering(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jobhunter.config import load_env_files
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "JOB_HUNTER_ARCHIVE_URL=file:///from-dotenv\n# comment\nPATH=/evil\n")
+    cfg = tmp_path / "cfghome" / "job-hunter"
+    cfg.mkdir(parents=True)
+    (cfg / "env").write_text(
+        "JOB_HUNTER_ARCHIVE_URL=file:///from-config\nJOB_HUNTER_DROP_RATIO=0.7\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfghome"))
+    merged = load_env_files({"JOB_HUNTER_DATABASE_URL": "postgresql://x"})
+    assert merged["JOB_HUNTER_ARCHIVE_URL"] == "file:///from-dotenv"  # .env beats config
+    assert merged["JOB_HUNTER_DROP_RATIO"] == "0.7"                   # config fills gaps
+    assert merged["JOB_HUNTER_DATABASE_URL"] == "postgresql://x"      # process env survives
+    assert "PATH" not in merged                                       # non-prefixed keys ignored
+
+
+def test_process_env_beats_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jobhunter.config import load_env_files
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("JOB_HUNTER_ARCHIVE_URL=file:///from-dotenv\n")
+    merged = load_env_files({"JOB_HUNTER_ARCHIVE_URL": "file:///from-process"})
+    assert merged["JOB_HUNTER_ARCHIVE_URL"] == "file:///from-process"
+
+
+def test_dotenv_is_gitignored() -> None:
+    """`./.env` is a config layer holding the R2 secret and the Neon DSN — never commit it."""
+    repo = Path(__file__).resolve().parents[1]
+    if shutil.which("git") is None or not (repo / ".git").exists():
+        pytest.skip("not a git checkout")
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", ".env"], cwd=repo, check=False
+    ).returncode
+    assert ignored == 0, ".env must be listed in .gitignore (git check-ignore says it is not)"
+
+
+def test_state_dir_default_and_override() -> None:
+    s = Settings.load({"JOB_HUNTER_ARCHIVE_URL": "file:///a",
+                       "JOB_HUNTER_STATE_DIR": "/tmp/js"})
+    assert str(s.state_dir) == "/tmp/js"
+    s2 = Settings.load({"JOB_HUNTER_ARCHIVE_URL": "file:///a", "HOME": "/home/u"})
+    assert str(s2.state_dir).endswith(".local/state/job-hunter")
 
 
 def test_l2_trust_requested_model_flag() -> None:
