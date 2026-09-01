@@ -794,8 +794,8 @@ SKILL.md content (write it fully in this task — frontmatter `name: job-hunter-
 
 ### Task 12: Integration proof + PR
 
-- [ ] **Step 1:** Extend `tests/integration/test_three_days.py`: after the existing three-day ingest, run `pulse` (CliRunner, tmp `JOB_HUNTER_STATE_DIR`) three times interleaved with the days: day-1 pulse reports the opens and `first_run`; day-2 pulse reports only day-2 deltas (changed/closed incl. an interval-censored close with both bounds); day-3 empty delta → `data["events"] == []`; a `--peek` between them changes nothing.
-- [ ] **Step 2:** `docker compose up -d postgres && uv run pytest -q && uv run ruff check . && uv run mypy` — full suite green; paste the tail of the output into the PR body.
+- [x] **Step 1:** Extend `tests/integration/test_three_days.py`: after the existing three-day ingest, run `pulse` (CliRunner, tmp `JOB_HUNTER_STATE_DIR`) three times interleaved with the days: day-1 pulse reports the opens and `first_run`; day-2 pulse reports only day-2 deltas (changed/closed incl. an interval-censored close with both bounds); day-3 empty delta → `data["events"] == []`; a `--peek` between them changes nothing.
+- [x] **Step 2:** `docker compose up -d postgres && uv run pytest -q && uv run ruff check . && uv run mypy` — full suite green; paste the tail of the output into the PR body.
 - [ ] **Step 3:** Manual smoke against the real corpus (needs the R2/Neon env exported): `job-hunter doctor`, `job-hunter pulse --cursor smoketest --peek -o json | head -c 2000`, `job-hunter q postings --search anthropic --limit 5 -o json`. Record outputs.
 - [ ] **Step 4:** Push and open the PR:
 
