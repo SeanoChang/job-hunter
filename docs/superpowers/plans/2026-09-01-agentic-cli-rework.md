@@ -33,7 +33,7 @@
 - Produces: `class Exit(IntEnum)` with members `OK=0, FINDINGS=1, USAGE=2, CONFIG=3, NOT_FOUND=4, BACKEND=5, SYSTEMIC=6`; `output_option()` returning a typer Option for `--output/-o`; `use_json(output: str | None) -> bool`; `emit(data, *, human, output, count=None, truncated=False, next_cursor=None, hint=None, extra_meta=None)`; `fail(kind: str, message: str, *, code: Exit, hint=None, valid=None, output=None) -> NoReturn`.
 - Consumes: nothing project-internal (only typer, json, sys).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_cli_output.py
@@ -101,12 +101,12 @@ def test_fail_table_goes_to_stderr(capsys):
     assert "JOB_HUNTER_ARCHIVE_URL" in out.err
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_cli_output.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'jobhunter.cli_output'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 # src/jobhunter/cli_output.py
@@ -208,12 +208,12 @@ def fail(
     raise typer.Exit(int(code))
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_cli_output.py -q && uv run ruff check src/jobhunter/cli_output.py && uv run mypy`
 Expected: PASS, clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/jobhunter/cli_output.py tests/test_cli_output.py
