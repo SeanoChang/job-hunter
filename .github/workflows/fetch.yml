@@ -38,7 +38,8 @@ jobs:
       # No continue-on-error: sync already downgrades an extraction failure to
       # data["extract"]["error"] and exits 0 — collection is irreplaceable, while
       # extraction is recomputable from the archive at any time. It exits 6 only
-      # when collection itself failed or the extraction engine is stalled.
+      # when collection itself failed or the extraction engine is stalled, and the
+      # script below sorts those two apart: a stall is a warning, collection is red.
       # L2 extraction lives here rather than in a second cron: a separate schedule
       # is a second thing that can die silently (durability doc §1). It takes its
       # own advisory lock (job2), so it can never collide with ingestion's.
@@ -72,7 +73,21 @@ jobs:
           elif [ -n "${EXTRACT_MAX_DOCS}" ]; then
             args=(--extract-max-docs "${EXTRACT_MAX_DOCS}")
           fi
-          uv run job-hunter sync "${args[@]}" | tee summary.json
+          code=0
+          uv run job-hunter sync "${args[@]}" | tee summary.json || code=$?
+          # sync exits 6 for two very different things. An extraction-only stall
+          # (free-tier daily cap → throttled, or the model breaker) is routine on an
+          # hourly cron and recomputable from the archive, so it must not fail the run
+          # that guards collection — the job the old extract step's continue-on-error
+          # did — nor skip the keepalive below. Collection failures (ingest gaps, fetch
+          # errors) still go red: their extract block carries skipped_reason, never
+          # these keys, and an unreadable summary leaves the exit code alone.
+          stalled=$(jq -r '(.data.extract.throttled // false) or (.data.extract.breaker_abort // false)' summary.json 2>/dev/null || true)
+          if [ "$code" -eq 6 ] && [ "$stalled" = "true" ]; then
+            echo "::warning::extraction stalled (throttled or breaker tripped); collection succeeded"
+            code=0
+          fi
+          exit "$code"
       - name: status
         if: always()
         env:
@@ -92,8 +107,11 @@ jobs:
           if-no-files-found: warn
       # GitHub disables scheduled workflows after 60 days without repository activity.
       # Re-enabling via the API resets that clock; first-party gh, no third-party action.
+      # always(): a failing run is exactly when the keepalive must still fire — without
+      # a status function GitHub ANDs in success(), so a red job would let the 60-day
+      # idle rule silence the schedule that guards collection.
       - name: keepalive
-        if: github.event_name == 'schedule'
+        if: always() && github.event_name == 'schedule'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow enable fetch.yml --repo "$GITHUB_REPOSITORY"

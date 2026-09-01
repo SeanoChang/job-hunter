@@ -3,7 +3,8 @@
 Every command speaks the contract in `cli_output`: one JSON envelope when
 stdout is piped, human text on a TTY, `-o/--output` to force either. Exit codes
 are the typed table in `cli_output.Exit` (0 ok, 1 verify findings, 2 usage,
-3 config, 4 not found, 5 backend, 6 systemic).
+3 config, 4 not found, 5 backend, 6 systemic). `skill` is the sole exception:
+its payload is a file, so piping it writes markdown unless `-o json` is given.
 """
 
 from __future__ import annotations
@@ -930,7 +931,10 @@ def skill(output: str | None = output_option()) -> None:
     from importlib import resources
 
     text = resources.files("jobhunter.skill_data").joinpath("SKILL.md").read_text(encoding="utf-8")
-    emit({"markdown": text}, human=text.rstrip("\n"), output=output,
+    # The one verb whose payload IS a file: `skill > SKILL.md` is the documented
+    # install, so piping must write markdown, not an envelope. Only -o json wraps it.
+    as_json = output is not None and use_json(output)  # use_json still validates the value
+    emit({"markdown": text}, human=text.rstrip("\n"), output="json" if as_json else "table",
          hint="install it: job-hunter skill > ~/.claude/skills/job-hunter-cli/SKILL.md")
 
 

@@ -24,7 +24,8 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
 - `pulse.py` — the delta payload behind `job-hunter pulse`: events since the
   watermark, inline profile summaries, the attention block.
 - `skill_data/SKILL.md` — the agent guide shipped with the package, printed
-  verbatim by `job-hunter skill`.
+  verbatim by `job-hunter skill` (the one verb whose piped stdout is the file
+  itself, not an envelope; `-o json` wraps it as `{"markdown": …}`).
 - `models.py` — frozen dataclasses shared by every module. No I/O.
 - `registry.py` — `companies.toml` → validated `Board` list + revision hash.
 - `fetch.py` — one run: registry → fetch every board (thread pool) → archive

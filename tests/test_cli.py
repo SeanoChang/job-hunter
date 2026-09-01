@@ -715,6 +715,17 @@ def test_skill_prints_the_shipped_guide() -> None:
     assert "--fields" in r.stdout  # the token-economy section survives edits
 
 
+def test_skill_piped_writes_an_installable_file() -> None:
+    """The documented install is `job-hunter skill > .../SKILL.md`, so piped stdout
+    must be the file itself — an envelope there has no frontmatter and never loads."""
+    from importlib import resources
+
+    shipped = resources.files("jobhunter.skill_data").joinpath("SKILL.md").read_text("utf-8")
+    r = runner.invoke(cli.app, ["skill"])  # CliRunner stdout is a pipe, not a TTY
+    assert r.exit_code == 0, r.stderr
+    assert r.stdout == shipped
+
+
 def test_skill_json_wraps_the_markdown() -> None:
-    body = json.loads(runner.invoke(cli.app, ["skill"]).stdout)
+    body = json.loads(runner.invoke(cli.app, ["skill", "-o", "json"]).stdout)
     assert body["ok"] is True and body["data"]["markdown"].startswith("---")

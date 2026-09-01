@@ -77,7 +77,9 @@ a human table on a TTY; `-o json` / `-o table` forces either. Exit codes: `0`
 success, `1` verify findings failed, `2` usage, `3` config, `4` not found or
 ambiguous, `5` backend unavailable, `6` systemic. `job-hunter schema` prints the
 machine catalog of every command, flag and exit code; `job-hunter skill` prints
-the agent guide (`job-hunter skill > ~/.claude/skills/job-hunter-cli/SKILL.md`).
+the agent guide as markdown — the one verb whose payload is a file, so
+`job-hunter skill > ~/.claude/skills/job-hunter-cli/SKILL.md` installs it and
+`-o json` wraps it instead.
 
 `JOB_HUNTER_DROP_RATIO` (default `0.5`) sets the drop guard: a board returning
 less than that share of its previous count is `suspect_drop` and its postings

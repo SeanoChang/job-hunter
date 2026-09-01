@@ -114,14 +114,16 @@ extract_max_docs=1`): the `extract_max_docs` input is passed as
 `sync --extract-max-docs` for that run, and `0` leaves the extraction queue
 untouched.
 
-The step carries no `continue-on-error`, because `sync` itself makes the
-distinction: collection is irreplaceable — history cannot be backfilled — while
-extraction is recomputable from the archive at any time, so a bad engine day is
-recorded as `data.extract.error` and the run still exits 0. It exits 6 only for
-what an operator must act on: ingest gaps, a failed collection, or an extraction
-engine that is stalled (breaker tripped, or every call throttled). Extraction
-problems stay visible in the step log, in the `summary.json` artifact, and in
-the `status` block that follows it.
+The step carries no `continue-on-error`, because that flag cannot tell the two
+failure kinds apart. Collection is irreplaceable — history cannot be backfilled —
+while extraction is recomputable from the archive at any time, so a bad engine
+day is recorded as `data.extract.error` and `sync` still exits 0. `sync` exits 6
+for ingest gaps, for a failed collection, and for an extraction engine that
+stalled (breaker tripped, or every call throttled); the step reads `summary.json`
+and downgrades that last case to a `::warning::`, so a free-tier daily cap cannot
+fail the run that guards collection — nor skip the keepalive, which now runs on
+failed scheduled runs too. Extraction problems stay visible in the step log, in
+the `summary.json` artifact, and in the `status` block that follows it.
 
 ## A read-only role for agents (added 2026-09-01)
 

@@ -11,7 +11,9 @@ from first seen to closed, and a demand profile (what a posting actually asks
 for) extracted per document. You are its primary consumer.
 
 Every verb prints exactly one JSON envelope on stdout when stdout is piped;
-diagnostics go to stderr. `-o json` / `-o table` forces either mode.
+diagnostics go to stderr. `-o json` / `-o table` forces either mode. (`skill` is
+the one exception: this file is its payload, so it prints markdown unless you
+ask for `-o json`.)
 
 ```json
 {"ok": true, "data": …, "meta": {"count": 12, "truncated": false,
