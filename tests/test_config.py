@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -189,6 +191,17 @@ def test_process_env_beats_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     (tmp_path / ".env").write_text("JOB_HUNTER_ARCHIVE_URL=file:///from-dotenv\n")
     merged = load_env_files({"JOB_HUNTER_ARCHIVE_URL": "file:///from-process"})
     assert merged["JOB_HUNTER_ARCHIVE_URL"] == "file:///from-process"
+
+
+def test_dotenv_is_gitignored() -> None:
+    """`./.env` is a config layer holding the R2 secret and the Neon DSN — never commit it."""
+    repo = Path(__file__).resolve().parents[1]
+    if shutil.which("git") is None or not (repo / ".git").exists():
+        pytest.skip("not a git checkout")
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", ".env"], cwd=repo, check=False
+    ).returncode
+    assert ignored == 0, ".env must be listed in .gitignore (git check-ignore says it is not)"
 
 
 def test_state_dir_default_and_override() -> None:
