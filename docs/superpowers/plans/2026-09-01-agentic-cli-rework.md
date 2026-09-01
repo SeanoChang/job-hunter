@@ -784,11 +784,11 @@ SKILL.md content (write it fully in this task — frontmatter `name: job-hunter-
 **Files:**
 - Modify: `src/jobhunter/cli.py` (delete `report`), `tests/test_cli.py` (drop report tests — `q events`/`pulse` tests already cover the behavior), `.github/workflows/fetch.yml`, `README.md`, `CLAUDE.md`, `src/jobhunter/CLAUDE.md`, `docs/runbooks/2026-08-18-deploy-fetcher.md`, `docs/README.md`
 
-- [ ] **Step 1:** Delete the `report` command and its tests. `grep -rn '\breport\b' src tests README.md` — remove/replace every CLI reference.
-- [ ] **Step 2:** `fetch.yml`: replace the three steps `ingest pending` / `fetch` / `extract` (if present on main) with one `sync` step carrying the union of their env (secrets stay step-scoped to this one step; keep `| tee summary.json`, keep `continue-on-error` OFF because sync already downgrades extraction failure internally); keep `status`, artifact upload, keepalive. Update the workflow_dispatch input to pass `--extract-max-docs`.
-- [ ] **Step 3:** Docs: README quickstart becomes `uv tool install` + `doctor` + `pulse`; CLAUDE.md command lists updated (`--json` → `-o json`, new verbs, exit-code table); runbook: add the read-only role SQL (`CREATE ROLE jobhunter_ro ...; GRANT USAGE ON SCHEMA jobhunter TO jobhunter_ro; GRANT SELECT ON ALL TABLES IN SCHEMA jobhunter TO jobhunter_ro; ALTER DEFAULT PRIVILEGES IN SCHEMA jobhunter GRANT SELECT ON TABLES TO jobhunter_ro;`) and the agent-machine env recipe; `docs/README.md` gains one line pointing at the spec as current for the CLI surface.
-- [ ] **Step 4:** `grep -rn '"--json"\|--json' src tests .github README.md | grep -v '\-o json'` returns nothing; full `uv run pytest -q && uv run ruff check . && uv run mypy` — PASS.
-- [ ] **Step 5: Commit** — `git commit -am "feat(cli)!: drop report and --json; CI runs sync; docs on the new contract"`
+- [x] **Step 1:** Delete the `report` command and its tests. `grep -rn '\breport\b' src tests README.md` — remove/replace every CLI reference.
+- [x] **Step 2:** `fetch.yml`: replace the three steps `ingest pending` / `fetch` / `extract` (if present on main) with one `sync` step carrying the union of their env (secrets stay step-scoped to this one step; keep `| tee summary.json`, keep `continue-on-error` OFF because sync already downgrades extraction failure internally); keep `status`, artifact upload, keepalive. Update the workflow_dispatch input to pass `--extract-max-docs`.
+- [x] **Step 3:** Docs: README quickstart becomes `uv tool install` + `doctor` + `pulse`; CLAUDE.md command lists updated (`--json` → `-o json`, new verbs, exit-code table); runbook: add the read-only role SQL (`CREATE ROLE jobhunter_ro ...; GRANT USAGE ON SCHEMA jobhunter TO jobhunter_ro; GRANT SELECT ON ALL TABLES IN SCHEMA jobhunter TO jobhunter_ro; ALTER DEFAULT PRIVILEGES IN SCHEMA jobhunter GRANT SELECT ON TABLES TO jobhunter_ro;`) and the agent-machine env recipe; `docs/README.md` gains one line pointing at the spec as current for the CLI surface.
+- [x] **Step 4:** `grep -rn '"--json"\|--json' src tests .github README.md | grep -v '\-o json'` returns nothing; full `uv run pytest -q && uv run ruff check . && uv run mypy` — PASS.
+- [x] **Step 5: Commit** — `git commit -am "feat(cli)!: drop report and --json; CI runs sync; docs on the new contract"`
 
 ---
 

@@ -461,41 +461,6 @@ def rebuild(
          output=output)
 
 
-@app.command()
-def report(
-    since: str = typer.Option("24h", "--since", help="Window: Nm, Nh or Nd"),
-    output: str | None = output_option(),
-) -> None:
-    """Opened / changed / closed / reopened postings in the window."""
-    from jobhunter.store.queries import events_since
-
-    settings = _settings(output)
-    window = _parse_since(since)
-    conn = _conn(settings, schema=_schema, output=output)
-    try:
-        events = events_since(conn, _now() - window)
-    except Exception as e:
-        fail("backend", f"database error: {e}", code=Exit.BACKEND, output=output)
-    finally:
-        conn.close()
-    rows = [
-        {"kind": e["kind"], "uid": e["uid"], "at": iso(e["at"]), "title": e["title"],
-         "company": e["company"], "url": e["url"],
-         "closed_between": [iso(e["closed_lower_at"]), iso(e["closed_upper_at"])]
-         if e["closed_lower_at"] else None}
-        for e in events
-    ]
-    counts = {k: sum(r["kind"] == k for r in rows) for k in ("opened", "changed", "closed",
-                                                            "reopened")}
-    human = [f"since {since}: " + ", ".join(f"{v} {k}" for k, v in counts.items())]
-    for r in rows:
-        human.append(
-            f"  {r['kind']:8} {r['company'] or '-':18} {r['title'] or '-'}  {r['url'] or ''}"
-        )
-    emit({"since": since, "counts": counts, "events": rows},
-         human="\n".join(human), output=output)
-
-
 def _pulse_since(value: str, output: str | None) -> str:
     """`--since` accepts what the rest of the CLI accepts: a relative window, or
     an absolute timestamp. Returns it as the ISO instant a watermark stores."""

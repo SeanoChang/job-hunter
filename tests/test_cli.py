@@ -173,12 +173,8 @@ def test_fetch_requires_database_url_and_ingest_command(
     assert r.exit_code == 5 and "database error" in json.loads(r.stdout)["error"]["message"]
 
 
-def test_report_and_registry_list_and_rebuild(env: Path) -> None:
+def test_registry_list_and_rebuild(env: Path) -> None:
     assert runner.invoke(cli.app, ["fetch"]).exit_code == 0
-    r = runner.invoke(cli.app, ["report", "--since", "1d", "-o", "json"])
-    assert r.exit_code == 0
-    data = json.loads(r.stdout)["data"]
-    assert data["counts"]["opened"] == 1 and data["events"][0]["kind"] == "opened"
     r = runner.invoke(cli.app, ["registry", "list", "-o", "json"])
     assert r.exit_code == 0
     assert {row["board"] for row in json.loads(r.stdout)["data"]} == {
@@ -200,7 +196,7 @@ def test_rebuild_off_tty_requires_yes(env: Path) -> None:
     assert body["ok"] is False and "--yes" in body["error"]["hint"]
 
 
-def test_report_since_parsing() -> None:
+def test_since_window_parsing() -> None:
     from jobhunter.cli import _parse_since
 
     assert _parse_since("24h").total_seconds() == 86400
@@ -691,6 +687,18 @@ def test_schema_envelope_describes_what_the_verbs_actually_print(env: Path) -> N
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({"ok": True, "data": [], "meta": {"truncated": False},
                              "extra": 1}, envelope)
+
+
+def test_report_is_gone_and_no_verb_still_takes_json() -> None:
+    """The 2026-09-01 break, asserted against the live command tree: `report` is
+    superseded by `pulse`/`q events`, and `-o json` is the only output switch."""
+    data = _schema_data()
+    paths = {c["path"] for c in data["commands"]}
+    assert "report" not in paths
+    assert {"pulse", "q events"} <= paths  # what carries the behaviour now
+    flags = {opt for c in data["commands"] for p in c["params"] for opt in p["opts"]}
+    assert "--json" not in flags
+    assert runner.invoke(cli.app, ["report", "--since", "1d"]).exit_code != 0
 
 
 def test_schema_human_output_lists_the_verbs() -> None:

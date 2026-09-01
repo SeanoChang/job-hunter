@@ -25,6 +25,11 @@ dispositions of the 2026-08-17 external review:
 
 ## Design documents
 
+- `superpowers/specs/2026-09-01-agentic-cli-rework-design.md` — **current,
+  normative for the CLI surface**: the JSON envelope, typed exit codes, teaching
+  errors, `pulse` cursors, the `q` namespace, `sync`/`doctor`/`schema`/`skill`,
+  and `profile_mentions`. Supersedes the CLI sections of the ingestion spec and
+  the `q` verb table in the L2 harness doc (whose rulings it keeps).
 - `2026-08-26-l2-extraction-harness.md` — **current, normative** for the L2
   layer: machine-verifiable evidence format + standalone verifier, extraction
   lifecycle state machine and runner, drift control + weekly consolidation
@@ -103,6 +108,11 @@ All still current as research; none define the design.
   extractions + queue), ladder escalation with breaker and caps, catch-up
   scan, `extract run|review|rebuild`, store-addressed `verify`, `status`
   extraction block. Serial in M2; k-sampling and the quality loop are M3.
+- `superpowers/plans/2026-09-01-agentic-cli-rework.md` — the agent-first CLI:
+  the output contract (`cli_output.py`), config file layering, the `q`
+  namespace, `pulse` with client-side cursors, schema v3 `profile_mentions`,
+  `sync`, `doctor`, `schema`, `skill`. Deletes `report` and the `--json` flag
+  (both listed above as shipped by earlier increments).
 
 Not built yet: the M3 quality loop (k-sampling, refuter, consolidate,
 alerts), M4 access verbs, and the concept linker (L3).

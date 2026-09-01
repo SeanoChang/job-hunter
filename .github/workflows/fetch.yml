@@ -32,35 +32,18 @@ jobs:
       - run: uv python install 3.12
       - run: uv sync --frozen --no-dev
       # Secrets are scoped to the steps that need them, never job-wide.
-      # Drain manifests a previous run archived but could not ingest BEFORE fetching, so
-      # the watermark never advances past them. Exits 2 on gap manifests (rebuild needed).
-      - name: ingest pending
-        env:
-          JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
-          AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
-        run: uv run job-hunter ingest
-      - name: fetch
-        env:
-          JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
-          AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
-        run: uv run job-hunter fetch --json | tee summary.json
-      # L2 extraction: a STEP here, not a second cron — a separate schedule is a
-      # second thing that can die silently (durability doc §1). It takes its own
-      # advisory lock (job2), so it can never collide with ingestion's.
-      # continue-on-error: collection is irreplaceable and extraction is
-      # recomputable, so a bad engine day must never fail the run that guards
-      # history. Failures stay visible in this step and in `status` below.
-      - name: extract
-        continue-on-error: true
-        timeout-minutes: 30
+      # One `sync` runs the whole choreography in the CI-critical order: drain the
+      # manifests a previous run archived but could not ingest (so the watermark
+      # never advances past them), fetch every board, then extract within budget.
+      # No continue-on-error: sync already downgrades an extraction failure to
+      # data["extract"]["error"] and exits 0 — collection is irreplaceable, while
+      # extraction is recomputable from the archive at any time. It exits 6 only
+      # when collection itself failed or the extraction engine is stalled.
+      # L2 extraction lives here rather than in a second cron: a separate schedule
+      # is a second thing that can die silently (durability doc §1). It takes its
+      # own advisory lock (job2), so it can never collide with ingestion's.
+      - name: sync
+        timeout-minutes: 45
         env:
           JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
           AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
@@ -75,19 +58,21 @@ jobs:
           JOB_HUNTER_L2_MODELS: ${{ vars.JOB_HUNTER_L2_MODELS || 'z-ai/*' }}
           # free tiers cap daily requests and the ladder can spend 3 calls per
           # document, so the default stays well under 1,000 req/day
-          JOB_HUNTER_L2_MAX_DOCS: ${{ github.event.inputs.extract_max_docs || vars.JOB_HUNTER_L2_MAX_DOCS || '50' }}
+          JOB_HUNTER_L2_MAX_DOCS: ${{ vars.JOB_HUNTER_L2_MAX_DOCS || '50' }}
           JOB_HUNTER_L2_MAX_USD: ${{ vars.JOB_HUNTER_L2_MAX_USD || '0' }}
+          EXTRACT_MAX_DOCS: ${{ github.event.inputs.extract_max_docs }}
         run: |
           # guards are runtime, not `if:` — the secrets context is not reliably
-          # available in a step-level condition, and an unset key must no-op
-          # rather than fail the run that guards collection
+          # available in a step-level condition. Collection runs either way; an
+          # unset key only turns extraction off for this run.
+          args=()
           if [ -z "${JOB_HUNTER_L2_API_KEY}" ]; then
-            echo "extraction skipped: no JOB_HUNTER_L2_API_KEY secret set"; exit 0
+            echo "extraction skipped: no JOB_HUNTER_L2_API_KEY secret set"
+            args=(--no-extract)
+          elif [ -n "${EXTRACT_MAX_DOCS}" ]; then
+            args=(--extract-max-docs "${EXTRACT_MAX_DOCS}")
           fi
-          if [ "${JOB_HUNTER_L2_MAX_DOCS}" = "0" ]; then
-            echo "extraction skipped: max_docs=0"; exit 0
-          fi
-          uv run job-hunter extract run --json | tee extract-summary.json
+          uv run job-hunter sync "${args[@]}" | tee summary.json
       - name: status
         if: always()
         env:
@@ -102,9 +87,7 @@ jobs:
         if: always()
         with:
           name: fetch-summary-${{ github.run_id }}
-          path: |
-            summary.json
-            extract-summary.json
+          path: summary.json
           retention-days: 30
           if-no-files-found: warn
       # GitHub disables scheduled workflows after 60 days without repository activity.
