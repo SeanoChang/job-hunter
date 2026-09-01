@@ -1,4 +1,6 @@
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -7,6 +9,7 @@ from jobhunter.l2.prompt import PROMPT_VERSION
 from jobhunter.l2.state import DerivedState
 from jobhunter.l2.transforms import VALIDATOR_VERSION
 from jobhunter.store import extraction
+from jobhunter.store.queries import claims_by_mention
 from tests.l2.test_attempts import _attempt
 
 Conn = psycopg.Connection[dict[str, Any]]
@@ -140,3 +143,99 @@ def test_attempts_and_reviews_for(pg: Conn) -> None:
     assert attempts[0].attempt_key == a.attempt_key
     reviews = extraction.reviews_for(pg, a.document_hash, **CONFIG)
     assert len(reviews) == 1 and reviews[0].verb == "flag"
+
+
+def _fixture_profile() -> dict[str, Any]:
+    """The anthropic record: one technical, required area mentioning
+    Python/React/TypeScript."""
+    record = json.loads(
+        (Path(__file__).parents[1] / "l2" / "fixtures" / "anthropic.extraction.json").read_text()
+    )
+    return {"facts": record["facts"], "demand_profile": record["demand_profile"]}
+
+
+def _mentions(pg: Conn) -> list[tuple[str, str, str]]:
+    rows = pg.execute(
+        "SELECT mention, area_kind, importance FROM profile_mentions ORDER BY mention"
+    ).fetchall()
+    return [(r["mention"], r["area_kind"], r["importance"]) for r in rows]
+
+
+def test_profile_mentions_are_a_validated_only_aggregate(pg: Conn) -> None:
+    dh = "d" * 63 + "1"
+    key: dict[str, Any] = {"document_hash": dh, "model": "z-ai/glm-5.2:free", **CONFIG}
+    extraction.upsert_state(
+        pg, **key, state=DerivedState("validated", None), profile=_fixture_profile(),
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    assert _mentions(pg) == [
+        ("Python", "technical", "required"),
+        ("React", "technical", "required"),
+        ("TypeScript", "technical", "required"),
+    ]
+    row = pg.execute("SELECT * FROM profile_mentions WHERE mention = 'Python'").fetchone()
+    assert row is not None and row["document_hash"] == dh
+    assert row["model"] == "z-ai/glm-5.2:free" and row["prompt_version"] == PROMPT_VERSION
+    assert row["schema_version"] == "1" and row["validator_version"] == VALIDATOR_VERSION
+
+    # a rejection retracts what the corpus asserts, profile column or not
+    extraction.upsert_state(
+        pg, **key, state=DerivedState("rejected", None), profile=_fixture_profile(),
+        updated_at="2026-08-28T00:00:00Z",
+    )
+    assert _mentions(pg) == []
+
+
+def test_profile_mentions_follow_the_extraction_row(pg: Conn) -> None:
+    dh = "d" * 63 + "1"
+    for model in ("z-ai/glm-5.2:free", "z-ai/glm-5.2"):
+        extraction.upsert_state(
+            pg, document_hash=dh, model=model, **CONFIG,
+            state=DerivedState("validated", None), profile=_fixture_profile(),
+            updated_at="2026-08-27T00:00:00Z",
+        )
+    models = pg.execute("SELECT DISTINCT model FROM profile_mentions").fetchall()
+    assert [m["model"] for m in models] == ["z-ai/glm-5.2"]  # the stale spelling went too
+
+    other = dict(CONFIG, prompt_version="demand-profile/vOTHER")
+    extraction.upsert_state(
+        pg, document_hash=dh, model="z-ai/glm-5.2", **other,
+        state=DerivedState("validated", None), profile=_fixture_profile(),
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    assert len(_mentions(pg)) == 6  # a second config is a second set of claims
+
+    extraction.upsert_state(  # back to pending: the config's rows go entirely
+        pg, document_hash=dh, model="z-ai/glm-5.2", **CONFIG,
+        state=DerivedState(None, None), profile=None, updated_at="2026-08-29T00:00:00Z",
+    )
+    assert len(_mentions(pg)) == 3
+
+
+def _validate(pg: Conn, dh: str) -> None:
+    extraction.upsert_state(
+        pg, document_hash=dh, model="z-ai/glm-5.2:free", **CONFIG,
+        state=DerivedState("validated", None), profile=_fixture_profile(),
+        updated_at="2026-08-27T00:00:00Z",
+    )
+
+
+def test_claims_by_mention(pg: Conn) -> None:
+    _seed(pg)
+    for n in "123":
+        _validate(pg, "d" * 63 + n)
+    rows = claims_by_mention(pg, mention="python")  # matching is case-insensitive
+    # gh:x:2's document belongs to an older version, so no posting is on it now
+    assert [r["uid"] for r in rows] == ["gh:x:1", "gh:x:3"]
+    r = rows[0]
+    assert r["document_hash"] == "d" * 63 + "1" and r["mention"] == "Python"
+    assert r["area_kind"] == "technical" and r["importance"] == "required"
+    assert r["source"] == "greenhouse" and r["board"] == "x"
+    assert r["title"] == "t" and r["company"] == "c"
+    assert claims_by_mention(pg, mention="Python", importance="preferred") == []
+    assert len(claims_by_mention(pg, mention="Python", importance="required")) == 2
+    assert len(claims_by_mention(pg, mention="Python", source="greenhouse", board="x")) == 2
+    assert claims_by_mention(pg, mention="Python", board="other") == []
+    assert claims_by_mention(pg, mention="Rust") == []
+    # limit + 1 rows, like every other page: the caller marks truncation honestly
+    assert len(claims_by_mention(pg, mention="Python", limit=1)) == 2

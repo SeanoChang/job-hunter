@@ -29,6 +29,7 @@ q_app = typer.Typer(help="Read the corpus: postings, events, boards, documents, 
 
 MAX_LIMIT = 500
 EVENT_KINDS = ("opened", "changed", "closed", "reopened")
+IMPORTANCES = ("required", "preferred", "contextual")  # record.schema.json v1
 
 
 def _clamp(limit: int) -> int:
@@ -378,3 +379,45 @@ def q_profile(
     emit(data, human="\n".join(lines), output=output,
          hint=f"q document {resolved[:12]} for the text" if full
          else f"q profile --doc {resolved[:12]} --full for claims, quotes and spans")
+
+
+@q_app.command("claims")
+def q_claims(
+    mention: str = typer.Option(..., "--mention", help="One mention, matched case-insensitively"),
+    importance: str | None = typer.Option(
+        None, "--importance", help="|".join(IMPORTANCES)),
+    board: str | None = typer.Option(None, "--board", help="source:board"),
+    fields: str | None = typer.Option(None, "--fields", help="Comma list of keys to keep"),
+    limit: int = typer.Option(50, "--limit", help=f"1-{MAX_LIMIT}"),
+    output: str | None = output_option(),
+) -> None:
+    """Who demands one mention, across the corpus — the postings live on it today."""
+    from jobhunter.cli import _split_board
+    from jobhunter.store import queries
+
+    if importance is not None and importance not in IMPORTANCES:
+        fail("usage", f"--importance must be one of: {', '.join(IMPORTANCES)}",
+             valid=list(IMPORTANCES), code=Exit.USAGE, output=output)
+    src, brd = _split_board(board, output)
+    limit = _clamp(limit)
+    _, conn = _open(output)
+    rows = _query(conn, output, lambda: queries.claims_by_mention(
+        conn, mention=mention, importance=importance, source=src, board=brd, limit=limit))
+    truncated = len(rows) > limit
+    rows = rows[:limit]
+    data = [
+        {"document_hash": r["document_hash"], "mention": r["mention"],
+         "area_kind": r["area_kind"], "importance": r["importance"], "uid": r["uid"],
+         "board": f"{r['source']}:{r['board']}", "title": r["title"], "company": r["company"],
+         "url": r["url"]}
+        for r in rows
+    ]
+    human = "\n".join(
+        f"{r['importance']:10} {r['area_kind']:10} {(r['company'] or '-'):18} "
+        f"{r['title'] or '-'}  {r['uid']}"
+        for r in data
+    ) or f"(nothing demands {mention!r})"
+    emit(_select_fields(data, fields, output), human=human, output=output, count=len(data),
+         truncated=truncated,
+         hint=f"q profile --doc {data[0]['document_hash'][:12]} for the whole demand"
+         if data else None)

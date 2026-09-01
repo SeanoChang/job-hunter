@@ -322,6 +322,33 @@ def test_q_profile_unvalidated_row_says_so(
     assert "review show" in body["error"]["hint"]
 
 
+def test_q_claims_across_the_corpus(qenv: Path, pg: psycopg.Connection[dict[str, Any]]) -> None:
+    dh = _doc_hash()
+    _seed_profile(pg, dh)
+    body = _data(["q", "claims", "--mention", "python"])
+    assert body["meta"]["count"] == 1 and body["meta"]["truncated"] is False
+    assert body["data"] == [{
+        "document_hash": dh, "mention": "Python", "area_kind": "technical",
+        "importance": "required", "uid": "ab:ramp:x", "board": "ashby:ramp",
+        "title": "Rust Engineer II", "company": "Ramp",
+        "url": "https://jobs.ashbyhq.com/ramp/x",
+    }]
+    assert dh[:12] in body["meta"]["hint"]
+    bad = _data(["q", "claims", "--mention", "Python", "--importance", "bogus"], code=2)
+    assert bad["error"]["kind"] == "usage"
+    assert bad["error"]["valid"] == ["required", "preferred", "contextual"]
+    assert _data(["q", "claims", "--mention", "Python", "--importance", "required"])[
+        "meta"]["count"] == 1
+    assert _data(["q", "claims", "--mention", "Python", "--board", "lever:palantir"])[
+        "meta"]["count"] == 0
+    assert _data(["q", "claims", "--mention", "Rust"])["data"] == []
+    assert _data(["q", "claims", "--mention", "Python", "--fields", "uid"])["data"] == [
+        {"uid": "ab:ramp:x"}
+    ]
+    r = runner.invoke(cli.app, ["q", "claims", "--mention", "Python", "-o", "table"])
+    assert r.exit_code == 0 and "ab:ramp:x" in r.stdout
+
+
 def test_q_stdout_stays_one_json_object_on_every_error_path(qenv: Path) -> None:
     for args in (["q", "postings", "--status", "bogus"], ["q", "posting", "nope"],
                  ["q", "document", "zz"], ["q", "profile", "--doc", "deadbeef"]):

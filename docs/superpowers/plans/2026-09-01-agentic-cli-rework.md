@@ -706,11 +706,11 @@ CREATE INDEX IF NOT EXISTS ix_mentions_mention ON profile_mentions (mention, imp
 
 (Non-validated statuses keep the config's mentions deleted — validated-only aggregates, per the 2026-08-26 ruling.) `extract rebuild` and store `rebuild` already flow through `upsert_state`, so replay repopulates the table for free — the test proves it.
 
-- [ ] **Step 1:** Failing tests: `upsert_state` with a validated state + the anthropic fixture profile inserts mention rows keyed by the engine tuple; re-upserting as `rejected` clears them; `rebuild_extractions` (existing test setup in `tests/l2/test_rebuild.py` — extend there if more natural) leaves the table populated; `claims_by_mention(mention="Python")` finds the doc; `q claims --mention Python` emits envelope rows and `--importance bogus` exits 2 with `valid`.
-- [ ] **Step 2:** Run — FAIL (missing table/function).
-- [ ] **Step 3:** Implement DDL, version bump, writer, query, verb.
-- [ ] **Step 4:** `uv run pytest tests/store tests/l2/test_rebuild.py tests/test_cli_q.py -q && uv run mypy` — PASS. Also run `uv run pytest tests/store/test_db.py -q` to prove the ("2","3") additive upgrade path.
-- [ ] **Step 5: Commit** — `git commit -am "feat(store): schema v3 profile_mentions + q claims --mention"`
+- [x] **Step 1:** Failing tests: `upsert_state` with a validated state + the anthropic fixture profile inserts mention rows keyed by the engine tuple; re-upserting as `rejected` clears them; `rebuild_extractions` (existing test setup in `tests/l2/test_rebuild.py` — extend there if more natural) leaves the table populated; `claims_by_mention(mention="Python")` finds the doc; `q claims --mention Python` emits envelope rows and `--importance bogus` exits 2 with `valid`.
+- [x] **Step 2:** Run — FAIL (missing table/function).
+- [x] **Step 3:** Implement DDL, version bump, writer, query, verb.
+- [x] **Step 4:** `uv run pytest tests/store tests/l2/test_rebuild.py tests/test_cli_q.py -q && uv run mypy` — PASS. Also run `uv run pytest tests/store/test_db.py -q` to prove the ("2","3") additive upgrade path.
+- [x] **Step 5: Commit** — `git commit -am "feat(store): schema v3 profile_mentions + q claims --mention"`
 
 ---
 

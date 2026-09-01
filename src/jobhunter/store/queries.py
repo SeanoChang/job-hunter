@@ -324,6 +324,51 @@ def docs_for_events(conn: Conn, uids: list[str], normalizer_version: str) -> dic
     return {r["uid"]: r["document_hash"] for r in rows}
 
 
+def claims_by_mention(
+    conn: Conn,
+    *,
+    mention: str,
+    importance: str | None = None,
+    source: str | None = None,
+    board: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Who demands X, across the corpus, from the derived `profile_mentions`.
+
+    Matching is case-insensitive on the whole mention — models spell "python"
+    and "Python" both, and an agent that has to guess the casing would read the
+    corpus as empty. That costs the (mention, importance) index a scan the size
+    of the mention table, which is the cheaper of the two mistakes.
+
+    A row is reported only while some posting's CURRENT version is the document
+    the claim was extracted from: a claim attached to superseded text is history,
+    not demand. DISTINCT because a document extracted under two engine tuples
+    asserts the mention once, not twice. Returns limit+1 rows so the caller can
+    mark truncation."""
+    params: dict[str, Any] = {"mention": mention, "limit": limit + 1}
+    where = ["lower(m.mention) = lower(%(mention)s)"]
+    if importance is not None:
+        where.append("m.importance = %(importance)s")
+        params["importance"] = importance
+    if source is not None:
+        where.append("p.source = %(source)s")
+        params["source"] = source
+    if board is not None:
+        where.append("p.board = %(board)s")
+        params["board"] = board
+    return conn.execute(
+        "SELECT DISTINCT m.document_hash, m.mention, m.area_kind, m.importance, "
+        "p.uid, p.source, p.board, p.last_seen_at, v.title, v.company, v.url "
+        "FROM profile_mentions m "
+        "JOIN documents d ON d.document_hash = m.document_hash "
+        "JOIN posting_versions v ON v.version_hash = d.version_hash "
+        "JOIN postings p ON p.uid = v.uid AND p.current_version_hash = v.version_hash "
+        f"WHERE {' AND '.join(where)} "
+        "ORDER BY p.last_seen_at DESC, p.uid, m.mention LIMIT %(limit)s",
+        params,
+    ).fetchall()
+
+
 def validated_profiles(
     conn: Conn,
     doc_hashes: list[str],
