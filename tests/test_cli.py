@@ -202,8 +202,9 @@ def test_since_window_parsing() -> None:
     assert _parse_since("24h").total_seconds() == 86400
     assert _parse_since("2d").total_seconds() == 172800
     assert _parse_since("30m").total_seconds() == 1800
-    with pytest.raises(typer.BadParameter):
-        _parse_since("soon")
+    with pytest.raises(typer.Exit) as e:
+        _parse_since("soon", "table")
+    assert e.value.exit_code == 2
 
 
 def test_lock_held_branches_honour_json(env: Path, pg: psycopg.Connection[dict[str, Any]]) -> None:

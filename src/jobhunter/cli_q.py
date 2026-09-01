@@ -87,11 +87,11 @@ def _check_after(after: str | None, output: str | None) -> None:
              hint="pass meta.next_cursor from the previous page verbatim")
 
 
-def _since(value: str | None) -> Any:
+def _since(value: str | None, output: str | None) -> Any:
     """Relative window (`Nm`/`Nh`/`Nd`) resolved against the CLI's clock."""
     from jobhunter.cli import _now, _parse_since
 
-    return _now() - _parse_since(value) if value else None
+    return _now() - _parse_since(value, output) if value else None
 
 
 @q_app.command("postings")
@@ -115,7 +115,7 @@ def q_postings(
     src, brd = _split_board(board, output)
     _check_after(after, output)
     limit = _clamp(limit)
-    window = _since(since)
+    window = _since(since, output)
     _, conn = _open(output)
     rows = _query(conn, output, lambda: queries.postings_page(
         conn, source=src, board=brd, status=status, since=window, search=search,
@@ -218,7 +218,7 @@ def q_events(
             fail("usage", f"--after is not a cursor: {after!r}", code=Exit.USAGE, output=output,
                  hint="pass meta.next_cursor from the previous page verbatim")
     limit = _clamp(limit)
-    window = _since(since)
+    window = _since(since, output)
     _, conn = _open(output)
     rows = _query(conn, output, lambda: queries.events_page(
         conn, since=window, kinds=kinds, source=src, board=brd, uid=uid, limit=limit,

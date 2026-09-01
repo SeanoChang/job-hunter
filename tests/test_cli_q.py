@@ -389,3 +389,14 @@ def test_q_stdout_stays_one_json_object_on_every_error_path(qenv: Path) -> None:
         r = runner.invoke(cli.app, [*args, "-o", "json"])
         assert r.exit_code in (2, 4), (args, r.exit_code)
         assert json.loads(r.stdout)["ok"] is False
+
+
+def test_q_postings_bad_since_is_an_envelope_error(qenv: Path) -> None:
+    """A malformed --since must speak the contract: error envelope on stdout,
+    exit 2 — never typer's usage box with an empty data stream."""
+    r = runner.invoke(cli.app, ["q", "postings", "--since", "soon", "-o", "json"])
+    assert r.exit_code == 2
+    body = json.loads(r.stdout)
+    assert body["ok"] is False
+    assert body["error"]["kind"] == "usage"
+    assert "soon" in body["error"]["message"]

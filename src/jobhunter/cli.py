@@ -88,10 +88,13 @@ def _store(settings: Settings, output: str | None = None) -> ArchiveStore:
         fail("backend", f"archive error: {e}", code=Exit.BACKEND, output=output)
 
 
-def _parse_since(value: str) -> timedelta:
+def _parse_since(value: str, output: str | None = None) -> timedelta:
     m = _SINCE.match(value.strip())
     if not m:
-        raise typer.BadParameter("use Nm, Nh or Nd, e.g. 24h")
+        # fail, not typer.BadParameter: click renders BadParameter as a usage
+        # box on stderr with an empty stdout, breaking the envelope contract
+        fail("usage", f"--since must be a window like Nm, Nh or Nd: {value!r}",
+             code=Exit.USAGE, output=output, hint="e.g. 30m, 24h or 7d")
     n, unit = int(m.group(1)), m.group(2)
     if unit == "m":
         return timedelta(minutes=n)
