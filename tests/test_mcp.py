@@ -1,4 +1,4 @@
-"""The hosted MCP server: the bearer gate, the seven read tools, and parity.
+"""The hosted MCP server: the bearer gate, the eight tools, and parity.
 
 The server is the CLI's read surface with a different face, so the tests are
 the same two claims made twice: nothing but `/healthz` answers without the
@@ -7,10 +7,15 @@ transport is real — a Starlette `TestClient` speaks streamable HTTP JSON-RPC
 into the app in-process (it is httpx over ASGI, plus the lifespan the session
 manager needs) — against the same three-day Postgres corpus `tests/test_cli_q`
 ingests.
+
+`pulse` is the one tool with state, so it is tested through its effect on
+`mcp_cursors`: what a second call no longer reports, and what `peek` and
+`since` leave untouched.
 """
 
 import json
 from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,9 +27,10 @@ from starlette.testclient import TestClient
 from jobhunter import mcp, views
 from jobhunter.config import Settings
 from jobhunter.markdown import NORMALIZER_VERSION
-from jobhunter.store import queries
+from jobhunter.store import mcp_state, queries
 from jobhunter.timeutil import parse_iso
 from tests.test_cli_q import (  # noqa: F401  -- qenv is a fixture, used by name
+    DAY2,
     ISO1,
     _doc_hash,
     _seed_profile,
@@ -33,6 +39,9 @@ from tests.test_cli_q import (  # noqa: F401  -- qenv is a fixture, used by name
 
 TOKEN = "s3cr3t-bearer"
 READ_TOOLS = {"postings", "posting", "events", "document", "profile", "claims", "boards"}
+# The hour `qenv`'s CLI clock stands at: one past the last ingest, so `pulse`'s
+# 24-hour first-run window covers the corpus's last day and nothing later.
+PULSE_NOW = DAY2 + timedelta(hours=1)
 
 
 @pytest.fixture
@@ -106,8 +115,7 @@ def test_healthz_is_the_only_open_route(client: TestClient) -> None:
 
 def test_tools_list_names_the_whole_read_surface(client: TestClient) -> None:
     names = {t["name"] for t in _result(client, "tools/list")["tools"]}
-    assert names >= READ_TOOLS
-    assert len(names) >= 7
+    assert names == READ_TOOLS | {"pulse"}
 
 
 def test_postings_tool_is_the_postings_view(
@@ -203,3 +211,69 @@ def test_absent_identifiers_and_bad_flags_are_tool_errors(
     assert "importance" in _tool_error(client, "claims", mention="python", importance="vital")
     assert "S:E" in _tool_error(client, "document", document_hash=dh, slice="nope")
     assert "since" in _tool_error(client, "events", since="last tuesday")
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`pulse`'s first run reads the last 24 hours, so it needs the corpus's own
+    hour rather than today's — the same fixed clock `qenv` gives the CLI."""
+    monkeypatch.setattr(mcp, "_now", lambda: PULSE_NOW)
+
+
+def test_pulse_first_run_reports_the_delta_and_advances_the_stored_cursor(
+    client: TestClient, pg: psycopg.Connection[dict[str, Any]], clock: None
+) -> None:
+    view, _ = views.pulse_view(pg, Settings.load(), wm=None, since_iso=None, limit=200,
+                               boards=None, now=PULSE_NOW)
+    first = _call(client, "pulse")
+    assert first["data"] == _as_json(view.record())
+    assert first["first_run"] is True and first["cursor"] == "default"
+    assert first["truncated"] is False
+    assert [e["kind"] for e in first["data"]["events"]] == ["closed"]
+
+    last = first["data"]["events"][-1]
+    row = pg.execute("SELECT name, at, event_ids_at FROM mcp_cursors").fetchone()
+    assert row is not None and row["name"] == "default"
+    assert parse_iso(str(row["at"])) == parse_iso(last["at"])
+    assert row["event_ids_at"] == [last["event_id"]]  # the tie-break, from the reported page
+
+    second = _call(client, "pulse")
+    assert second["data"]["events"] == []  # the watermark is past everything now
+    assert second["first_run"] is False and second["data"]["first_run"] is False
+
+
+def test_pulse_peek_reports_the_same_delta_twice(
+    client: TestClient, pg: psycopg.Connection[dict[str, Any]], clock: None
+) -> None:
+    first = _call(client, "pulse", cursor="peeky", peek=True)
+    second = _call(client, "pulse", cursor="peeky", peek=True)
+    assert first["data"]["events"] == second["data"]["events"] != []
+    assert first["cursor"] == "peeky"
+    # boards filters the delta the way `--boards` does, and a typo is a usage error
+    assert _call(client, "pulse", cursor="peeky", peek=True,
+                 boards="ashby:ramp")["data"]["events"] == first["data"]["events"]
+    assert _call(client, "pulse", cursor="peeky", peek=True,
+                 boards="lever:nope")["data"]["events"] == []
+    assert "source:board" in _tool_error(client, "pulse", boards="ramp")
+    assert pg.execute("SELECT 1 FROM mcp_cursors").fetchone() is None
+
+
+def test_pulse_since_neither_reads_nor_writes_the_cursor_table(
+    client: TestClient,
+    pg: psycopg.Connection[dict[str, Any]],
+    clock: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("a `since` pulse must not touch mcp_cursors")
+
+    monkeypatch.setattr(mcp_state, "read_cursor", refuse)
+    monkeypatch.setattr(mcp_state, "write_cursor", refuse)
+    view, _ = views.pulse_view(pg, Settings.load(), wm=None, since_iso=ISO1, limit=200,
+                               boards=None, now=PULSE_NOW)
+    page = _call(client, "pulse", since=ISO1)
+    assert page["data"] == _as_json(view.record())
+    assert page["cursor"] is None and page["data"]["first_run"] is False
+    assert page["data"]["window"]["from"] == ISO1
+    assert len(page["data"]["events"]) == 4  # the second and third ingest days
+    assert pg.execute("SELECT 1 FROM mcp_cursors").fetchone() is None

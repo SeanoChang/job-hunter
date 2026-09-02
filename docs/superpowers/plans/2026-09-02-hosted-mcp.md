@@ -127,8 +127,8 @@ class BearerAuth:
 
 Tool `pulse(cursor: str = "default", peek: bool = False, since: str | None = None, limit: int = 200, boards: str | None = None)`: read watermark via `mcp_state.read_cursor` (ignored when `since` given) → `views.pulse_view` → if not peek and no `since` and a new watermark returned: `mcp_state.write_cursor` + commit AFTER the payload dict is fully built. Returns the pulse payload plus `{"cursor": name, "first_run": ...}`.
 
-- [ ] **Step 1:** Failing tests: first call reports the fixture corpus's events with `first_run`; second call returns empty events; `peek=True` twice returns identical events; watermark row visible in `mcp_cursors`; a `since` call neither reads nor writes the table.
-- [ ] **Step 2:** Implement. **Step 3:** Gates. **Step 4:** Commit: `feat(mcp): pulse tool — server-side watermarks`
+- [x] **Step 1:** Failing tests: first call reports the fixture corpus's events with `first_run`; second call returns empty events; `peek=True` twice returns identical events; watermark row visible in `mcp_cursors`; a `since` call neither reads nor writes the table.
+- [x] **Step 2:** Implement. **Step 3:** Gates. **Step 4:** Commit: `feat(mcp): pulse tool — server-side watermarks`
 
 ---
 

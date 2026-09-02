@@ -37,16 +37,20 @@ from jobhunter import __version__, views
 from jobhunter.cli_output import Exit
 from jobhunter.cli_q import EVENT_KINDS, IMPORTANCES, _clamp
 from jobhunter.config import ConfigError, Settings, env_snapshot
-from jobhunter.store import db
+from jobhunter.store import db, mcp_state
 from jobhunter.timeutil import parse_iso, utcnow
 
 MCP_PATH = "/mcp"
 HEALTH_PATH = "/healthz"
 _HEALTH_BODY = json.dumps({"ok": True, "version": __version__}).encode("utf-8")
 
-# Indirection so tests can point the serving path at a throwaway schema, the
-# way `cli._schema` does for the command line.
+# Indirections so tests can point the serving path at a throwaway schema and a
+# fixed clock, the way `cli._schema` and `cli._now` do for the command line.
 _schema: str = db.SCHEMA
+
+
+def _now() -> datetime:
+    return utcnow()
 
 _WINDOW = re.compile(r"^(\d+)([mhd])$")
 
@@ -109,8 +113,8 @@ def _since(value: str | None) -> datetime | None:
     m = _WINDOW.match(value.strip())
     if m:
         n, unit = int(m.group(1)), m.group(2)
-        return utcnow() - {"m": timedelta(minutes=n), "h": timedelta(hours=n),
-                           "d": timedelta(days=n)}[unit]
+        return _now() - {"m": timedelta(minutes=n), "h": timedelta(hours=n),
+                         "d": timedelta(days=n)}[unit]
     try:
         return parse_iso(value)
     except ValueError:
@@ -285,6 +289,48 @@ def claims(
         return _page(views.claims_view(
             conn, settings, mention=mention, importance=importance, source=src, board=brd,
             limit=_clamp(limit)))
+
+
+# -- pulse: the delta, and the only row this server writes -----------------
+
+
+@server.tool()
+def pulse(
+    cursor: str = "default",
+    peek: bool = False,
+    since: str | None = None,
+    limit: int = 200,
+    boards: str | None = None,
+) -> dict[str, Any]:
+    """Everything new since this cursor's last pulse: events, demand, attention.
+
+    The watermark is named and kept server-side, so a routine that persists no
+    files still resumes where it stopped: call pulse(cursor="hourly") each hour
+    and every call reports only what the one before it did not. peek reports
+    without advancing. since — a window (24h) or an ISO instant — reports a
+    fixed span and leaves the cursor untouched. boards is a comma list of
+    source:board. When truncated is true the cursor stands at the end of this
+    page, so calling again continues rather than repeats.
+    """
+    only = tuple(b.strip() for b in boards.split(",") if b.strip()) if boards else None
+    for b in only or ():
+        _split_board(b)  # a typo in one entry must not silently match nothing
+    start = _since(since)
+    with _read() as (settings, conn):
+        wm = None if since is not None else mcp_state.read_cursor(conn, cursor)
+        page, new_wm = views.pulse_view(
+            conn, settings, wm=wm, since_iso=start.isoformat() if start is not None else None,
+            limit=_clamp(limit), boards=only, now=_now())
+        body = page.record()
+        payload = {"data": body, "truncated": page.truncated,
+                   "cursor": None if since is not None else cursor,
+                   "first_run": body["first_run"]}
+        if not peek and since is None and new_wm is not None:
+            # After the payload is assembled, never before: a failure between
+            # the two re-reports one window, which is the harmless direction.
+            mcp_state.write_cursor(conn, cursor, new_wm)
+            conn.commit()
+        return payload
 
 
 # -- serving ---------------------------------------------------------------
