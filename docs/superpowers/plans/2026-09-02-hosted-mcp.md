@@ -114,8 +114,8 @@ class BearerAuth:
 
 `main()` reads settings, refuses to start without `mcp_token` (exit 3, message names the env var), serves on `0.0.0.0:$PORT` (default 8080) via uvicorn (comes with the `mcp` SDK's dependencies; if not, add it).
 
-- [ ] **Step 1:** Failing tests: in-process ASGI client (httpx ASGITransport): `/healthz` open; any tool route without/with-wrong bearer → 401; with the right bearer, MCP `tools/list` names all seven (+pulse in Task 4 — assert ≥7 here); `postings` tool against the fixture corpus returns the same `data` as `views.postings_view` (parity); `limit=9999` clamps to 500.
-- [ ] **Step 2:** Implement. **Step 3:** Gates green. **Step 4:** Commit: `feat(mcp): streamable-HTTP server — bearer auth, seven read tools`
+- [x] **Step 1:** Failing tests: in-process ASGI client (httpx ASGITransport): `/healthz` open; any tool route without/with-wrong bearer → 401; with the right bearer, MCP `tools/list` names all seven (+pulse in Task 4 — assert ≥7 here); `postings` tool against the fixture corpus returns the same `data` as `views.postings_view` (parity); `limit=9999` clamps to 500.
+- [x] **Step 2:** Implement. **Step 3:** Gates green. **Step 4:** Commit: `feat(mcp): streamable-HTTP server — bearer auth, seven read tools`
 
 ---
 
