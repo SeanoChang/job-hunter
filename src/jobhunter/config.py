@@ -73,6 +73,7 @@ class Settings:
     state_dir: Path = Path("~/.local/state/job-hunter")
     drop_ratio: float = 0.5
     ping_url: str | None = None
+    mcp_token: str | None = None  # the bearer the hosted MCP server demands
     l2_engine: str = "openai-compat"
     l2_base_url: str | None = None
     l2_api_key: str | None = None
@@ -98,6 +99,13 @@ class Settings:
                 "JOB_HUNTER_DATABASE_URL is required for this command (Postgres DSN)"
             )
         return self.database_url
+
+    def require_mcp_token(self) -> str:
+        if not self.mcp_token:
+            raise ConfigError(
+                "JOB_HUNTER_MCP_TOKEN is required to serve MCP (the bearer clients send)"
+            )
+        return self.mcp_token
 
     @classmethod
     def load(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -178,6 +186,7 @@ class Settings:
             state_dir=state_dir,
             drop_ratio=drop_ratio,
             ping_url=e.get("JOB_HUNTER_PING_URL") or None,
+            mcp_token=e.get("JOB_HUNTER_MCP_TOKEN") or None,
             l2_engine=engine,
             l2_base_url=e.get("JOB_HUNTER_L2_BASE_URL") or None,
             l2_api_key=e.get("JOB_HUNTER_L2_API_KEY") or None,

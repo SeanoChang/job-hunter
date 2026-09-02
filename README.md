@@ -28,8 +28,11 @@ referrals surfaced from public collaboration data, and labor-market research
 
 ## Status
 
-Design in progress — see `docs/`. The ingestion pipeline is the first build; real
-ATS payload analysis lives in `docs/sources/`.
+Built: ingestion (archive + temporal store), the L2 demand-profile extractor,
+the agent-first CLI, and the hosted MCP server. Still design only: the
+workspace/tracker, the TUI, the concept linker and the skills — see `docs/`,
+whose `README.md` says which document is current. Real ATS payload analysis
+lives in `docs/sources/`.
 
 ## Quickstart
 
@@ -85,5 +88,24 @@ the agent guide as markdown — the one verb whose payload is a file, so
 less than that share of its previous count is `suspect_drop` and its postings
 are not closed on that attempt.
 
-Deployment on R2 + Neon + GitHub Actions:
-`docs/runbooks/2026-08-18-deploy-fetcher.md`.
+## MCP server
+
+The same read surface over streamable HTTP, for an agent that cannot open a
+Postgres socket — a cloud routine in an ephemeral VM, or a chat session. Eight
+tools: `pulse` and the seven `q` verbs, the same 50-default/500-cap limits, the
+same payloads (CLI and server call the same functions in `views.py`).
+
+```bash
+export JOB_HUNTER_MCP_TOKEN=…            # the bearer clients send; required to start
+job-hunter-mcp                           # serves /mcp and /healthz on $PORT (default 8080)
+```
+
+Every request but `/healthz` must carry `Authorization: Bearer $JOB_HUNTER_MCP_TOKEN`.
+Nothing is written except the named `pulse` watermarks in `mcp_cursors`, so the
+server runs happily on a role that can do no more than that. `.mcp.json` at the
+repo root is the client config; it references the token by name and never holds
+it.
+
+Deployment: the fetcher on R2 + Neon + GitHub Actions,
+`docs/runbooks/2026-08-18-deploy-fetcher.md`; the MCP server on Cloud Run,
+`docs/runbooks/2026-09-02-deploy-mcp.md` (Terraform in `infra/`).

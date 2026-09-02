@@ -19,17 +19,28 @@ board membership over time. Spec §5 of `docs/2026-08-18-ingestion-layer-spec.md
 - `queries.py` — read helpers backing the read verbs (`q *`, `pulse`,
   `registry list`, `status`): keyset-paged pages, the watermark delta feed,
   board overview, and validated profiles/mentions per engine tuple.
-- `schema.sql` — DDL, applied by `db init` / `rebuild`.
+- `mcp_state.py` — the hosted server's pulse watermarks (schema v4
+  `mcp_cursors`): the **only** writer of that table, and the one piece of
+  store state a rebuild cannot re-derive from the archive, so it is carried
+  across the swap (`carry_cursors`) instead.
+- `schema.sql` — DDL, applied by `db init` / `rebuild`. `SCHEMA_VERSION = "4"`;
+  purely additive version pairs upgrade in place (`db._ADDITIVE_UPGRADES`),
+  anything else demands a `rebuild`.
 
 ## Patterns
 
-- All writes go through `lifecycle.py`; readers use plain SQL in `queries.py`.
+- All writes go through `lifecycle.py` — `mcp_state.py` is the one exception,
+  and it may touch nothing but `mcp_cursors`; readers use plain SQL in
+  `queries.py`.
 - Timestamps are tz-aware UTC everywhere (`jobhunter.timeutil`).
+- A rebuild swaps in a schema with an empty ACL, so `db.capture_grants` /
+  `apply_grants` replay the `jobhunter_ro` and `jobhunter_mcp` privileges
+  across it; nothing else re-grants them.
 
 ## Dependencies
 
 Imports `jobhunter.models`, `jobhunter.archive` (panel reads registry
-snapshots). Consumed by `cli.py`, `fetch.py`, `ingest.py`, `rebuild.py`, and
-`tests/store/`.
+snapshots). Consumed by `cli.py`, `fetch.py`, `ingest.py`, `rebuild.py`,
+`views.py`, `mcp.py`, and `tests/store/`.
 
 Parent: [../CLAUDE.md](../CLAUDE.md)

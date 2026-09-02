@@ -10,10 +10,12 @@ dependencies = [
   "typer>=0.12",
   "psycopg[binary]>=3.2",
   "jsonschema>=4.23",
+  "mcp>=2.1",  # FastMCP became MCPServer in 2.x; the server code is 2.x-shaped
 ]
 
 [project.scripts]
 job-hunter = "jobhunter.cli:app"
+job-hunter-mcp = "jobhunter.mcp:main"
 
 [dependency-groups]
 dev = [

@@ -10,5 +10,8 @@ COPY companies.toml ./
 ENV PATH="/app/.venv/bin:$PATH"
 RUN useradd -u 1000 -m runner && chown -R runner /app
 USER runner
-ENTRYPOINT ["job-hunter"]
-CMD ["--help"]
+# One image, two console scripts: the fetcher runs `job-hunter …`, Cloud Run
+# overrides the command to `job-hunter-mcp` (spec 2026-09-02 §5). So no
+# ENTRYPOINT pins the binary — the command names it, here and on the platform.
+EXPOSE 8080
+CMD ["job-hunter", "--help"]

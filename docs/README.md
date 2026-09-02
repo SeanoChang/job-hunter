@@ -25,6 +25,10 @@ dispositions of the 2026-08-17 external review:
 
 ## Design documents
 
+- `superpowers/specs/2026-09-02-hosted-mcp-design.md` — **current, normative
+  for the hosted read surface**: the MCP wrapper over `views.py`, static-bearer
+  auth, server-side pulse cursors (schema v4 `mcp_cursors`), Cloud Run deploy
+  declared in `infra/`. Operated by `runbooks/2026-09-02-deploy-mcp.md`.
 - `superpowers/specs/2026-09-01-agentic-cli-rework-design.md` — **current,
   normative for the CLI surface**: the JSON envelope, typed exit codes, teaching
   errors, `pulse` cursors, the `q` namespace, `sync`/`doctor`/`schema`/`skill`,
@@ -113,9 +117,13 @@ All still current as research; none define the design.
   namespace, `pulse` with client-side cursors, schema v3 `profile_mentions`,
   `sync`, `doctor`, `schema`, `skill`. Deletes `report` and the `--json` flag
   (both listed above as shipped by earlier increments).
+- `superpowers/plans/2026-09-02-hosted-mcp.md` — the hosted MCP server: payload
+  assembly extracted to `views.py`, schema v4 `mcp_cursors` + `store/mcp_state.py`,
+  the FastMCP app with bearer auth and eight tools, packaging, and the Terraform
+  config in `infra/`.
 
 Not built yet: the M3 quality loop (k-sampling, refuter, consolidate,
-alerts), M4 access verbs, and the concept linker (L3).
+alerts), the concept linker (L3), and the workspace/tracker faces.
 
 ## Prototype code
 
@@ -171,3 +179,13 @@ and a dated judge run. Its README carries the superseded banner.
   new `engine_fatal` attempt outcome — recorded once, never retried or
   laddered, and reported as an engine error carrying the status and the
   provider's message.
+- 2026-09-02 — hosted MCP: the server reuses the package rather than
+  reimplementing the read surface (`views.py` is the shared payload assembly,
+  parity is a test, not a promise); pulse watermarks live in the store for the
+  hosted server only — a deliberate bend of "personal state stays on the
+  client", because the server is owner infrastructure and the state is one
+  timestamp; auth is a static bearer, Google IAM stays open because an MCP
+  client cannot send a Google identity token; deploy is Cloud Run declared in
+  Terraform (`infra/`), never hand-run gcloud, and secret *values* never enter
+  tf state; Cloudflare Containers rejected at a $5/mo baseline against Cloud
+  Run's free tier.

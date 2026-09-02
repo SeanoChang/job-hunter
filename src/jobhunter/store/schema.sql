@@ -206,3 +206,12 @@ CREATE TABLE IF NOT EXISTS profile_mentions (
                validator_version, mention, area_kind, importance)
 );
 CREATE INDEX IF NOT EXISTS ix_mentions_mention ON profile_mentions (mention, importance);
+
+-- server-side pulse watermarks for the MCP wrapper (spec 2026-09-02 §3);
+-- writer: store/mcp_state.py under the jobhunter_mcp role. The CLI keeps its
+-- own cursors on the client (cursors.py); only the hosted server writes here.
+CREATE TABLE IF NOT EXISTS mcp_cursors (
+  name         TEXT PRIMARY KEY,
+  at           TIMESTAMPTZ NOT NULL,
+  event_ids_at BIGINT[] NOT NULL DEFAULT '{}'
+);

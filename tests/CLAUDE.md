@@ -19,7 +19,10 @@ the root `pyproject.toml`, `-q` by default).
   extracted from the YAML and run under `bash -eo pipefail` against a stub `uv`
   (which exit codes fail the hourly job is a decision made in shell, not Python).
 - `tests/integration/test_three_days.py` — end-to-end over three synthetic days.
-- `conftest.py` — shared fixtures.
+- `conftest.py` — shared fixtures, including the autouse one that makes every
+  test hermetic: an empty config home and cwd, and no ambient `JOB_HUNTER_*` /
+  `AWS_*`, so the developer's `./.env` and `~/.config/job-hunter/env` cannot
+  decide whether the suite is green.
 - `fixtures/md/` — HTML→Markdown conversion cases for `test_markdown.py`.
 
 ## Conventions

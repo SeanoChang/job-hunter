@@ -138,9 +138,12 @@ GRANT SELECT ON ALL TABLES IN SCHEMA jobhunter TO jobhunter_ro;
 ALTER DEFAULT PRIVILEGES IN SCHEMA jobhunter GRANT SELECT ON TABLES TO jobhunter_ro;
 ```
 
-`rebuild` swaps a whole schema into place, so re-run the two `GRANT` statements
-after one (the `ALTER DEFAULT PRIVILEGES` line only covers tables created inside
-the existing schema).
+`rebuild` swaps a whole schema into place, but it copies the live schema's grants
+onto the one it swaps in (`db.capture_grants`), so the two `GRANT` statements do
+not have to be re-run after one. The `ALTER DEFAULT PRIVILEGES` line is the
+exception: it is keyed to the schema *object* rather than its name, so it goes
+inert at the first rebuild — re-run it then if anything creates tables outside
+`db init`.
 
 On the agent machine, put the read-only DSN and archive credentials in
 `~/.config/job-hunter/env` (process env still wins, `./.env` sits between them)

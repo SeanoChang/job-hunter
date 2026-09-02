@@ -29,15 +29,15 @@ from jobhunter.archive.manifests import iter_manifests, latest_per_board
 from jobhunter.cli_output import Exit, emit, fail, output_option, use_json
 from jobhunter.cli_q import MAX_LIMIT, _clamp, q_app
 from jobhunter.config import ConfigError, Settings, env_snapshot
-from jobhunter.cursors import Watermark, read_cursor, write_cursor
+from jobhunter.cursors import read_cursor, write_cursor
 from jobhunter.fetch import RunSummary, UnknownBoardError, is_healthy
 from jobhunter.fetch import run as fetch_run
 from jobhunter.http import Fetcher
-from jobhunter.pulse import build_pulse
 from jobhunter.registry import RegistryError
 from jobhunter.registry import load as load_registry
 from jobhunter.store import db as _db
 from jobhunter.timeutil import iso, parse_iso, utcnow
+from jobhunter.views import pulse_view
 
 _SINCE = re.compile(r"^(\d+)([mhd])$")
 
@@ -460,8 +460,10 @@ def rebuild(
     except Exception as e:
         fail("backend", f"database error: {e}", code=Exit.BACKEND, output=output)
     emit({"ingested": s.ingested, "skipped": s.skipped, "work_schema": s.work_schema,
-          "swapped": s.swapped},
-         human=f"rebuilt {s.ingested} attempts into {s.work_schema}; swapped live",
+          "swapped": s.swapped, "cursors_carried": s.cursors_carried,
+          "grants_reapplied": s.grants_reapplied},
+         human=(f"rebuilt {s.ingested} attempts into {s.work_schema}; swapped live "
+                f"({s.cursors_carried} cursors, {s.grants_reapplied} grants carried over)"),
          output=output)
 
 
@@ -528,15 +530,13 @@ def pulse(
     only = tuple(b.strip() for b in boards.split(",") if b.strip()) if boards else None
     for b in only or ():
         _split_board(b, output)  # a typo in one entry must not silently match nothing
-    wm = (
-        Watermark(_pulse_since(since, output), ())
-        if since is not None
-        else read_cursor(settings.state_dir, cursor)
-    )
+    since_iso = _pulse_since(since, output) if since is not None else None
+    wm = None if since is not None else read_cursor(settings.state_dir, cursor)
     conn = _conn(settings, schema=_schema, output=output)
     try:
-        payload, new_wm = build_pulse(
-            conn, settings, wm=wm, limit=_clamp(limit), boards=only, now=_now()
+        page, new_wm = pulse_view(
+            conn, settings, wm=wm, since_iso=since_iso, limit=_clamp(limit), boards=only,
+            now=_now(),
         )
     except typer.Exit:
         raise
@@ -544,7 +544,7 @@ def pulse(
         fail("backend", f"database error: {e}", code=Exit.BACKEND, output=output)
     finally:
         conn.close()
-    truncated = bool(payload.pop("_truncated"))
+    payload, truncated = page.record(), page.truncated
     events = payload["events"]
     hint = None
     if events:

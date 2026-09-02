@@ -4,17 +4,20 @@ Local-first job-hunting kit that turns an existing coding agent into a personal
 job-hunting agent: postings are ingested from official ATS APIs (Greenhouse,
 Lever, Ashby) into an immutable archive and a temporal Postgres store tracking
 each posting's lifecycle from first seen to closed. No scraping, no auto-apply.
-Currently the **ingestion layer only**; the demand-profile extractor (L2),
-concept linker, workspace/tracker faces (CLI/TUI/MCP beyond the CLI), and
-skills are designed but not built.
+Built: the ingestion layer, the L2 demand-profile extractor, the agent-first
+CLI, and the hosted MCP server that serves the same read surface over HTTPS.
+The concept linker (L3), the workspace/tracker, the TUI and the skills are
+designed but not built.
 
 ## Tech stack
 
 - Python ≥ 3.12, managed with **uv** (`uv.lock`; never introduce another manager)
-- httpx (fetching), boto3 (S3/R2 archive), psycopg 3 (Postgres), typer (CLI)
+- httpx (fetching), boto3 (S3/R2 archive), psycopg 3 (Postgres), typer (CLI),
+  `mcp` SDK (the hosted server)
 - Dev: pytest, ruff (line 100), mypy strict, moto[s3]
 - Infra: Docker Compose (postgres:17 + MinIO for local S3), GitHub Actions
-  (`test` on push/PR; `fetch` daily on R2 + Neon)
+  (`test` on push/PR; `fetch` daily on R2 + Neon), Cloud Run for the MCP
+  server (Terraform in `infra/`)
 
 ## Structure
 
@@ -29,10 +32,14 @@ skills are designed but not built.
   ([CLAUDE.md](docs/CLAUDE.md))
 - `prototypes/parsing/` — retired rule parser, reference only
   ([CLAUDE.md](prototypes/parsing/CLAUDE.md))
+- `infra/` — Terraform for the Cloud Run MCP service; Sean applies it, never
+  the assistant ([README.md](infra/README.md))
 - `companies.toml` — the board registry (one table per ATS board); editing it
   grows the corpus
 - `scripts/live_smoke.py` — opt-in live fetch check; writes nothing
 - `.github/workflows/` — `test` CI, scheduled `fetch`
+- `.mcp.json` — client config for the hosted server; the token is an env
+  reference, never a value (the repo is public)
 
 ## Commands
 
@@ -42,6 +49,7 @@ uv run pytest                             # tests (store tests need Postgres)
 uv run ruff check . && uv run mypy        # lint + strict typecheck
 docker compose up -d postgres             # local Postgres (compose also has MinIO)
 uv run job-hunter --help                  # CLI entry point
+uv run job-hunter-mcp                     # the MCP server on $PORT (needs JOB_HUNTER_MCP_TOKEN)
 ```
 
 CLI (agent-first contract, `docs/superpowers/specs/2026-09-01-agentic-cli-rework-design.md`):
@@ -56,6 +64,11 @@ is piped, a human table on a TTY; `-o json|table` forces either (the old
 via `JOB_HUNTER_*` in the process env, `./.env`, then
 `~/.config/job-hunter/env` (see `src/jobhunter/config.py`); full run
 instructions in `README.md`.
+
+MCP (`job-hunter-mcp`, spec `docs/superpowers/specs/2026-09-02-hosted-mcp-design.md`):
+the same read surface over streamable HTTP — tools `pulse` plus the seven `q`
+verbs, one static bearer (`JOB_HUNTER_MCP_TOKEN`), `/healthz` open. Deploy:
+`docs/runbooks/2026-09-02-deploy-mcp.md`.
 
 ## Conventions
 
