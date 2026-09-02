@@ -1,10 +1,11 @@
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from jobhunter.config import ConfigError, Settings
+from jobhunter.config import ConfigError, Settings, env_snapshot
 
 
 def test_load_requires_archive_url() -> None:
@@ -202,6 +203,43 @@ def test_dotenv_is_gitignored() -> None:
         ["git", "check-ignore", "-q", ".env"], cwd=repo, check=False
     ).returncode
     assert ignored == 0, ".env must be listed in .gitignore (git check-ignore says it is not)"
+
+
+def test_the_suite_never_reads_the_developers_config_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hermeticity, guarding `conftest`'s autouse fixture.
+
+    On a working machine both file layers hold the real R2 keys and the Neon
+    DSN, so a `Settings.load()` anywhere in the suite silently comes back
+    configured — assertions about missing configuration pass on the laptop and
+    fail in CI. Neither layer may be visible from inside a test.
+    """
+    poisoned = tmp_path / "home" / ".config" / "job-hunter"
+    poisoned.mkdir(parents=True)
+    (poisoned / "env").write_text(
+        "JOB_HUNTER_ARCHIVE_URL=s3://the-owners-bucket/corpus\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    # pytest is started from the repo root, where the developer's `.env` lives.
+    assert Path.cwd() != Path(__file__).resolve().parents[1]
+    assert not (Path.cwd() / ".env").exists()
+    assert "JOB_HUNTER_ARCHIVE_URL" not in env_snapshot()
+    with pytest.raises(ConfigError, match="JOB_HUNTER_ARCHIVE_URL"):
+        Settings.load()
+
+
+def test_the_suite_never_reads_the_developers_exported_variables() -> None:
+    """Same invariant for the shell that ran pytest: a stray `JOB_HUNTER_L2_*`
+    or AWS credential in it must not reach any test. `JOB_HUNTER_TEST_*` is the
+    suite's own knob (the Postgres DSN), not configuration, so it stays."""
+    leaked = sorted(
+        k
+        for k in os.environ
+        if k.startswith(("JOB_HUNTER_", "AWS_")) and not k.startswith("JOB_HUNTER_TEST_")
+    )
+    assert leaked == []
 
 
 def test_state_dir_default_and_override() -> None:

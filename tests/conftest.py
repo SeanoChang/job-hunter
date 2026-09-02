@@ -21,6 +21,32 @@ def fixture_bytes(name: str) -> bytes:
     return (FIXTURES / name).read_bytes()
 
 
+@pytest.fixture(scope="session")
+def _no_user_config(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One empty directory, serving as both the config home and the cwd."""
+    return tmp_path_factory.mktemp("no-user-config")
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_config(_no_user_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test starts from the environment CI has: none of the developer's.
+
+    `config.load_env_files` layers `~/.config/job-hunter/env` and `./.env` under
+    the process env, and on a working machine both carry the R2 keys and the
+    Neon DSN — enough to hand a `Settings.load()` inside the suite a configured
+    archive and turn "nothing is configured" assertions green here and red in
+    CI. Point both layers at an empty directory and drop the ambient config
+    variables; a test that wants any of them sets it itself.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(_no_user_config))
+    monkeypatch.chdir(_no_user_config)
+    for key in list(os.environ):
+        # The prefixes config.py reads, minus JOB_HUNTER_TEST_*: that one is the
+        # suite's own knob (the Postgres DSN), not configuration under test.
+        if key.startswith(("JOB_HUNTER_", "AWS_")) and not key.startswith("JOB_HUNTER_TEST_"):
+            monkeypatch.delenv(key)
+
+
 @pytest.fixture
 def boards() -> dict[str, Board]:
     return {
