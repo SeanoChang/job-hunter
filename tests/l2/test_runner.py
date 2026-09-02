@@ -502,6 +502,39 @@ def test_reconnects_when_the_connection_dies_mid_run(pg: Conn, store: ArchiveSto
     assert row and row["n"] == 1  # the failed write was replayed exactly once
 
 
+def test_backend_killed_during_the_engine_call_is_replaced(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """The production shape, without simulation: a real backend is terminated
+    while the engine call is in flight, as Neon's idle suspend terminates it."""
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    schema = str(schema_row["s"])
+    _seed_doc(pg)
+    victim = db.connect(TEST_DSN, schema=schema)
+    pid_row = victim.execute("SELECT pg_backend_pid() AS p").fetchone()
+    assert pid_row is not None
+
+    class KillingEngine:
+        name = "fake"
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
+            self.calls.append(model)
+            pg.execute("SELECT pg_terminate_backend(%s)", (pid_row["p"],))
+            pg.commit()
+            return GOOD
+
+    summary = run(_settings(), victim, store, engine=KillingEngine(), max_docs=10,
+                  max_usd=5.0, connect=lambda: db.connect(TEST_DSN, schema=schema))
+    assert summary.validated == 1
+    row = pg.execute("SELECT count(*) AS n FROM extraction_attempts").fetchone()
+    assert row and row["n"] == 1  # committed by the replacement connection
+    victim.close()
+
+
 def test_reconnect_that_lost_the_lock_aborts_without_writing(
     pg: Conn, store: ArchiveStore
 ) -> None:
