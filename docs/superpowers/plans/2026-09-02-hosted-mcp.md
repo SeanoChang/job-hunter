@@ -90,8 +90,8 @@ CREATE TABLE IF NOT EXISTS mcp_cursors (
 
 `db.py`: `SCHEMA_VERSION = "4"`; `_ADDITIVE_UPGRADES = {("1","2"),("2","3"),("1","3"),("3","4"),("2","4"),("1","4")}`.
 
-- [ ] **Step 1:** Failing tests: round-trip through a real Postgres conn (existing `pg` fixture); unknown name → None; upsert overwrites; `Watermark.event_ids_at` tuple survives the BIGINT[] round-trip; the ("3","4") additive upgrade passes `db.init` (pattern: existing upgrade test in `tests/store/test_db.py`).
-- [ ] **Step 2:** Implement. **Step 3:** Full gates green. **Step 4:** Commit: `feat(store): schema v4 — mcp_cursors watermarks`
+- [x] **Step 1:** Failing tests: round-trip through a real Postgres conn (existing `pg` fixture); unknown name → None; upsert overwrites; `Watermark.event_ids_at` tuple survives the BIGINT[] round-trip; the ("3","4") additive upgrade passes `db.init` (pattern: existing upgrade test in `tests/store/test_db.py`).
+- [x] **Step 2:** Implement. **Step 3:** Full gates green. **Step 4:** Commit: `feat(store): schema v4 — mcp_cursors watermarks`
 
 ---
 
@@ -171,6 +171,15 @@ Runbook must contain, complete and copy-pasteable: the roles SQL (`jobhunter_ro`
 
 ### Task 7: Verification + PR prep
 
+- [ ] **Hermeticity fix** (open finding from PR #6, confirmed by Task 1): the test
+  suite must not read the developer's real `./.env` or `~/.config/job-hunter/env`.
+  Add an autouse fixture in `tests/conftest.py` that monkeypatches
+  `XDG_CONFIG_HOME` to a per-session empty tmp dir and chdirs tests away from any
+  `.env` (or sets an explicit override env var if that is cleaner given
+  `config.load_env_files`'s shape). TDD: a test that creates a poisoned
+  `~/.config/job-hunter/env` under a fake `$HOME` and asserts `Settings.load()`
+  inside the suite never sees it. Commit separately:
+  `fix(tests): suite is hermetic against real user config files`.
 - [ ] Full `uv run pytest` (exit 0) + ruff + mypy; paste tails into the commit body of any final fix.
 - [ ] Local live smoke without docker: `JOB_HUNTER_MCP_TOKEN=t JOB_HUNTER_ARCHIVE_URL=file:///tmp/x JOB_HUNTER_DATABASE_URL=<local test DSN> uv run job-hunter-mcp &` then curl `/healthz` and an authenticated `tools/list`; kill it. Record output.
 - [ ] Tick all plan checkboxes; do NOT push (the driver session pushes and opens the PR).

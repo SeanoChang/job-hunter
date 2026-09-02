@@ -9,6 +9,7 @@ EXPECTED_TABLES = {
     "fetch_attempts", "posting_versions", "documents", "presence", "runs", "panel",
     "postings", "posting_events", "schema_meta",
     "extraction_attempts", "extraction_reviews", "extractions", "profile_mentions",
+    "mcp_cursors",
 }
 
 
@@ -132,6 +133,18 @@ def test_additive_upgrade_from_v2_stamps_version(pg: psycopg.Connection[dict[str
     pg.commit()
     assert db.stored_schema_version(pg) == db.SCHEMA_VERSION
     assert "profile_mentions" in _tables(pg, schema)
+
+
+def test_additive_upgrade_from_v3_stamps_version(pg: psycopg.Connection[dict[str, Any]]) -> None:
+    """v3 -> v4 adds mcp_cursors and nothing else, so schema.sql IS the migration."""
+    schema = _schema_of(pg)
+    db.set_meta(pg, "schema_version", "3")
+    pg.execute("DROP TABLE mcp_cursors")
+    pg.commit()
+    db.init(pg, schema)
+    pg.commit()
+    assert db.stored_schema_version(pg) == db.SCHEMA_VERSION
+    assert "mcp_cursors" in _tables(pg, schema)
 
 
 def test_non_additive_mismatch_still_raises(pg: psycopg.Connection[dict[str, Any]]) -> None:

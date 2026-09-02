@@ -15,10 +15,13 @@ class SchemaMismatch(RuntimeError):
 
 
 SCHEMA = "jobhunter"
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 # stored -> code versions where schema.sql's idempotent DDL is the whole
 # migration (purely additive changes); anything else still demands `rebuild`
-_ADDITIVE_UPGRADES = {("1", "2"), ("2", "3"), ("1", "3")}
+_ADDITIVE_UPGRADES = {
+    ("1", "2"), ("2", "3"), ("1", "3"),
+    ("3", "4"), ("2", "4"), ("1", "4"),
+}
 LOCK_KEY = 0x6A6F6268  # "jobh" — ingestion writer
 EXTRACT_LOCK_KEY = 0x6A6F6232  # "job2" — extraction writer (harness spec §4.6)
 
