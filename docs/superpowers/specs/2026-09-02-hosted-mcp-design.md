@@ -80,9 +80,14 @@ service. New env: `JOB_HUNTER_MCP_TOKEN` (required to start).
   `--memory 256Mi`, secrets `JOB_HUNTER_DATABASE_URL` (the `jobhunter_mcp`
   DSN) and `JOB_HUNTER_MCP_TOKEN` via Secret Manager. Region: `us-east4`
   (closest to Neon's us-east; latency is not load-bearing).
-- Per Sean's standing rules Claude never runs gcloud writes: the runbook
-  gets the exact `gcloud` commands (enable APIs, create secrets, build via
-  `gcloud builds submit`, `gcloud run deploy`) for Sean to paste.
+- Infrastructure is declared in Terraform (`infra/`, decided 2026-09-02):
+  APIs, Artifact Registry repo, the two Secret Manager secrets (created
+  empty — values added out-of-band so they never touch tf state), service
+  account + accessor bindings, the Cloud Run service (public invoker; the
+  app's bearer auth is the gate), URI output. Per Sean's standing rules
+  Claude never applies: the runbook sequences image build → `terraform
+  plan`/`apply` → secret versions → `.mcp.json` URL fill-in, all run by
+  Sean.
 - Cost: free tier (2M req/mo) vs ~1k req/mo actual → $0.
 
 ## 6. Consumers

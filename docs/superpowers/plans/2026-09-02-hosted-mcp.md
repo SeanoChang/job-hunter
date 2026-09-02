@@ -157,15 +157,27 @@ Tool `pulse(cursor: str = "default", peek: bool = False, since: str | None = Non
 
 ---
 
-### Task 6: Runbook + docs sweep
+### Task 6: Terraform deploy config + runbook + docs sweep
 
 **Files:**
-- Create: `docs/runbooks/2026-09-02-deploy-mcp.md`
-- Modify: `CLAUDE.md`, `src/jobhunter/CLAUDE.md`, `src/jobhunter/store/CLAUDE.md`, `docs/README.md`, `README.md`
+- Create: `infra/main.tf`, `infra/variables.tf`, `infra/outputs.tf`, `infra/README.md`, `docs/runbooks/2026-09-02-deploy-mcp.md`
+- Modify: `.gitignore` (add `infra/.terraform/`, `infra/*.tfstate*`, `infra/*.tfvars`), `CLAUDE.md`, `src/jobhunter/CLAUDE.md`, `src/jobhunter/store/CLAUDE.md`, `docs/README.md`, `README.md`
 
-Runbook must contain, complete and copy-pasteable: the roles SQL (`jobhunter_ro` if absent, `jobhunter_mcp` = ro + `GRANT INSERT, UPDATE, DELETE ON mcp_cursors TO jobhunter_mcp;` — note the table must exist first: `db init` as owner), Secret Manager creation for the two secrets, `gcloud builds submit` + `gcloud run deploy job-hunter-mcp --min-instances 0 --max-instances 1 --memory 256Mi --region us-east4 --command job-hunter-mcp` with `--set-secrets`, the `.mcp.json` URL fill-in step, and the curl smoke (`/healthz`; authenticated `tools/list` via `npx @modelcontextprotocol/inspector` or plain curl JSON-RPC). Every gcloud command is for Sean to run — say so at the top.
+**Terraform (owner-run; Sean applies — Claude never runs terraform apply):**
+- Provider `google` (~> 6.x), variables: `project_id`, `region` (default `us-east4`), `image` (full Artifact Registry ref), `service_name` (default `job-hunter-mcp`).
+- Resources:
+  - `google_project_service` for `run.googleapis.com`, `secretmanager.googleapis.com`, `artifactregistry.googleapis.com`, `cloudbuild.googleapis.com` (`disable_on_destroy = false`).
+  - `google_artifact_registry_repository` `job-hunter` (format DOCKER).
+  - `google_secret_manager_secret` ×2: `job-hunter-mcp-database-url`, `job-hunter-mcp-token` — **secrets created empty; no `google_secret_manager_secret_version` in Terraform** (values must never enter tf state in a public repo's workflow). The runbook adds versions via `printf ... | gcloud secrets versions add ... --data-file=-`.
+  - `google_service_account` `job-hunter-mcp` + `google_secret_manager_secret_iam_member` (`roles/secretmanager.secretAccessor`) on both secrets.
+  - `google_cloud_run_v2_service`: the image, `command = ["job-hunter-mcp"]`, scaling min 0 / max 1, 256Mi / 1 CPU, env `JOB_HUNTER_ARCHIVE_URL` (plain var), `JOB_HUNTER_DATABASE_URL` + `JOB_HUNTER_MCP_TOKEN` from the secrets, service account attached, `ingress = "INGRESS_TRAFFIC_ALL"`.
+  - `google_cloud_run_v2_service_iam_member` `roles/run.invoker` for `allUsers` — the app's own bearer auth is the gate; Google IAM stays open by design (the MCP client can't do Google IAM).
+  - Output: the service URI.
+- terraform/tofu is NOT installed on this machine: do not attempt `terraform validate`. Write the config carefully, review it line by line against the provider docs (fetch them if unsure), and say in the commit body that validation runs on Sean's machine.
 
-- [ ] Steps: write → `grep` docs for stale claims (schema v3, "no MCP") → gates (docs don't break tests but run them anyway) → commit: `docs(mcp): deploy runbook, roles, docs sweep`
+**Runbook** (`docs/runbooks/2026-09-02-deploy-mcp.md`), copy-pasteable, "every command here is for Sean" at the top: roles SQL (`jobhunter_ro` if absent; `jobhunter_mcp` = ro + `GRANT INSERT, UPDATE, DELETE ON mcp_cursors TO jobhunter_mcp;` — table must exist first via `db init` as owner) → image build (`gcloud builds submit --tag <region>-docker.pkg.dev/<project>/job-hunter/mcp:v1`) → `terraform -chdir=infra init && terraform -chdir=infra plan` → `apply` → add the two secret versions → fill `.mcp.json`'s URL from the terraform output → curl smoke (`/healthz`, then authenticated `tools/list` JSON-RPC).
+
+- [ ] Steps: write tf + runbook → `grep` docs for stale claims (schema v3, "no MCP") → gates (run the test suite anyway) → commit: `feat(infra): terraform for the Cloud Run MCP service + deploy runbook`
 
 ---
 
