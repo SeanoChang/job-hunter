@@ -1172,7 +1172,9 @@ def _extract_stalled(data: dict[str, Any]) -> bool:
 
 
 def _extract_human(data: dict[str, Any], dry_run: bool) -> str:
-    if data.get("lock_held"):
+    if data.get("lock_held") and not data.get("aborted"):
+        # only a lock that was ALREADY held means nothing happened; a lock lost
+        # mid-run has real spend behind it and falls through to the counters
         return "already running (extract lock held); nothing done"
     if dry_run:
         return f"queue ({len(data['queued'])}):\n" + "\n".join(data["queued"])
@@ -1185,6 +1187,8 @@ def _extract_human(data: dict[str, Any], dry_run: bool) -> str:
         human += "  THROTTLED (batch stopped)"
     if data["breaker_abort"]:
         human += "  BREAKER: 5 consecutive model rejections"
+    if data.get("aborted") == "lock_lost":
+        human += "  ABORTED: the extract lock moved to another writer mid-run"
     return human
 
 

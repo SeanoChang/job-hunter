@@ -632,6 +632,39 @@ def test_reconnect_that_lost_the_lock_aborts_without_writing(
         checker.close()
 
 
+def test_a_lost_lock_reports_the_spend_it_already_made(pg: Conn, store: ArchiveStore) -> None:
+    """`lock_held` covers two different runs and must not describe them alike.
+
+    Nothing-happened (the lock was busy at the start) is genuinely "nothing
+    done"; losing the lock mid-run is not — the engine was paid for work whose
+    rows rolled back, and the summary is the only place that survives.
+    """
+    _seed_doc(pg)
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    schema = str(schema_row["s"])
+    costly = EngineResult(json.dumps(EMIT), "z-ai/glm-5.2:free", 1, 1, 0.25)
+    flaky = FlakyConn(pg, die_on="INSERT INTO extraction_attempts")
+    summary = run(_settings(), flaky, store, engine=FakeEngine([costly]),  # type: ignore[arg-type]
+                  max_docs=10, max_usd=5.0,
+                  connect=lambda: db.connect(TEST_DSN, schema=schema))
+    assert summary.lock_held is True
+    assert summary.aborted == "lock_lost"  # not the same thing as a busy lock
+    assert summary.docs_attempted == 1 and summary.spend_usd == 0.25  # the money left anyway
+    assert summary.validated == 0  # counted only after the per-document commit
+    assert summary.to_dict()["aborted"] == "lock_lost"
+
+    # `pg` still holds the extract lock (the dead session could not unlock), so a
+    # second run walks into the busy-lock branch — which really did do nothing
+    latecomer = db.connect(TEST_DSN, schema=schema)
+    try:
+        busy = run(_settings(), latecomer, store, engine=FakeEngine([]),
+                   max_docs=10, max_usd=5.0)
+        assert busy.lock_held is True and busy.aborted is None
+    finally:
+        latecomer.close()
+
+
 def test_payment_required_is_an_engine_failure_that_trips_fast(
     pg: Conn, store: ArchiveStore
 ) -> None:

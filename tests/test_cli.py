@@ -406,6 +406,20 @@ def test_extract_run_review_verify_status_end_to_end(
     assert counts["attempts"] == 1 and counts["reviews"] == 2
 
 
+def test_extract_human_separates_a_busy_lock_from_a_lost_one() -> None:
+    from jobhunter.l2.runner import ExtractSummary
+
+    busy = ExtractSummary(run_id="x-1", lock_held=True)
+    assert cli._extract_human(busy.to_dict(), False) == (
+        "already running (extract lock held); nothing done"
+    )
+    lost = ExtractSummary(run_id="x-1", lock_held=True, aborted="lock_lost",
+                          docs_attempted=2, spend_usd=0.25)
+    text = cli._extract_human(lost.to_dict(), False)
+    assert "nothing done" not in text  # $0.25 of engine calls is not nothing
+    assert "$0.25" in text and "lock" in text
+
+
 def test_extract_run_requires_l2_config(xenv: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("JOB_HUNTER_L2_BASE_URL")
     r = runner.invoke(cli.app, ["extract", "run"])

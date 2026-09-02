@@ -189,6 +189,11 @@ class ExtractSummary:
     replayed: int = 0
     spend_usd: float = 0.0
     queued: list[str] = field(default_factory=list)
+    # why the run stopped early, when it stopped for a reason the counters do
+    # not carry. "lock_lost": the extract lock moved to another writer mid-run,
+    # so `lock_held` here does NOT mean nothing happened — docs_attempted and
+    # spend_usd already left the account.
+    aborted: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -197,7 +202,7 @@ class ExtractSummary:
             "quarantined": self.quarantined, "pending": self.pending,
             "throttled": self.throttled, "breaker_abort": self.breaker_abort,
             "replayed": self.replayed, "spend_usd": round(self.spend_usd, 5),
-            "queued": self.queued,
+            "queued": self.queued, "aborted": self.aborted,
         }
 
 
@@ -382,8 +387,12 @@ def run(
                 break
     except LockLost:
         # another writer owns the drain now; our uncommitted work died with the
-        # connection and the archive lets the next run replay it
+        # connection and the archive lets the next run replay it. The counters
+        # stay as they are — validated/quarantined/pending are incremented only
+        # after their document's commit, and the engine was paid for the rest —
+        # but `aborted` has to say so, or "lock_held" reads as "nothing done".
         summary.lock_held = True
+        summary.aborted = "lock_lost"
     finally:
         session.release()
     return summary
