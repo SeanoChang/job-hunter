@@ -153,7 +153,7 @@ Tool `pulse(cursor: str = "default", peek: bool = False, since: str | None = Non
 }
 ```
 
-- [ ] Steps: failing test for token-less `main()` (SystemExit/typer.Exit code 3) → implement → gates → commit: `feat(mcp): packaging — console script, image command, .mcp.json`
+- [x] Steps: failing test for token-less `main()` (SystemExit/typer.Exit code 3) → implement → gates → commit: `feat(mcp): packaging — console script, image command, .mcp.json`
 
 ---
 

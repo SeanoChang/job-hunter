@@ -30,4 +30,10 @@ jobs:
       - name: docker build
         run: docker build -t job-hunter:ci .
       - name: image smoke
-        run: docker run --rm job-hunter:ci version
+        run: |
+          docker run --rm job-hunter:ci job-hunter version
+          # the MCP server ships in the same image and refuses to serve unguarded
+          status=0
+          docker run --rm -e JOB_HUNTER_ARCHIVE_URL=file:///archive \
+            job-hunter:ci job-hunter-mcp || status=$?
+          test "$status" -eq 3

@@ -11,9 +11,14 @@ ingests.
 `pulse` is the one tool with state, so it is tested through its effect on
 `mcp_cursors`: what a second call no longer reports, and what `peek` and
 `since` leave untouched.
+
+The last group is packaging: what `main()` refuses to do and what the committed
+`.mcp.json` promises a client — the two halves of the deployment that no tool
+call exercises.
 """
 
 import json
+import re
 from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
@@ -25,6 +30,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from jobhunter import mcp, views
+from jobhunter.cli_output import Exit
 from jobhunter.config import Settings
 from jobhunter.markdown import NORMALIZER_VERSION
 from jobhunter.store import mcp_state, queries
@@ -39,6 +45,7 @@ from tests.test_cli_q import (  # noqa: F401  -- qenv is a fixture, used by name
 
 TOKEN = "s3cr3t-bearer"
 READ_TOOLS = {"postings", "posting", "events", "document", "profile", "claims", "boards"}
+REPO = Path(__file__).resolve().parents[1]
 # The hour `qenv`'s CLI clock stands at: one past the last ingest, so `pulse`'s
 # 24-hour first-run window covers the corpus's last day and nothing later.
 PULSE_NOW = DAY2 + timedelta(hours=1)
@@ -277,3 +284,72 @@ def test_pulse_since_neither_reads_nor_writes_the_cursor_table(
     assert page["data"]["window"]["from"] == ISO1
     assert len(page["data"]["events"]) == 4  # the second and third ingest days
     assert pg.execute("SELECT 1 FROM mcp_cursors").fetchone() is None
+
+
+# -- packaging: starting the process, and what clients are handed -----------
+
+
+@pytest.fixture
+def serving_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`main` reads the real process environment, so the test owns it: an empty
+    config home and an empty cwd keep the developer's own `.env` out of the run,
+    and no server is allowed to actually bind."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("JOB_HUNTER_ARCHIVE_URL", "file:///archive")
+    monkeypatch.delenv("JOB_HUNTER_MCP_TOKEN", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.setattr("uvicorn.run", _never_serve)
+
+
+def _never_serve(*args: Any, **kwargs: Any) -> Any:
+    raise AssertionError("the server must not start in this test")
+
+
+def test_main_refuses_to_serve_without_a_token(
+    serving_env: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unguarded instance would publish the corpus, so a missing token is a
+    startup failure, not a warning: the config exit code, and the variable named."""
+    with pytest.raises(SystemExit) as exc:
+        mcp.main()
+    assert exc.value.code == int(Exit.CONFIG)
+    assert "JOB_HUNTER_MCP_TOKEN" in capsys.readouterr().err
+
+
+def test_main_serves_the_platform_port(
+    serving_env: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Cloud Run's contract: the guarded app on $PORT, every interface, 8080 when
+    the platform names none."""
+    served: dict[str, Any] = {}
+    monkeypatch.setattr("uvicorn.run", lambda app, **kw: served.update(kw, app=app))
+    monkeypatch.setenv("JOB_HUNTER_MCP_TOKEN", TOKEN)
+
+    mcp.main()
+    assert isinstance(served["app"], mcp.BearerAuth)  # never the bare MCP app
+    assert (served["host"], served["port"]) == ("0.0.0.0", 8080)
+    monkeypatch.setenv("PORT", "9090")
+    mcp.main()
+    assert served["port"] == 9090
+
+    monkeypatch.setenv("PORT", "http")
+    with pytest.raises(SystemExit) as exc:
+        mcp.main()
+    assert exc.value.code == int(Exit.CONFIG)
+    assert "PORT" in capsys.readouterr().err
+
+
+def test_the_committed_mcp_json_points_clients_at_this_server() -> None:
+    """`.mcp.json` is how a cloud routine finds the deployment. The repo is
+    public, so the token appears only as the variable name `config.py` reads —
+    and the URL must address the path the app actually serves."""
+    servers = json.loads((REPO / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]
+    assert set(servers) == {"job-hunter"}
+    entry = servers["job-hunter"]
+    assert entry["type"] == "http"
+    assert entry["url"].startswith("https://") and entry["url"].endswith(mcp.MCP_PATH)
+    reference = re.fullmatch(r"Bearer \$\{(\w+)\}", entry["headers"]["Authorization"])
+    assert reference is not None, entry["headers"]  # never a literal token
+    env = {"JOB_HUNTER_ARCHIVE_URL": "file:///archive", reference.group(1): "tok"}
+    assert Settings.load(env=env).require_mcp_token() == "tok"
