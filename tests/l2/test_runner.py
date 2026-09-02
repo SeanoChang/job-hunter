@@ -787,3 +787,97 @@ def test_engine_failure_survives_losing_the_lock_while_recording_it(
             connect=lambda: db.connect(TEST_DSN, schema=schema))
     assert "402" in str(caught.value) and "Insufficient credits" in str(caught.value)
     assert isinstance(caught.value.__cause__, LockLost)  # the lock loss is not hidden either
+
+
+def test_no_transaction_spans_the_engine_call_under_idle_timeout(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """The production mechanism (canary run 33666006472): a transaction held open
+    across the minute-plus model call trips Neon's idle_in_transaction_session_timeout.
+
+    That raises IdleInTransactionSessionTimeout (SQLSTATE 25P03) — an InternalError,
+    NOT the OperationalError the reconnect used to catch — so before the fix the run
+    dies with it. With the runner holding no transaction while the engine runs, the
+    timeout never fires; the connection is merely transaction-idle across the call.
+    """
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    schema = str(schema_row["s"])
+    _seed_doc(pg)
+
+    def _connect() -> Conn:
+        # the GUC is per-session, so every connection the runner uses (the first
+        # one and any reconnect) arms the same short idle-in-transaction timeout
+        c = db.connect(TEST_DSN, schema=schema)
+        c.execute("SET idle_in_transaction_session_timeout = '400ms'")
+        c.commit()
+        return c
+
+    victim = _connect()
+
+    class SlowEngine:
+        name = "fake"
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
+            self.calls.append(model)
+            time.sleep(0.7)  # longer than the 400ms idle-in-transaction timeout
+            return GOOD
+
+    summary = run(_settings(), victim, store, engine=SlowEngine(), max_docs=10,
+                  max_usd=5.0, connect=_connect)
+    assert summary.validated == 1  # no transaction spanned the sleeping engine call
+    row = pg.execute("SELECT count(*) AS n FROM extraction_attempts").fetchone()
+    assert row and row["n"] == 1  # the attempt was recorded on the live connection
+    victim.close()
+
+
+def test_session_reconnects_on_idle_timeout_only_when_the_connection_is_dead(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """`_Session.do` must recover from a 25P03 that killed the connection — the
+    reconnect defense #7 built for OperationalError has to reach this sibling class
+    too — but a 25P03 raised on a LIVE connection is a genuine bug and must propagate,
+    not loop forever re-taking the lock and retrying the failing op."""
+    from jobhunter.l2.runner import _Session
+
+    # DEAD: the op raises the idle-in-transaction kill and the socket is gone.
+    class DeadConn:
+        closed = True
+
+        def close(self) -> None:
+            pass
+
+    dead_calls = {"n": 0}
+
+    def _op_on_dead(conn: Any) -> str:
+        dead_calls["n"] += 1
+        if dead_calls["n"] == 1:
+            raise psycopg.errors.IdleInTransactionSessionTimeout(
+                "terminating connection due to idle-in-transaction timeout"
+            )
+        return "recovered"
+
+    session = _Session(DeadConn(), connect=lambda: pg)  # type: ignore[arg-type,return-value]
+    session.holds_lock = True
+    assert session.do(_op_on_dead) == "recovered"  # reconnected, replayed the op once
+    assert dead_calls["n"] == 2
+    db.unlock(pg, db.EXTRACT_LOCK_KEY)  # release the lock _revive re-took on pg
+
+    # LIVE: a 25P03 on a connection that is still open is a real query bug.
+    class LiveConn:
+        closed = False
+
+    live_calls = {"n": 0}
+
+    def _op_on_live(conn: Any) -> str:
+        live_calls["n"] += 1
+        raise psycopg.errors.IdleInTransactionSessionTimeout("but the socket is fine")
+
+    session2 = _Session(LiveConn(), connect=lambda: pg)  # type: ignore[arg-type,return-value]
+    session2.holds_lock = True
+    with pytest.raises(psycopg.errors.IdleInTransactionSessionTimeout):
+        session2.do(_op_on_live)
+    assert live_calls["n"] == 1  # propagated, never retried

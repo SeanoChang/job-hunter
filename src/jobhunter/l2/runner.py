@@ -144,6 +144,19 @@ class _Session:
                 raise
             self._revive()
             return op(self.conn)
+        except psycopg.errors.IdleInTransactionSessionTimeout:
+            # A managed Postgres that kills a session for holding a transaction
+            # open too long raises SQLSTATE 25P03, an InternalError — NOT the
+            # OperationalError above. It ends the connection exactly like the idle
+            # suspend, so recover the same way, but ONLY when the backend is truly
+            # gone: a 25P03 on a still-live connection would be a genuine query bug
+            # to surface, and reviving on it would loop. The runner also commits
+            # before every model call so this timeout should never fire; this is
+            # the backstop for any transaction that slips across an engine call.
+            if self._connect is None or not self.conn.closed:
+                raise
+            self._revive()
+            return op(self.conn)
 
     def _revive(self) -> None:
         assert self._connect is not None  # `do` checks before calling
@@ -476,6 +489,16 @@ def _extract_doc(
         while content_no < CONTENT_ATTEMPTS:
             t0 = now()
             prompt = render(markdown, prior_errors)
+            # Hold NO open transaction while the model runs (a minute-plus): end the
+            # pre-call reads (markdown, next_attempt_no) and any prior attempt's
+            # insert-only write here, so the connection is transaction-idle — the
+            # idle-suspend shape #7 already reconnects from — not idle-IN-transaction,
+            # which a managed Postgres kills with SQLSTATE 25P03 (canary run
+            # 33666006472). A bare commit ends the read transaction and is a no-op
+            # when nothing is pending; committing attempts early is safe (insert-only
+            # + ON CONFLICT DO NOTHING) and the per-document settle still commits
+            # atomically at the caller's ~line 375.
+            session.do(lambda c: c.commit())
             try:
                 result = engine.complete(prompt, schema, model)
             except EngineThrottled as exc:
