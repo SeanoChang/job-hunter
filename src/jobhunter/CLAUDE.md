@@ -19,6 +19,14 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
 - `cli_q.py` — the read-only `q` namespace: `postings`, `posting`, `events`,
   `claims`, `document`, `profile`, `boards`. Bounded (`--limit` 50, hard cap
   500), `meta.truncated` always present, `--after` cursors, `--fields`.
+- `views.py` — payload assembly, pure: `(conn, filters…) -> Page`. The CLI and
+  the MCP server call the same functions, so the two faces cannot drift; views
+  raise `ValueError` and know nothing of typer, envelopes or exit codes.
+- `mcp.py` — the hosted read surface (`job-hunter-mcp`, spec
+  `docs/superpowers/specs/2026-09-02-hosted-mcp-design.md`): a streamable-HTTP
+  MCP app whose eight tools call `views.py`, a static-bearer ASGI gate with
+  `/healthz` open, and one connection per call (no pool — Cloud Run reaps
+  instances between requests). Writes nothing but `mcp_cursors`.
 - `cursors.py` — named client-side watermarks in the state dir
   (`cursors.json`); personal state never enters the shared store.
 - `pulse.py` — the delta payload behind `job-hunter pulse`: events since the
@@ -68,6 +76,6 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
 - Identity/hashing only via `hashing.py`; time only via `timeutil.py`;
   environment only via `config.py`.
 - Not built yet (design docs): M3 quality loop (k-sampling, refuter,
-  consolidate, alerts), M4 access verbs, concept linker (L3).
+  consolidate, alerts), concept linker (L3), workspace/tracker, TUI.
 
 Parent: [../../CLAUDE.md](../../CLAUDE.md)

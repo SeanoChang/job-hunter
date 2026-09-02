@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Sequence
+from dataclasses import dataclass
 from importlib import resources
-from typing import Any
+from typing import Any, LiteralString
 
 import psycopg
 from psycopg import sql
@@ -15,10 +18,13 @@ class SchemaMismatch(RuntimeError):
 
 
 SCHEMA = "jobhunter"
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 # stored -> code versions where schema.sql's idempotent DDL is the whole
 # migration (purely additive changes); anything else still demands `rebuild`
-_ADDITIVE_UPGRADES = {("1", "2"), ("2", "3"), ("1", "3")}
+_ADDITIVE_UPGRADES = {
+    ("1", "2"), ("2", "3"), ("1", "3"),
+    ("3", "4"), ("2", "4"), ("1", "4"),
+}
 LOCK_KEY = 0x6A6F6268  # "jobh" — ingestion writer
 EXTRACT_LOCK_KEY = 0x6A6F6232  # "job2" — extraction writer (harness spec §4.6)
 
@@ -122,6 +128,116 @@ def try_lock(conn: Conn, key: int = LOCK_KEY) -> bool:
 def unlock(conn: Conn, key: int = LOCK_KEY) -> None:
     conn.execute("SELECT pg_advisory_unlock(%s)", (key,))
     conn.commit()
+
+
+# Privilege names are keywords pasted into the GRANT, not parameters bound to it,
+# so the set the catalog is allowed to name is closed by hand.
+_PRIVILEGE_NAMES: tuple[LiteralString, ...] = (
+    "SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER",
+    "MAINTAIN", "USAGE", "CREATE",
+)
+_PRIVILEGES: dict[str, sql.SQL] = {name: sql.SQL(name) for name in _PRIVILEGE_NAMES}
+
+
+@dataclass(frozen=True, slots=True)
+class Grant:
+    """One role's privileges on a schema (`table is None`) or on one of its
+    relations, in a form that can be replayed onto a different schema.
+
+    Refuses a privilege this module cannot spell, so a rebuild that could not
+    reproduce the live schema's access says so while reading it, rather than
+    swapping a half-privileged schema into place.
+    """
+
+    grantee: str  # the empty string is PUBLIC
+    privileges: tuple[str, ...]
+    table: str | None
+
+    def __post_init__(self) -> None:
+        unknown = [p for p in self.privileges if p not in _PRIVILEGES]
+        if unknown:
+            raise ValueError(
+                f"privilege(s) {', '.join(unknown)} on {self.table or 'the schema'} "
+                "cannot be carried across a rebuild; grant them by hand afterwards"
+            )
+
+
+_SCHEMA_ACL_SQL = """
+SELECT CASE WHEN a.grantee = 0 THEN '' ELSE pg_get_userbyid(a.grantee) END AS grantee,
+       a.privilege_type AS privilege
+  FROM pg_namespace n, aclexplode(n.nspacl) a
+ WHERE n.nspname = %s AND a.grantee <> n.nspowner
+"""
+
+_RELATION_ACL_SQL = """
+SELECT c.relname AS relation,
+       CASE WHEN a.grantee = 0 THEN '' ELSE pg_get_userbyid(a.grantee) END AS grantee,
+       a.privilege_type AS privilege
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(c.relacl) a
+ WHERE n.nspname = %s AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
+   AND a.grantee <> c.relowner
+"""
+
+
+def capture_grants(conn: Conn, schema: str) -> list[Grant]:
+    """Every privilege `schema` and its relations hand to someone other than the owner.
+
+    `rebuild` swaps in a schema built from scratch, and a fresh schema carries no
+    ACL at all — without replaying these, `jobhunter_ro` and `jobhunter_mcp` lose
+    even USAGE and every read answers `permission denied` (spec 2026-09-02 §3).
+    Empty for a schema that does not exist, or that only its owner can touch.
+
+    Default privileges (`ALTER DEFAULT PRIVILEGES`) are keyed to the schema object
+    rather than its name and are deliberately not carried: every relation the store
+    has is granted explicitly here instead.
+    """
+    grouped: dict[tuple[str | None, str], set[str]] = defaultdict(set)
+    for row in conn.execute(_SCHEMA_ACL_SQL, (schema,)).fetchall():
+        grouped[(None, str(row["grantee"]))].add(str(row["privilege"]))
+    for row in conn.execute(_RELATION_ACL_SQL, (schema,)).fetchall():
+        grouped[(str(row["relation"]), str(row["grantee"]))].add(str(row["privilege"]))
+    return [
+        Grant(grantee=grantee, privileges=tuple(sorted(privileges)), table=table)
+        for (table, grantee), privileges in sorted(
+            grouped.items(), key=lambda item: (item[0][0] or "", item[0][1])
+        )
+    ]
+
+
+def apply_grants(conn: Conn, schema: str, grants: Sequence[Grant]) -> int:
+    """Replay `grants` onto `schema`; returns how many were applied.
+
+    Grants naming a relation the schema no longer has are skipped — schema versions
+    retire tables as well as add them, and a stale grant must not fail a rebuild.
+    Joins the caller's transaction; the caller commits.
+    """
+    present = {
+        str(row["relname"])
+        for row in conn.execute(
+            "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = %s",
+            (schema,),
+        ).fetchall()
+    }
+    applied = 0
+    for grant in grants:
+        if grant.table is not None and grant.table not in present:
+            continue
+        target = (
+            sql.SQL("SCHEMA {}").format(sql.Identifier(schema))
+            if grant.table is None
+            else sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier(grant.table))
+        )
+        conn.execute(
+            sql.SQL("GRANT {} ON {} TO {}").format(
+                sql.SQL(", ").join(_PRIVILEGES[p] for p in grant.privileges),
+                target,
+                sql.SQL("PUBLIC") if grant.grantee == "" else sql.Identifier(grant.grantee),
+            )
+        )
+        applied += 1
+    return applied
 
 
 def swap_schema(

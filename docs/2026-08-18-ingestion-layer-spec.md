@@ -599,8 +599,10 @@ unreachable, schema mismatch, or every board failed.
   tier holds for a long time; when public traffic arrives, Launch is
   usage-billed with no minimum. Moving hosts is `rebuild` against a new DSN.
 - `Dockerfile`: `python:3.12-slim`, uv-installed project, non-root user,
-  `ENTRYPOINT ["job-hunter"]`. The same image runs locally, in GitHub Actions
-  and on Cloud Run Jobs.
+  `CMD ["job-hunter", "--help"]` (no pinned `ENTRYPOINT`, so the same image
+  also runs `job-hunter-mcp` when Cloud Run overrides the command — 2026-09-02
+  hosted-MCP design). The same image runs locally, in GitHub Actions and on
+  Cloud Run.
 - `.github/workflows/fetch.yml`: `schedule: "0 6 * * *"` plus
   `workflow_dispatch`; secrets `JOB_HUNTER_DATABASE_URL`, `R2_ACCESS_KEY_ID`,
   `R2_SECRET_ACCESS_KEY`; variables `R2_ENDPOINT_URL`, `JOB_HUNTER_ARCHIVE_URL`;

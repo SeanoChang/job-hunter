@@ -5,6 +5,11 @@ Every list verb is bounded (`--limit`, hard cap 500), always reports
 row it actually emitted — never from a row the reader never saw. Nothing here
 writes, so these verbs run on a read-only Postgres role.
 
+A command is flags, then a view, then output: the payloads come from
+`views.py`, which the MCP wrapper reads too, and what stays here is the part
+that only makes sense at a command line — validating a flag into a teaching
+error, selecting fields, rendering the human table.
+
 `jobhunter.cli` is imported inside the command bodies on purpose: it imports
 this module to mount the sub-app, and its `_schema` is a test seam that must be
 read at call time.
@@ -17,9 +22,10 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from jobhunter import views
 from jobhunter.cli_output import Exit, emit, fail, output_option
-from jobhunter.pulse import closed_between, profile_summary
-from jobhunter.timeutil import iso, parse_iso
+from jobhunter.pulse import profile_summary
+from jobhunter.timeutil import parse_iso
 
 if TYPE_CHECKING:
     from jobhunter.config import Settings
@@ -107,7 +113,6 @@ def q_postings(
 ) -> None:
     """List postings, newest first. Bounded; meta.truncated + meta.next_cursor page on."""
     from jobhunter.cli import _split_board
-    from jobhunter.store import queries
 
     if status not in (None, "open", "closed"):
         fail("usage", f"--status must be open or closed: {status!r}",
@@ -117,28 +122,17 @@ def q_postings(
     limit = _clamp(limit)
     window = _since(since, output)
     _, conn = _open(output)
-    rows = _query(conn, output, lambda: queries.postings_page(
+    page = _query(conn, output, lambda: views.postings_view(
         conn, source=src, board=brd, status=status, since=window, search=search,
         limit=limit, after=after))
-    truncated = len(rows) > limit
-    rows = rows[:limit]
-    data = [
-        {"uid": r["uid"], "board": f"{r['source']}:{r['board']}", "status": r["status"],
-         "title": r["title"], "company": r["company"], "url": r["url"],
-         "first_seen_at": iso(r["first_seen_at"]), "last_seen_at": iso(r["last_seen_at"]),
-         "version_count": r["version_count"], "reopen_count": r["reopen_count"],
-         "closed_between": closed_between(r)}
-        for r in rows
-    ]
+    data = page.rows()
     human = "\n".join(
         f"{r['status']:6} {r['uid']:32} {(r['company'] or '-'):18} {r['title'] or '-'}"
         for r in data
     ) or "(no postings)"
-    cursor = (f"{rows[-1]['first_seen_at'].isoformat()}|{rows[-1]['uid']}"
-              if truncated and rows else None)
     emit(_select_fields(data, fields, output), human=human, output=output, count=len(data),
-         truncated=truncated, next_cursor=cursor,
-         hint=f"q posting {rows[0]['uid']} for lifecycle detail" if rows else None)
+         truncated=page.truncated, next_cursor=page.next_cursor,
+         hint=f"q posting {data[0]['uid']} for lifecycle detail" if data else None)
 
 
 @q_app.command("posting")
@@ -147,32 +141,12 @@ def q_posting(
     output: str | None = output_option(),
 ) -> None:
     """One posting: lifecycle, close interval, version history, events, document."""
-    from jobhunter.store import queries
-
     _, conn = _open(output)
-    row = _query(conn, output, lambda: queries.posting_detail(conn, uid))
-    if row is None:
+    page = _query(conn, output, lambda: views.posting_view(conn, uid))
+    if page is None:
         fail("not_found", f"no posting {uid!r}", code=Exit.NOT_FOUND, output=output,
              hint="find uids with: q postings --search <text>")
-    data = {
-        **{k: v for k, v in row.items()
-           if k not in ("source", "closed_lower_at", "closed_upper_at", "versions", "events")},
-        "board": f"{row['source']}:{row['board']}",
-        "first_seen_at": iso(row["first_seen_at"]),
-        "last_seen_at": iso(row["last_seen_at"]),
-        "source_updated_at": iso(row["source_updated_at"]) if row["source_updated_at"] else None,
-        "closed_between": closed_between(row),
-        "versions": [
-            {"version_hash": v["version_hash"], "title": v["title"], "at": iso(v["at"])}
-            for v in row["versions"]
-        ],
-        "events": [
-            {"event_id": e["event_id"], "kind": e["kind"], "at": iso(e["at"]),
-             "from_version": e["from_version"], "to_version": e["to_version"],
-             "closed_between": closed_between(e)}
-            for e in row["events"]
-        ],
-    }
+    data = page.record()
     lines = [
         f"{data['title'] or '?'} — {data['company'] or '?'}  [{data['board']}]",
         f"{uid}  {data['status']}  {data['version_count']} version(s), "
@@ -202,7 +176,6 @@ def q_events(
 ) -> None:
     """Lifecycle events oldest first — what `pulse` reports, without the cursor."""
     from jobhunter.cli import _split_board
-    from jobhunter.store import queries
 
     kinds = tuple(k.strip() for k in kind.split(",") if k.strip()) if kind else None
     for k in kinds or ():
@@ -220,24 +193,17 @@ def q_events(
     limit = _clamp(limit)
     window = _since(since, output)
     _, conn = _open(output)
-    rows = _query(conn, output, lambda: queries.events_page(
+    page = _query(conn, output, lambda: views.events_view(
         conn, since=window, kinds=kinds, source=src, board=brd, uid=uid, limit=limit,
         after_event_id=after_id))
-    truncated = len(rows) > limit
-    rows = rows[:limit]
-    data = [
-        {"event_id": e["event_id"], "kind": e["kind"], "uid": e["uid"], "at": iso(e["at"]),
-         "board": f"{e['source']}:{e['board']}", "title": e["title"], "company": e["company"],
-         "url": e["url"], "closed_between": closed_between(e)}
-        for e in rows
-    ]
+    data = page.rows()
     human = "\n".join(
         f"{e['at']}  {e['kind']:8} {(e['company'] or '-'):18} {e['title'] or '-'}"
         for e in data
     ) or "(no events)"
     emit(_select_fields(data, fields, output), human=human, output=output, count=len(data),
-         truncated=truncated, next_cursor=str(rows[-1]["event_id"]) if truncated and rows else None,
-         hint=f"q posting {rows[0]['uid']} for lifecycle detail" if rows else None)
+         truncated=page.truncated, next_cursor=page.next_cursor,
+         hint=f"q posting {data[0]['uid']} for lifecycle detail" if data else None)
 
 
 @q_app.command("boards")
@@ -248,44 +214,30 @@ def q_boards(
     output: str | None = output_option(),
 ) -> None:
     """Per-board fetch health and open counts, one row per board the store knows."""
-    from jobhunter.store import queries
-
     limit = _clamp(limit)
     _, conn = _open(output)
-    rows = _query(conn, output, lambda: queries.boards_overview(conn))
-    if unhealthy:
-        rows = [r for r in rows if r["health"] != "ok"]
-    truncated = len(rows) > limit
-    rows = rows[:limit]
-    data = [
-        {"board": r["board"], "health": r["health"], "open": r["open"], "error": r["error"],
-         "started_at": iso(r["started_at"]) if r["started_at"] else None}
-        for r in rows
-    ]
+    page = _query(conn, output, lambda: views.boards_view(
+        conn, unhealthy_only=unhealthy, limit=limit))
+    data = page.rows()
     human = "\n".join(
         f"{r['board']:32} {(r['health'] or '-'):8} {r['open']:>5} open  {r['error'] or ''}".rstrip()
         for r in data
     ) or "(no boards)"
     emit(_select_fields(data, fields, output), human=human, output=output, count=len(data),
-         truncated=truncated,
-         hint="raise --limit to see the rest" if truncated else None)
+         truncated=page.truncated,
+         hint="raise --limit to see the rest" if page.truncated else None)
 
 
-def _parse_slice(value: str | None, output: str | None) -> tuple[int | None, int | None]:
+def _check_slice(value: str | None, output: str | None) -> None:
+    """Like `_check_after`: a malformed slice is a usage error, not a database
+    one — `document_view` would otherwise raise a bare ValueError mid-read."""
     if value is None:
-        return None, None
-    start_s, sep, end_s = value.partition(":")
-    start: int | None = None
-    end: int | None = None
+        return
     try:
-        if not sep:
-            raise ValueError(value)
-        start = int(start_s) if start_s else None
-        end = int(end_s) if end_s else None
+        views.parse_slice(value)
     except ValueError:
         fail("usage", f"--slice must be S:E codepoint offsets, got {value!r}",
              code=Exit.USAGE, output=output, hint="e.g. 0:500, 500: or :500")
-    return start, end
 
 
 @q_app.command("document")
@@ -297,36 +249,21 @@ def q_document(
     """The canonical markdown of one document — the text every quote span indexes."""
     from jobhunter.cli import _resolve_doc
     from jobhunter.markdown import NORMALIZER_VERSION
-    from jobhunter.store import extraction as xstore
 
-    start, end = _parse_slice(slice_, output)  # a bad slice never reaches the database
+    _check_slice(slice_, output)  # a bad slice never reaches the database
     _, conn = _open(output)
 
-    def load() -> tuple[str, str | None]:
+    def load() -> tuple[str, views.Page | None]:
         doc = _resolve_doc(conn, prefix, output)
-        return doc, xstore.markdown_for(conn, doc, NORMALIZER_VERSION)
+        return doc, views.document_view(conn, doc, slice_=slice_)
 
-    doc, markdown = _query(conn, output, load)
-    if markdown is None:
+    doc, page = _query(conn, output, load)
+    if page is None:
         fail("not_found", f"no document {doc[:12]} under {NORMALIZER_VERSION}",
              code=Exit.NOT_FOUND, output=output, hint="run: job-hunter rebuild")
-    text = markdown[start:end] if slice_ else markdown
-    emit({"document_hash": doc, "markdown": text}, human=text, output=output,
+    data = page.record()
+    emit(data, human=data["markdown"], output=output,
          hint=f"q profile --doc {doc[:12]} for what it demands")
-
-
-def _profile_row(conn: Conn, doc: str) -> dict[str, Any] | None:
-    """The row `q profile` reports: validated first, else the newest state, so a
-    quarantined document can explain itself instead of looking absent."""
-    return conn.execute(
-        "SELECT e.status, e.model, e.prompt_version, e.profile, e.updated_at,"
-        " v.title, v.company, v.url FROM extractions e"
-        " LEFT JOIN documents d ON d.document_hash = e.document_hash"
-        " LEFT JOIN posting_versions v ON v.version_hash = d.version_hash"
-        " WHERE e.document_hash = %s"
-        " ORDER BY (e.status = 'validated') DESC, e.updated_at DESC LIMIT 1",
-        (doc,),
-    ).fetchone()
 
 
 @q_app.command("profile")
@@ -342,7 +279,9 @@ def q_profile(
 
     def load() -> tuple[str, dict[str, Any] | None]:
         resolved = _resolve_doc(conn, doc, output)
-        return resolved, _profile_row(conn, resolved)
+        # the row, not `profile_view`: the two ways a profile can be absent are
+        # two different messages, and only the row says which one this is
+        return resolved, views.profile_row(conn, resolved)
 
     resolved, row = _query(conn, output, load)
     if row is None:
@@ -352,14 +291,8 @@ def q_profile(
         fail("not_found", f"no validated profile for {resolved[:12]} (status: {row['status']})",
              code=Exit.NOT_FOUND, output=output,
              hint=f"job-hunter extract review show {resolved[:12]}")
-    profile = row["profile"]
-    summary = profile_summary(profile)
-    data = {
-        "document_hash": resolved, "status": row["status"], "model": row["model"],
-        "prompt_version": row["prompt_version"], "updated_at": iso(row["updated_at"]),
-        "title": row["title"], "company": row["company"], "url": row["url"],
-        "profile": profile if full else summary,
-    }
+    data = views.profile_payload(resolved, row, full=full)
+    summary = profile_summary(row["profile"])  # the human lines read the digest either way
     facts = summary["facts"]
     comp = ", ".join(
         f"{c['min']}-{c['max']} {c['currency'] or '?'}" for c in facts["compensation"]
@@ -393,11 +326,6 @@ def q_claims(
 ) -> None:
     """Who demands one mention, across the corpus — the postings live on it today."""
     from jobhunter.cli import _split_board
-    from jobhunter.l2.prompt import PROMPT_VERSION
-    from jobhunter.l2.runner import SCHEMA_VERSION
-    from jobhunter.l2.state import globs_to_regex
-    from jobhunter.l2.transforms import VALIDATOR_VERSION
-    from jobhunter.store import queries
 
     if importance is not None and importance not in IMPORTANCES:
         fail("usage", f"--importance must be one of: {', '.join(IMPORTANCES)}",
@@ -405,27 +333,16 @@ def q_claims(
     src, brd = _split_board(board, output)
     limit = _clamp(limit)
     settings, conn = _open(output)
-    # The engine tuple in force, exactly as `pulse` scopes its profiles: retired
-    # prompt/validator versions still sit in `profile_mentions` after a rebuild.
-    rows = _query(conn, output, lambda: queries.claims_by_mention(
-        conn, mention=mention, importance=importance, source=src, board=brd, limit=limit,
-        model_regex=globs_to_regex(settings.l2_models), prompt_version=PROMPT_VERSION,
-        schema_version=SCHEMA_VERSION, validator_version=VALIDATOR_VERSION))
-    truncated = len(rows) > limit
-    rows = rows[:limit]
-    data = [
-        {"document_hash": r["document_hash"], "mention": r["mention"],
-         "area_kind": r["area_kind"], "importance": r["importance"], "uid": r["uid"],
-         "board": f"{r['source']}:{r['board']}", "title": r["title"], "company": r["company"],
-         "url": r["url"]}
-        for r in rows
-    ]
+    page = _query(conn, output, lambda: views.claims_view(
+        conn, settings, mention=mention, importance=importance, source=src, board=brd,
+        limit=limit))
+    data = page.rows()
     human = "\n".join(
         f"{r['importance']:10} {r['area_kind']:10} {(r['company'] or '-'):18} "
         f"{r['title'] or '-'}  {r['uid']}"
         for r in data
     ) or f"(nothing demands {mention!r})"
     emit(_select_fields(data, fields, output), human=human, output=output, count=len(data),
-         truncated=truncated,
+         truncated=page.truncated,
          hint=f"q profile --doc {data[0]['document_hash'][:12]} for the whole demand"
          if data else None)

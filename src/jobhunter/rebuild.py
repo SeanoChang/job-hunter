@@ -8,7 +8,7 @@ from psycopg import sql
 
 from jobhunter.archive.base import ArchiveStore
 from jobhunter.ingest import replay_pending
-from jobhunter.store import db
+from jobhunter.store import db, mcp_state
 
 
 class LockHeld(RuntimeError):
@@ -21,6 +21,8 @@ class RebuildSummary:
     skipped: int
     work_schema: str
     swapped: bool
+    cursors_carried: int = 0
+    grants_reapplied: int = 0
 
 
 def rebuild(
@@ -39,6 +41,11 @@ def rebuild(
         if not db.try_lock(conn):
             raise LockHeld("already running (advisory lock held)")
         try:
+            # A fresh schema has an empty ACL, so the swap would strip the reader
+            # and MCP roles of everything they were granted. Read that off the
+            # live schema first: an unreplayable privilege should stop the rebuild
+            # before it spends the archive, not after.
+            grants = db.capture_grants(conn, schema)
             with conn.transaction():
                 conn.execute(
                     sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(work))
@@ -53,10 +60,17 @@ def rebuild(
 
             rebuild_extractions(conn, store, l2_globs)
             conn.commit()
+            # The watermarks are not in the archive, so they are copied rather than
+            # replayed — as late as possible, since the hosted server goes on
+            # advancing them while the replay runs. Carry, grant and swap share one
+            # transaction: the new schema goes live with its privileges already on.
+            carried = mcp_state.carry_cursors(conn, src=schema, dst=work)
+            reapplied = db.apply_grants(conn, work, grants)
             db.swap_schema(conn, new=work, target=schema, previous=f"{schema}_previous")
             conn.commit()
             return RebuildSummary(
-                ingested=s.ingested, skipped=s.skipped, work_schema=work, swapped=True
+                ingested=s.ingested, skipped=s.skipped, work_schema=work, swapped=True,
+                cursors_carried=carried, grants_reapplied=reapplied,
             )
         finally:
             db.unlock(conn)

@@ -9,6 +9,7 @@ EXPECTED_TABLES = {
     "fetch_attempts", "posting_versions", "documents", "presence", "runs", "panel",
     "postings", "posting_events", "schema_meta",
     "extraction_attempts", "extraction_reviews", "extractions", "profile_mentions",
+    "mcp_cursors",
 }
 
 
@@ -77,6 +78,58 @@ def test_swap_schema(pg: psycopg.Connection[dict[str, Any]]) -> None:
     pg.commit()
 
 
+def test_capture_grants_of_an_owner_only_schema_is_empty(
+    pg: psycopg.Connection[dict[str, Any]],
+) -> None:
+    """The owner's implicit privileges are not grants; carrying them would be noise."""
+    assert db.capture_grants(pg, _schema_of(pg)) == []
+
+
+def test_capture_grants_of_a_missing_schema_is_empty(
+    pg: psycopg.Connection[dict[str, Any]],
+) -> None:
+    """The first rebuild of a database has no live schema to copy privileges from."""
+    assert db.capture_grants(pg, "jobhunter_no_such_schema") == []
+
+
+def test_a_privilege_the_carry_cannot_spell_is_refused_loudly() -> None:
+    """Better a rebuild that stops than one that swaps in a half-privileged schema."""
+    import pytest
+
+    with pytest.raises(ValueError, match="ZAPHOD"):
+        db.Grant("jobhunter_ro", ("SELECT", "ZAPHOD"), "postings")
+
+
+def test_grants_survive_capture_and_apply(pg: psycopg.Connection[dict[str, Any]]) -> None:
+    src = _schema_of(pg)
+    dst = f"{src}_new"
+    db.init(pg, dst)
+    pg.execute(f'GRANT USAGE ON SCHEMA "{src}" TO pg_monitor')
+    pg.execute(f'GRANT SELECT ON ALL TABLES IN SCHEMA "{src}" TO pg_monitor')
+    pg.execute(f'GRANT INSERT, UPDATE, DELETE ON "{src}".mcp_cursors TO pg_monitor')
+    pg.commit()
+    grants = db.capture_grants(pg, src)
+    assert db.Grant("pg_monitor", ("USAGE",), None) in grants
+    assert db.apply_grants(pg, dst, grants) == len(grants)
+    pg.commit()
+    assert db.capture_grants(pg, dst) == grants
+
+
+def test_apply_grants_skips_a_table_the_new_schema_does_not_have(
+    pg: psycopg.Connection[dict[str, Any]],
+) -> None:
+    """Schema versions drop tables as well as add them; a stale grant is not fatal."""
+    src = _schema_of(pg)
+    dst = f"{src}_new"
+    db.init(pg, dst)
+    pg.execute(f'CREATE TABLE "{src}".retired (x int)')
+    pg.execute(f'GRANT SELECT ON "{src}".retired TO pg_monitor')
+    pg.commit()
+    applied = db.apply_grants(pg, dst, db.capture_grants(pg, src))
+    pg.commit()
+    assert applied == 0
+
+
 def test_init_surfaces_the_real_ddl_error(pg: psycopg.Connection[dict[str, Any]]) -> None:
     """A DDL conflict must not be masked by InFailedSqlTransaction from the path restore."""
     import pytest
@@ -132,6 +185,18 @@ def test_additive_upgrade_from_v2_stamps_version(pg: psycopg.Connection[dict[str
     pg.commit()
     assert db.stored_schema_version(pg) == db.SCHEMA_VERSION
     assert "profile_mentions" in _tables(pg, schema)
+
+
+def test_additive_upgrade_from_v3_stamps_version(pg: psycopg.Connection[dict[str, Any]]) -> None:
+    """v3 -> v4 adds mcp_cursors and nothing else, so schema.sql IS the migration."""
+    schema = _schema_of(pg)
+    db.set_meta(pg, "schema_version", "3")
+    pg.execute("DROP TABLE mcp_cursors")
+    pg.commit()
+    db.init(pg, schema)
+    pg.commit()
+    assert db.stored_schema_version(pg) == db.SCHEMA_VERSION
+    assert "mcp_cursors" in _tables(pg, schema)
 
 
 def test_non_additive_mismatch_still_raises(pg: psycopg.Connection[dict[str, Any]]) -> None:
