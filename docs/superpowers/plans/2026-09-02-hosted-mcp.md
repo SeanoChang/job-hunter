@@ -177,7 +177,7 @@ Tool `pulse(cursor: str = "default", peek: bool = False, since: str | None = Non
 
 **Runbook** (`docs/runbooks/2026-09-02-deploy-mcp.md`), copy-pasteable, "every command here is for Sean" at the top: roles SQL (`jobhunter_ro` if absent; `jobhunter_mcp` = ro + `GRANT INSERT, UPDATE, DELETE ON mcp_cursors TO jobhunter_mcp;` — table must exist first via `db init` as owner) → image build (`gcloud builds submit --tag <region>-docker.pkg.dev/<project>/job-hunter/mcp:v1`) → `terraform -chdir=infra init && terraform -chdir=infra plan` → `apply` → add the two secret versions → fill `.mcp.json`'s URL from the terraform output → curl smoke (`/healthz`, then authenticated `tools/list` JSON-RPC).
 
-- [ ] Steps: write tf + runbook → `grep` docs for stale claims (schema v3, "no MCP") → gates (run the test suite anyway) → commit: `feat(infra): terraform for the Cloud Run MCP service + deploy runbook`
+- [x] Steps: write tf + runbook → `grep` docs for stale claims (schema v3, "no MCP") → gates (run the test suite anyway) → commit: `feat(infra): terraform for the Cloud Run MCP service + deploy runbook`
 
 ---
 

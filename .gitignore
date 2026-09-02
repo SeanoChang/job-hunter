@@ -20,6 +20,13 @@ data/
 .env
 env.local
 
+# Terraform working state (infra/ is the config; the state names the project and
+# the plugin cache is machine-local). Secret *values* never enter state — see
+# infra/README.md.
+infra/.terraform/
+infra/*.tfstate*
+infra/*.tfvars
+
 # Session artifacts
 .playwright-mcp/
 .DS_Store
