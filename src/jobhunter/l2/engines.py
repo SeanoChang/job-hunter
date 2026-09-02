@@ -45,6 +45,23 @@ class EngineFatalError(Exception):
     or laddering cannot help; the run aborts and the CLI exits systemic."""
 
 
+class EngineAuthError(EngineFatalError):
+    """The provider refused the request itself: no key, no credit, no access.
+
+    Distinct from a throttle: waiting does not fix it, so it must trip the run
+    on the first call and carry the status plus the provider's own words — a
+    402 that reaches the operator as "database error" costs a day of runs
+    (CI run 33632605810, 2026-09-02).
+    """
+
+    LABELS = {401: "credentials rejected", 402: "payment required", 403: "access forbidden"}
+
+    def __init__(self, status: int, detail: str = "") -> None:
+        self.status = status
+        label = self.LABELS.get(status, "request refused")
+        super().__init__(f"{label} (HTTP {status}){f': {detail}' if detail else ''}")
+
+
 def engine_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """The structural schema an engine needs, without our meta declaration.
 
@@ -115,8 +132,10 @@ class OpenAICompat:
             raise EngineThrottled(f"429 from {self._base_url}")
         if resp.status_code == 404:
             raise EngineModelNotFound(model)
-        if resp.status_code in (401, 403):
-            raise EngineFatalError(f"credentials rejected (HTTP {resp.status_code})")
+        if resp.status_code in (401, 402, 403):
+            # 402 is OpenRouter's "no credits": as permanent as a bad key, and
+            # the body carries the provider's explanation the operator needs
+            raise EngineAuthError(resp.status_code, resp.text[:300])
         if resp.status_code == 400:
             text = resp.text[:300]
             if "model" in text.lower():

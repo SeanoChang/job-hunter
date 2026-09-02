@@ -82,7 +82,8 @@ def derive_state(
             elif event.outcome in ("schema_invalid", "attribution_failed"):
                 if status is None and event.attempt_no >= 3 and event.ladder_exhausted:
                     status = "quarantined"
-            # transport / throttled / model_rejected never settle anything
+            # transport / throttled / model_rejected / engine_fatal say nothing
+            # about the document, so they never settle anything
         else:
             if event.verb == "retry":
                 status, chosen = None, None

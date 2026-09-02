@@ -525,6 +525,23 @@ def test_sync_reports_extraction_failure_without_failing_the_run(
     assert data["fetch"]["counts"]["ok"] == 1
 
 
+def test_sync_reports_a_payment_failure_as_an_engine_error(
+    syncenv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobhunter.l2.engines import EngineAuthError
+    from tests.l2.test_runner import FakeEngine
+
+    monkeypatch.setattr(
+        cli, "_make_engine", lambda s: FakeEngine([EngineAuthError(402, "Insufficient credits")])
+    )
+    r = runner.invoke(cli.app, ["sync", "-o", "json"])
+    assert r.exit_code == 0, r.stdout
+    error = json.loads(r.stdout)["data"]["extract"]["error"]
+    # the operator must read who refused and why, not "database error"
+    assert error.startswith("engine error:") and "402" in error
+    assert "Insufficient credits" in error and "database" not in error
+
+
 def test_sync_throttled_extraction_with_no_progress_is_systemic(
     syncenv: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

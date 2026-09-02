@@ -1151,8 +1151,10 @@ def _extract_once(
             max_docs=max_docs if max_docs is not None else settings.l2_max_docs,
             max_usd=max_usd if max_usd is not None else settings.l2_max_usd,
             only_doc=doc, dry_run=dry_run,
+            # a batch outlives a managed Postgres' idle timeout; the runner
+            # replaces the dropped connection itself and commits its own work
+            connect=lambda: _db.connect(settings.require_database_url(), schema=_schema),
         )
-        conn.commit()
     except ArchiveError as e:
         raise _ExtractFailure("backend", f"archive error: {e}", Exit.BACKEND) from e
     except (psycopg.Error, _db.SchemaMismatch, ValueError) as e:
