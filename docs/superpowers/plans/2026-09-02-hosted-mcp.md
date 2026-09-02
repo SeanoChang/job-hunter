@@ -54,10 +54,10 @@ def pulse_view(conn, settings, *, wm: Watermark | None, since_iso: str | None,
 
 Rules: copy the assembly logic (dict shaping, `iso()` conversion, `closed_between`, profile summaries, cursor construction) out of the `cli_q.py` bodies and `pulse.build_pulse` verbatim — this is a move, not a rewrite. `cli_q.py` commands become: parse/validate flags → open conn → call view → `emit`. Validation that produces `fail(...)` (bad status, bad cursor shape, unknown `--fields`) STAYS in `cli_q.py` — views raise `ValueError` and never import typer or cli_output.
 
-- [ ] **Step 1:** Write `tests/test_views.py`: for each view, call it directly against the `qenv`-style fixture corpus (reuse/import the fixture setup from `tests/test_cli_q.py`) and assert the returned `Page.data` equals what the corresponding CLI invocation's envelope `data` contains (parity test — invoke the CLI with CliRunner in the same test and compare). Run: expect ImportError.
-- [ ] **Step 2:** Create `views.py` by moving code; rewire `cli_q.py` and the `pulse` command.
-- [ ] **Step 3:** `uv run pytest -q` (exit 0 — including untouched test_cli_q.py) `&& uv run ruff check . && uv run mypy`.
-- [ ] **Step 4:** Commit: `refactor(cli): payload assembly moves to views.py; CLI behavior unchanged`
+- [x] **Step 1:** Write `tests/test_views.py`: for each view, call it directly against the `qenv`-style fixture corpus (reuse/import the fixture setup from `tests/test_cli_q.py`) and assert the returned `Page.data` equals what the corresponding CLI invocation's envelope `data` contains (parity test — invoke the CLI with CliRunner in the same test and compare). Run: expect ImportError.
+- [x] **Step 2:** Create `views.py` by moving code; rewire `cli_q.py` and the `pulse` command.
+- [x] **Step 3:** `uv run pytest -q` (exit 0 — including untouched test_cli_q.py) `&& uv run ruff check . && uv run mypy`.
+- [x] **Step 4:** Commit: `refactor(cli): payload assembly moves to views.py; CLI behavior unchanged`
 
 ---
 
