@@ -23,7 +23,7 @@ from jobhunter.l2.engines import (
     EngineTransportError,
 )
 from jobhunter.l2.prompt import PROMPT_VERSION
-from jobhunter.l2.runner import run
+from jobhunter.l2.runner import LockLost, run
 from jobhunter.l2.transforms import VALIDATOR_VERSION
 from jobhunter.store import db
 from tests.conftest import TEST_DSN
@@ -729,3 +729,28 @@ def test_engine_failure_survives_a_dead_connection_teardown(
             engine=FakeEngine([EngineAuthError(402, "Insufficient credits")]),
             max_docs=10, max_usd=5.0, connect=lambda: pg)
     assert "402" in str(caught.value)
+
+
+def test_engine_failure_survives_losing_the_lock_while_recording_it(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """The engine failure is the news, even when its own bookkeeping loses the lock.
+
+    Recording the `engine_fatal` attempt can hit the dead connection; if the
+    replacement cannot re-take the extract lock, the LockLost must not be
+    reported as `lock_held` — that exits 0 saying "nothing done" and throws the
+    402 away.
+    """
+    _seed_doc(pg)
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    schema = str(schema_row["s"])
+    flaky = FlakyConn(pg, die_on="INSERT INTO extraction_attempts")
+    with pytest.raises(EngineFatalError) as caught:
+        run(_settings(), flaky, store,  # type: ignore[arg-type]
+            engine=FakeEngine([EngineAuthError(402, "Insufficient credits")]),
+            max_docs=10, max_usd=5.0,
+            # a genuinely new backend: the extract lock is still held elsewhere
+            connect=lambda: db.connect(TEST_DSN, schema=schema))
+    assert "402" in str(caught.value) and "Insufficient credits" in str(caught.value)
+    assert isinstance(caught.value.__cause__, LockLost)  # the lock loss is not hidden either

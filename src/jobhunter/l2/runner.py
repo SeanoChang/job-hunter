@@ -480,10 +480,18 @@ def _extract_doc(
                 # document caused it and no rung or retry fixes it. Record the
                 # evidence, then let the engine's own words reach the caller —
                 # they must never come back as a database error.
-                archive_attempt(requested_model=model, observed_model=None,
-                                outcome="engine_fatal", raw_response=None,
-                                fed=prior_errors, produced=[str(exc)],
-                                ladder_exhausted=False, started_at=t0)
+                try:
+                    archive_attempt(requested_model=model, observed_model=None,
+                                    outcome="engine_fatal", raw_response=None,
+                                    fed=prior_errors, produced=[str(exc)],
+                                    ladder_exhausted=False, started_at=t0)
+                except LockLost as lost:
+                    # bookkeeping for the failure must never become the failure:
+                    # run()'s `except LockLost` would turn a 402 into a normal
+                    # `lock_held` summary and exit 0 saying "nothing done". The
+                    # attempt object is already archived, so the lost row is
+                    # re-recorded by a later catch-up scan.
+                    raise exc from lost
                 raise
             except EngineModelNotFound:
                 archive_attempt(requested_model=model, observed_model=None,
