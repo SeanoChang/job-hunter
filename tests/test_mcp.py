@@ -120,6 +120,20 @@ def test_healthz_is_the_only_open_route(client: TestClient) -> None:
     assert malformed.status_code == 401  # the scheme is part of the credential
 
 
+def test_a_non_ascii_authorization_header_is_a_clean_401(client: TestClient) -> None:
+    """A hostile header carrying a raw high byte must be rejected, not crash the
+    auth check: a str compare would raise TypeError and 500 on exactly the
+    requests auth exists to deny."""
+    r = client.post(
+        mcp.MCP_PATH,
+        headers={b"authorization": b"Bearer \xff\xfe", "Content-Type": "application/json",
+                 "Accept": "application/json, text/event-stream"},
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+    )
+    assert r.status_code == 401
+    assert r.json() == {"error": "unauthorized"}
+
+
 def test_tools_list_names_the_whole_read_surface(client: TestClient) -> None:
     names = {t["name"] for t in _result(client, "tools/list")["tools"]}
     assert names == READ_TOOLS | {"pulse"}
@@ -218,6 +232,8 @@ def test_absent_identifiers_and_bad_flags_are_tool_errors(
     assert "importance" in _tool_error(client, "claims", mention="python", importance="vital")
     assert "S:E" in _tool_error(client, "document", document_hash=dh, slice="nope")
     assert "since" in _tool_error(client, "events", since="last tuesday")
+    # a window that overflows timedelta is a bad argument, not a 500
+    assert "too large" in _tool_error(client, "events", since="9999999999d")
 
 
 @pytest.fixture

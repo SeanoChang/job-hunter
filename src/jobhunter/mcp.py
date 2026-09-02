@@ -113,11 +113,16 @@ def _since(value: str | None) -> datetime | None:
     m = _WINDOW.match(value.strip())
     if m:
         n, unit = int(m.group(1)), m.group(2)
-        return _now() - {"m": timedelta(minutes=n), "h": timedelta(hours=n),
-                         "d": timedelta(days=n)}[unit]
+        try:
+            # A window like 9999999999d overflows timedelta; that is a bad
+            # argument, not a server error — surface it as a ToolError.
+            return _now() - {"m": timedelta(minutes=n), "h": timedelta(hours=n),
+                             "d": timedelta(days=n)}[unit]
+        except OverflowError:
+            raise ToolError(f"since window is too large: {value!r}") from None
     try:
         return parse_iso(value)
-    except ValueError:
+    except (ValueError, OverflowError):
         raise ToolError(
             f"since must be a window like 30m, 24h or 7d, or an ISO instant: {value!r}"
         ) from None
@@ -357,7 +362,10 @@ class BearerAuth:
 
     def __init__(self, app: ASGIApp, token: str) -> None:
         self._app = app
-        self._expected = f"Bearer {token}"
+        # Compare raw bytes: hmac.compare_digest raises TypeError on a non-ASCII
+        # str, and a hostile header can carry any byte, so a str compare would
+        # 500 instead of returning 401 on exactly the requests auth must reject.
+        self._expected = f"Bearer {token}".encode()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -367,7 +375,7 @@ class BearerAuth:
             await _respond(send, 200, _HEALTH_BODY)
             return
         offered = next(
-            (v.decode("latin-1") for k, v in scope["headers"] if k == b"authorization"), ""
+            (v for k, v in scope["headers"] if k == b"authorization"), b""
         )
         if not hmac.compare_digest(offered, self._expected):
             await _respond(send, 401, b'{"error": "unauthorized"}')

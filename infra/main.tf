@@ -36,6 +36,7 @@ resource "google_project_service" "required" {
     "secretmanager.googleapis.com",
     "artifactregistry.googleapis.com",
     "cloudbuild.googleapis.com", # `gcloud builds submit` builds the image
+    "iam.googleapis.com",        # the service account below is an IAM resource
   ])
 
   service            = each.value
@@ -84,6 +85,7 @@ resource "google_service_account" "mcp" {
   account_id   = "job-hunter-mcp"
   display_name = "job-hunter hosted MCP server"
   description  = "Runs the Cloud Run MCP service; may read its own two secrets, nothing else"
+  depends_on   = [google_project_service.required] # iam.googleapis.com must be on first
 }
 
 resource "google_secret_manager_secret_iam_member" "accessor" {

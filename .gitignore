@@ -30,3 +30,6 @@ infra/*.tfvars
 # Session artifacts
 .playwright-mcp/
 .DS_Store
+
+# agent worktrees (transient)
+.claude/worktrees/

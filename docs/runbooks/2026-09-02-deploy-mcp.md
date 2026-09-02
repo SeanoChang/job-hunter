@@ -36,10 +36,14 @@ uv run job-hunter db version     # code and database both say 4
 Then in `psql` as the owner:
 
 ```sql
--- The read role agent machines already use (2026-08-18 runbook). Skip if it exists.
+-- The read role agent machines already use (2026-08-18 runbook). Skip only the
+-- CREATE ROLE if it already exists — but ALWAYS re-run the GRANT SELECT below:
+-- mcp_cursors is a new (schema v4) table, and a role granted SELECT before it
+-- existed does not automatically hold SELECT on it, so pulse would get
+-- "permission denied for table mcp_cursors" on its first read.
 CREATE ROLE jobhunter_ro LOGIN PASSWORD '…';
 GRANT USAGE ON SCHEMA jobhunter TO jobhunter_ro;
-GRANT SELECT ON ALL TABLES IN SCHEMA jobhunter TO jobhunter_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA jobhunter TO jobhunter_ro;  -- re-run even if the role pre-existed
 ALTER DEFAULT PRIVILEGES IN SCHEMA jobhunter GRANT SELECT ON TABLES TO jobhunter_ro;
 
 -- The server's role: everything jobhunter_ro reads, plus its own cursor rows.
