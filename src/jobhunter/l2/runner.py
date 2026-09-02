@@ -6,6 +6,12 @@ failure and falls through on model-not-found; quarantine only after the ladder
 is exhausted. `observed_model` gates everything: out-of-glob responses are
 `model_rejected`, and five consecutive rejections abort the run.
 
+A batch is long and mostly spent waiting on an engine, so the database
+connection under it is expected to die (Neon suspends an idle project): every
+DB touch goes through `_Session`, which reconnects, re-takes the extract lock
+and replays the one failed call. Cleanup on a dead connection is best-effort so
+it cannot overwrite the failure that ended the run.
+
 `settle` is the ONLY writer of the derived `extractions` row — the runner, the
 catch-up scan, the review verbs and `extract rebuild` all fold the same
 config-scoped event streams through it, and the stored profile always comes
@@ -14,11 +20,14 @@ from the chosen attempt's archived record, never from caller context.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
+
+import psycopg
 
 from jobhunter import __version__
 from jobhunter.archive import keys
@@ -29,6 +38,7 @@ from jobhunter.l2.assemble import AssembleError, assemble
 from jobhunter.l2.attempts import Attempt, derived_error_detail, from_bytes, to_bytes
 from jobhunter.l2.engines import (
     Engine,
+    EngineFatalError,
     EngineModelNotFound,
     EngineThrottled,
     EngineTransportError,
@@ -49,6 +59,123 @@ TRANSPORT_RETRIES = 3
 BREAKER_LIMIT = 5
 
 
+class LockLost(RuntimeError):
+    """The extract lock moved to another writer while our connection was down."""
+
+
+class _Journal:
+    """Everything this run has written to the extraction surface, replayable.
+
+    A dropped backend rolls back every uncommitted row, including the rows
+    written before the statement that died. The next run's catch-up scan cannot
+    heal those: the watermark is max(started_at) over the rows that DID commit,
+    so once the replacement connection commits a later attempt the orphans sit
+    behind the watermark forever and only `extract rebuild` would find them. The
+    run therefore re-applies its own writes onto the new connection. Both
+    `record_*` are ON CONFLICT DO NOTHING, so a row that survived is a no-op and
+    only what was actually lost is re-derived through `settle`.
+    """
+
+    def __init__(
+        self, store: ArchiveStore, globs: tuple[str, ...], now: Callable[[], datetime]
+    ) -> None:
+        self.store = store
+        self.globs = globs
+        self._now = now
+        self._attempts: dict[str, Attempt] = {}
+        self._reviews: dict[str, dict[str, Any]] = {}
+
+    def record_attempt(self, conn: Conn, attempt: Attempt) -> bool:
+        self._attempts[attempt.attempt_key] = attempt
+        return extraction.record_attempt(conn, attempt, derived_error_detail(attempt))
+
+    def record_review(self, conn: Conn, event: dict[str, Any]) -> bool:
+        self._reviews[event["review_key"]] = event
+        return extraction.record_review(conn, **event)
+
+    def replay(self, conn: Conn) -> None:
+        """Re-apply onto a fresh connection, then re-settle only what was lost."""
+        touched: set[tuple[str, str, str, str]] = set()
+        for attempt in self._attempts.values():
+            if extraction.record_attempt(conn, attempt, derived_error_detail(attempt)):
+                touched.add((attempt.document_hash, attempt.prompt_version,
+                             attempt.schema_version, attempt.validator_version))
+        for event in self._reviews.values():
+            if extraction.record_review(conn, **event):
+                touched.add((event["document_hash"], event["prompt_version"],
+                             event["schema_version"], event["validator_version"]))
+        updated_at = iso(self._now())
+        for dh, pv, sv, vv in touched:
+            # the derived row died with the attempt rows: without this a run can
+            # report a validation the store does not hold (death on the per-doc
+            # commit, after settle has already written it)
+            settle(conn, self.store, dh, self.globs, updated_at,
+                   prompt_version=pv, schema_version=sv, validator_version=vv)
+
+
+class _Session:
+    """The runner's connection, replaceable mid-run.
+
+    A managed Postgres (Neon) suspends an idle project after ~5 minutes and
+    drops its connections; the next statement raises OperationalError. Every DB
+    touch goes through `do`, which reconnects once, re-takes the extract lock,
+    re-applies the run's journal and replays that one call. Replay is safe
+    because an attempt is archived BEFORE it is recorded and `record_attempt` is
+    idempotent on attempt_key.
+    """
+
+    def __init__(
+        self,
+        conn: Conn,
+        connect: Callable[[], Conn] | None,
+        journal: _Journal | None = None,
+    ) -> None:
+        self.conn = conn
+        self.holds_lock = False
+        self._connect = connect
+        self._journal = journal
+        self._owned = False  # the caller's connection stays the caller's to close
+
+    def do[T](self, op: Callable[[Conn], T]) -> T:
+        try:
+            return op(self.conn)
+        except psycopg.OperationalError:
+            if self._connect is None:
+                raise
+            self._revive()
+            return op(self.conn)
+
+    def _revive(self) -> None:
+        assert self._connect is not None  # `do` checks before calling
+        with contextlib.suppress(psycopg.Error):
+            self.conn.close()
+        self.conn = self._connect()  # restores search_path with the schema
+        self._owned = True
+        # the dead backend released its session-scoped advisory lock: another
+        # writer may hold it now, and two drains must never write at once
+        self.holds_lock = db.try_lock(self.conn, db.EXTRACT_LOCK_KEY)
+        if not self.holds_lock:
+            raise LockLost("the extract lock is held by another writer")
+        if self._journal is not None:
+            self._journal.replay(self.conn)
+
+    def release(self) -> None:
+        """Commit, unlock, and drop a connection we opened — best effort.
+
+        Cleanup against a corpse must never replace the exception that killed
+        the run: an engine failure reported as "database error" hides the only
+        fact worth acting on (CI run 33632605810).
+        """
+        if self.holds_lock:
+            with contextlib.suppress(psycopg.OperationalError):
+                self.conn.commit()
+                db.unlock(self.conn, db.EXTRACT_LOCK_KEY)
+                self.conn.commit()
+        if self._owned:
+            with contextlib.suppress(psycopg.Error):
+                self.conn.close()
+
+
 @dataclass
 class ExtractSummary:
     run_id: str
@@ -62,6 +189,11 @@ class ExtractSummary:
     replayed: int = 0
     spend_usd: float = 0.0
     queued: list[str] = field(default_factory=list)
+    # why the run stopped early, when it stopped for a reason the counters do
+    # not carry. "lock_lost": the extract lock moved to another writer mid-run,
+    # so `lock_held` here does NOT mean nothing happened — docs_attempted and
+    # spend_usd already left the account.
+    aborted: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -70,7 +202,7 @@ class ExtractSummary:
             "quarantined": self.quarantined, "pending": self.pending,
             "throttled": self.throttled, "breaker_abort": self.breaker_abort,
             "replayed": self.replayed, "spend_usd": round(self.spend_usd, 5),
-            "queued": self.queued,
+            "queued": self.queued, "aborted": self.aborted,
         }
 
 
@@ -138,7 +270,8 @@ def settle(
     return state
 
 
-def _catch_up(conn: Conn, store: ArchiveStore, globs: tuple[str, ...], updated_at: str) -> int:
+def _catch_up(conn: Conn, journal: _Journal, updated_at: str) -> int:
+    store, globs = journal.store, journal.globs
     mark = extraction.watermark(conn)
     mark = mark.replace(microsecond=0) if mark is not None else None
     start_after = None
@@ -160,7 +293,9 @@ def _catch_up(conn: Conn, store: ArchiveStore, globs: tuple[str, ...], updated_a
         if mark is not None and parsed[0] < mark:
             continue
         attempt = from_bytes(store.get(key))
-        if extraction.record_attempt(conn, attempt, derived_error_detail(attempt)):
+        # through the journal: a reconnect later in this run must not roll the
+        # replay back into the same invisibility it just healed
+        if journal.record_attempt(conn, attempt):
             replayed += 1
             touched.add(
                 (attempt.document_hash, attempt.prompt_version, attempt.schema_version,
@@ -171,7 +306,7 @@ def _catch_up(conn: Conn, store: ArchiveStore, globs: tuple[str, ...], updated_a
     # rebuild. The prefix is tiny (human verbs), so a full idempotent scan is fine.
     for key in store.list(keys.X_REVIEWS_PREFIX):
         event = json.loads(store.get(key))
-        if extraction.record_review(conn, **event):
+        if journal.record_review(conn, event):
             replayed += 1
             touched.add(
                 (event["document_hash"], event["prompt_version"], event["schema_version"],
@@ -194,6 +329,7 @@ def run(
     only_doc: str | None = None,
     dry_run: bool = False,
     now: Callable[[], datetime] = utcnow_precise,
+    connect: Callable[[], Conn] | None = None,
 ) -> ExtractSummary:
     started = now()
     summary = ExtractSummary(run_id=f"x-{iso(started).replace(':', '').replace('-', '')}")
@@ -202,26 +338,29 @@ def run(
     if not db.try_lock(conn, db.EXTRACT_LOCK_KEY):
         summary.lock_held = True
         return summary
+    journal = _Journal(store, settings.l2_models, now)
+    session = _Session(conn, connect, journal)
+    session.holds_lock = True
     try:
         # done = a row exists under any ACCEPTED model (l2_models) at the current
         # versions; candidates are what we ask for, not what satisfies (spec §4.1)
         model_regex = globs_to_regex(settings.l2_models)
-        if dry_run:
-            # strictly read-only: no write-once objects, no catch-up replay
-            summary.queued = [only_doc] if only_doc else extraction.queue(
-                conn, prompt_version=PROMPT_VERSION, schema_version=SCHEMA_VERSION,
+
+        def queue(c: Conn) -> list[str]:
+            return extraction.queue(
+                c, prompt_version=PROMPT_VERSION, schema_version=SCHEMA_VERSION,
                 validator_version=VALIDATOR_VERSION, model_regex=model_regex,
                 normalizer_version=NORMALIZER_VERSION, limit=max_docs,
             )
+
+        if dry_run:
+            # strictly read-only: no write-once objects, no catch-up replay
+            summary.queued = [only_doc] if only_doc else session.do(queue)
             return summary
         _ensure_write_once(store)
-        summary.replayed = _catch_up(conn, store, settings.l2_models, iso(now()))
-        conn.commit()
-        docs = [only_doc] if only_doc else extraction.queue(
-            conn, prompt_version=PROMPT_VERSION, schema_version=SCHEMA_VERSION,
-            validator_version=VALIDATOR_VERSION, model_regex=model_regex,
-            normalizer_version=NORMALIZER_VERSION, limit=max_docs,
-        )
+        summary.replayed = session.do(lambda c: _catch_up(c, journal, iso(now())))
+        session.do(lambda c: c.commit())
+        docs = [only_doc] if only_doc else session.do(queue)
         summary.queued = docs
         breaker = 0
         for dh in docs:
@@ -229,11 +368,11 @@ def run(
             # subscription-backfill mode), not "stop before the first document"
             if summary.docs_attempted >= max_docs or summary.spend_usd > max_usd:
                 break
-            result = _extract_doc(settings, conn, store, engine, dh, summary, breaker, now)
+            result = _extract_doc(settings, session, journal, engine, dh, summary, breaker, now)
             if result is None:
                 continue  # document vanished (normalizer bump mid-flight)
             disposition, breaker = result
-            conn.commit()
+            session.do(lambda c: c.commit())
             if disposition == "validated":
                 summary.validated += 1
             elif disposition == "quarantined":
@@ -246,28 +385,35 @@ def run(
             elif disposition == "breaker":
                 summary.breaker_abort = True
                 break
+    except LockLost:
+        # another writer owns the drain now; our uncommitted work died with the
+        # connection and the archive lets the next run replay it. The counters
+        # stay as they are — validated/quarantined/pending are incremented only
+        # after their document's commit, and the engine was paid for the rest —
+        # but `aborted` has to say so, or "lock_held" reads as "nothing done".
+        summary.lock_held = True
+        summary.aborted = "lock_lost"
     finally:
-        conn.commit()
-        db.unlock(conn, db.EXTRACT_LOCK_KEY)
-        conn.commit()
+        session.release()
     return summary
 
 
 def _extract_doc(
     settings: Settings,
-    conn: Conn,
-    store: ArchiveStore,
+    session: _Session,
+    journal: _Journal,
     engine: Engine,
     dh: str,
     summary: ExtractSummary,
     breaker: int,
     now: Callable[[], datetime],
 ) -> tuple[str, int] | None:
-    markdown = extraction.markdown_for(conn, dh, NORMALIZER_VERSION)
+    store = journal.store
+    markdown = session.do(lambda c: extraction.markdown_for(c, dh, NORMALIZER_VERSION))
     if markdown is None:
         return None
     summary.docs_attempted += 1
-    seq = extraction.next_attempt_no(conn, dh) - 1
+    seq = session.do(lambda c: extraction.next_attempt_no(c, dh)) - 1
     schema = emit_schema(SCHEMA_VERSION)
 
     def archive_attempt(
@@ -299,11 +445,11 @@ def _extract_doc(
             finished_at=now().isoformat(), record=record,
         )
         store.put(attempt.attempt_key, to_bytes(attempt))
-        extraction.record_attempt(conn, attempt, derived_error_detail(attempt))
+        session.do(lambda c: journal.record_attempt(c, attempt))
         return attempt
 
     def settle_and_disposition() -> tuple[str, int]:
-        state = settle(conn, store, dh, settings.l2_models, iso(now()))
+        state = session.do(lambda c: settle(c, store, dh, settings.l2_models, iso(now())))
         # the summary must agree with the fold: model_rejected fall-throughs
         # settle to no row (pending), not quarantine
         if state.status == "quarantined":
@@ -338,6 +484,24 @@ def _extract_doc(
                                 fed=prior_errors, produced=[str(exc)],
                                 ladder_exhausted=False, started_at=t0)
                 return "throttled", breaker
+            except EngineFatalError as exc:
+                # credentials, payment, malformed request: nothing about this
+                # document caused it and no rung or retry fixes it. Record the
+                # evidence, then let the engine's own words reach the caller —
+                # they must never come back as a database error.
+                try:
+                    archive_attempt(requested_model=model, observed_model=None,
+                                    outcome="engine_fatal", raw_response=None,
+                                    fed=prior_errors, produced=[str(exc)],
+                                    ladder_exhausted=False, started_at=t0)
+                except LockLost as lost:
+                    # bookkeeping for the failure must never become the failure:
+                    # run()'s `except LockLost` would turn a 402 into a normal
+                    # `lock_held` summary and exit 0 saying "nothing done". The
+                    # attempt object is already archived, so the lost row is
+                    # re-recorded by a later catch-up scan.
+                    raise exc from lost
+                raise
             except EngineModelNotFound:
                 archive_attempt(requested_model=model, observed_model=None,
                                 outcome="model_rejected", raw_response=None,

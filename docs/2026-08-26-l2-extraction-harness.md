@@ -313,7 +313,7 @@ One attempt object per LLM call — the analogue of a fetch manifest:
   "validator_version": "1",
   "validation": [ /* full ordered trace, one entry per check */ ],
   "outcome": "ok | transport | throttled | model_rejected |
-              schema_invalid | attribution_failed | over_budget",
+              schema_invalid | attribution_failed | over_budget | engine_fatal",
   "usage": {"input_tokens": 0, "output_tokens": 0}, "cost_usd": 0.0,
   "started_at": "…", "finished_at": "…" }
 ```
@@ -383,6 +383,7 @@ stateDiagram-v2
 | `schema_invalid` | parses, fails the emit/record schema | yes — error-fed reprompt |
 | `attribution_failed` | any verifier error (quote, span, structure, fact) | yes — reprompt carries the exact failing quotes |
 | `over_budget` | document > 60k chars, or per-doc cost cap | n/a — quarantine; retrying cannot fix length |
+| `engine_fatal` | the provider refused the request itself: no key, no credit, no access (401/402/403), or a malformed request | no — stop the run immediately; waiting and laddering cannot help, and the status + provider message reach the operator as an engine error (added 2026-09-02) |
 | `ok` | full verifier pass | yes — candidate for validated |
 
 **Retry policy: 3 content attempts** (1 initial + 2 error-fed reprompts).

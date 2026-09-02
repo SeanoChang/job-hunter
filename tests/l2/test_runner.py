@@ -3,6 +3,7 @@ scripted fake engine. No network, no LLM."""
 
 import copy
 import json
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,10 +15,18 @@ from jobhunter.archive.base import ArchiveStore
 from jobhunter.config import Settings
 from jobhunter.hashing import sha256_hex
 from jobhunter.l2.attempts import from_bytes, to_bytes
-from jobhunter.l2.engines import EngineResult, EngineThrottled, EngineTransportError
+from jobhunter.l2.engines import (
+    EngineAuthError,
+    EngineFatalError,
+    EngineResult,
+    EngineThrottled,
+    EngineTransportError,
+)
 from jobhunter.l2.prompt import PROMPT_VERSION
-from jobhunter.l2.runner import run
+from jobhunter.l2.runner import LockLost, run
 from jobhunter.l2.transforms import VALIDATOR_VERSION
+from jobhunter.store import db
+from tests.conftest import TEST_DSN
 from tests.l2.conftest import DOC_MD
 from tests.l2.test_assemble import EMIT
 from tests.l2.test_attempts import _attempt
@@ -48,6 +57,117 @@ class FakeEngine:
             raise item
         assert isinstance(item, EngineResult)
         return item
+
+
+class FlakyConn:
+    """A live connection that dies the way Neon's idle-kill kills one.
+
+    The first statement whose SQL contains `die_on` raises OperationalError, and
+    every statement after that raises too — the backend is gone. Everything else
+    is the real connection, so assertions still read real rows.
+    """
+
+    def __init__(self, real: Conn, die_on: str) -> None:
+        self._real = real
+        self._die_on = die_on
+        self.dead = False
+        self.closed = False
+
+    def _check(self, sql: object = "") -> None:
+        if self.dead:
+            raise psycopg.OperationalError("the connection is lost")
+        if self._die_on in str(sql):
+            self.dead = True
+            raise psycopg.OperationalError("the connection is lost")
+
+    def execute(self, query: Any, params: Any = None, **kw: Any) -> Any:
+        self._check(query)
+        return self._real.execute(query, params, **kw)
+
+    def cursor(self, *a: Any, **kw: Any) -> Any:
+        self._check()
+        return self._real.cursor(*a, **kw)
+
+    def commit(self) -> None:
+        self._check()
+        self._real.commit()
+
+    def rollback(self) -> None:
+        self._real.rollback()
+
+    def close(self) -> None:
+        self.closed = True  # the pg fixture owns the real connection
+
+
+def _terminate(killer: Conn, pid: int) -> None:
+    """End a backend the way Neon's idle suspend ends one, and wait for it to go.
+
+    Not a simulation: the terminated session's uncommitted rows are really rolled
+    back, which is the whole point — a simulated death that keeps writing into the
+    same live transaction cannot lose anything.
+    """
+    killer.execute("SELECT pg_terminate_backend(%s)", (pid,))
+    killer.commit()
+    for _ in range(500):
+        row = killer.execute(
+            "SELECT count(*) AS n FROM pg_stat_activity WHERE pid = %s", (pid,)
+        ).fetchone()
+        killer.commit()
+        if row and row["n"] == 0:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"backend {pid} did not die")
+
+
+class KillingConn:
+    """A real connection whose own backend is terminated at a chosen moment.
+
+    `die_on` names a SQL fragment: the kill lands on that statement, or — with
+    `at_next_commit` — on the first commit after it. Everything else is the real
+    connection, so assertions read real rows.
+    """
+
+    def __init__(self, real: Conn, killer: Conn, die_on: str, *,
+                 at_next_commit: bool = False) -> None:
+        self._real = real
+        self._killer = killer
+        self._die_on = die_on
+        self._at_next_commit = at_next_commit
+        row = real.execute("SELECT pg_backend_pid() AS p").fetchone()
+        assert row is not None
+        self._pid = int(row["p"])
+        self._armed = False
+        self.fired = False
+        self.closed = False
+
+    def _kill(self) -> None:
+        if self.fired:
+            return
+        self.fired = True
+        _terminate(self._killer, self._pid)
+
+    def execute(self, query: Any, params: Any = None, **kw: Any) -> Any:
+        if not self.fired and self._die_on in str(query):
+            if self._at_next_commit:
+                self._armed = True
+            else:
+                self._kill()
+        return self._real.execute(query, params, **kw)
+
+    def cursor(self, *a: Any, **kw: Any) -> Any:
+        return self._real.cursor(*a, **kw)
+
+    def commit(self) -> None:
+        if self._armed:
+            self._kill()
+        self._real.commit()
+
+    def rollback(self) -> None:
+        self._real.rollback()
+
+    def close(self) -> None:
+        self.closed = True
+        self._real.close()
 
 
 def _settings(**env: str) -> Settings:
@@ -438,3 +558,232 @@ def test_one_row_per_config_across_model_spellings(pg: Conn, store: ArchiveStore
                max_docs=10, max_usd=5.0).validated == 1
     rows = pg.execute("SELECT model, status FROM extractions").fetchall()
     assert len(rows) == 1 and rows[0]["status"] == "validated"
+
+
+def test_reconnects_when_the_connection_dies_mid_run(pg: Conn, store: ArchiveStore) -> None:
+    _seed_doc(pg)
+    flaky = FlakyConn(pg, die_on="INSERT INTO extraction_attempts")
+    healthy = FlakyConn(pg, die_on="\x00")  # same backend, never dies, ours to close
+    summary = run(_settings(), flaky, store, engine=FakeEngine([GOOD]),  # type: ignore[arg-type]
+                  max_docs=10, max_usd=5.0, connect=lambda: healthy)  # type: ignore[arg-type,return-value]
+    assert flaky.dead and flaky.closed  # the corpse was replaced, not reused
+    assert healthy.closed  # and the replacement is not leaked
+    assert summary.validated == 1
+    row = pg.execute("SELECT count(*) AS n FROM extraction_attempts").fetchone()
+    assert row and row["n"] == 1  # the failed write was replayed exactly once
+
+
+def test_backend_killed_during_the_engine_call_is_replaced(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """The production shape, without simulation: a real backend is terminated
+    while the engine call is in flight, as Neon's idle suspend terminates it."""
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    schema = str(schema_row["s"])
+    _seed_doc(pg)
+    victim = db.connect(TEST_DSN, schema=schema)
+    pid_row = victim.execute("SELECT pg_backend_pid() AS p").fetchone()
+    assert pid_row is not None
+
+    class KillingEngine:
+        name = "fake"
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
+            self.calls.append(model)
+            pg.execute("SELECT pg_terminate_backend(%s)", (pid_row["p"],))
+            pg.commit()
+            return GOOD
+
+    summary = run(_settings(), victim, store, engine=KillingEngine(), max_docs=10,
+                  max_usd=5.0, connect=lambda: db.connect(TEST_DSN, schema=schema))
+    assert summary.validated == 1
+    row = pg.execute("SELECT count(*) AS n FROM extraction_attempts").fetchone()
+    assert row and row["n"] == 1  # committed by the replacement connection
+    victim.close()
+
+
+def test_reconnect_that_lost_the_lock_aborts_without_writing(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    _seed_doc(pg)
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    schema = str(schema_row["s"])
+
+    def _connect() -> Conn:
+        # a genuinely new backend: the extract lock is still held elsewhere (by
+        # the old session here, by another writer in production)
+        return db.connect(TEST_DSN, schema=schema)
+
+    flaky = FlakyConn(pg, die_on="INSERT INTO extraction_attempts")
+    summary = run(_settings(), flaky, store, engine=FakeEngine([GOOD]),  # type: ignore[arg-type]
+                  max_docs=10, max_usd=5.0, connect=_connect)
+    assert summary.lock_held is True
+    assert summary.validated == 0
+    checker = db.connect(TEST_DSN, schema=schema)
+    try:
+        row = checker.execute("SELECT count(*) AS n FROM extraction_attempts").fetchone()
+        assert row and row["n"] == 0  # nothing committed alongside the other writer
+    finally:
+        checker.close()
+
+
+def test_a_lost_lock_reports_the_spend_it_already_made(pg: Conn, store: ArchiveStore) -> None:
+    """`lock_held` covers two different runs and must not describe them alike.
+
+    Nothing-happened (the lock was busy at the start) is genuinely "nothing
+    done"; losing the lock mid-run is not — the engine was paid for work whose
+    rows rolled back, and the summary is the only place that survives.
+    """
+    _seed_doc(pg)
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    schema = str(schema_row["s"])
+    costly = EngineResult(json.dumps(EMIT), "z-ai/glm-5.2:free", 1, 1, 0.25)
+    flaky = FlakyConn(pg, die_on="INSERT INTO extraction_attempts")
+    summary = run(_settings(), flaky, store, engine=FakeEngine([costly]),  # type: ignore[arg-type]
+                  max_docs=10, max_usd=5.0,
+                  connect=lambda: db.connect(TEST_DSN, schema=schema))
+    assert summary.lock_held is True
+    assert summary.aborted == "lock_lost"  # not the same thing as a busy lock
+    assert summary.docs_attempted == 1 and summary.spend_usd == 0.25  # the money left anyway
+    assert summary.validated == 0  # counted only after the per-document commit
+    assert summary.to_dict()["aborted"] == "lock_lost"
+
+    # `pg` still holds the extract lock (the dead session could not unlock), so a
+    # second run walks into the busy-lock branch — which really did do nothing
+    latecomer = db.connect(TEST_DSN, schema=schema)
+    try:
+        busy = run(_settings(), latecomer, store, engine=FakeEngine([]),
+                   max_docs=10, max_usd=5.0)
+        assert busy.lock_held is True and busy.aborted is None
+    finally:
+        latecomer.close()
+
+
+def test_payment_required_is_an_engine_failure_that_trips_fast(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    _seed_doc(pg)
+    engine = FakeEngine([EngineAuthError(402, "Insufficient credits")])
+    started = time.monotonic()
+    with pytest.raises(EngineFatalError) as caught:
+        run(_settings(), pg, store, engine=engine, max_docs=10, max_usd=5.0)
+    assert time.monotonic() - started < 5.0  # payment failures do not back off
+    assert len(engine.calls) == 1  # and are never retried or laddered
+    assert "402" in str(caught.value) and "Insufficient credits" in str(caught.value)
+    row = pg.execute("SELECT outcome, error_detail FROM extraction_attempts").fetchone()
+    assert row and row["outcome"] == "engine_fatal"
+    assert "402" in row["error_detail"]["errors"][0]
+
+
+def test_attempts_before_a_mid_document_kill_stay_in_the_ledger(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """The run's own rolled-back attempts must reach the ledger.
+
+    When the backend dies between two attempts of ONE document, the earlier
+    attempts roll back while the later ones commit on the replacement — the
+    watermark (max started_at) jumps past the orphans and no catch-up scan ever
+    lists them again. The run must therefore re-apply what it wrote itself.
+    """
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    schema = str(schema_row["s"])
+    _seed_doc(pg)
+    victim = db.connect(TEST_DSN, schema=schema)
+    pid_row = victim.execute("SELECT pg_backend_pid() AS p").fetchone()
+    assert pid_row is not None
+    bad = EngineResult("not json", "z-ai/glm-5.2:free", 1, 1, 0.0)
+
+    class KillBetweenAttempts:
+        name = "fake"
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
+            self.calls.append(model)
+            if len(self.calls) == 1:
+                return bad  # attempt 1: archived and recorded, not yet committed
+            _terminate(pg, int(pid_row["p"]))  # attempt 1's row dies with the backend
+            return GOOD
+
+    summary = run(_settings(), victim, store, engine=KillBetweenAttempts(), max_docs=10,
+                  max_usd=5.0, connect=lambda: db.connect(TEST_DSN, schema=schema))
+    assert summary.validated == 1
+    rows = pg.execute(
+        "SELECT attempt_key FROM extraction_attempts ORDER BY attempt_key"
+    ).fetchall()
+    assert [r["attempt_key"] for r in rows] == sorted(store.list(keys.X_ATTEMPTS_PREFIX))
+    assert len(rows) == 2  # both attempts of the document, not just the survivor
+    # and nothing is left for a later catch-up to find, so no `extract rebuild`
+    later = run(_settings(), pg, store, engine=FakeEngine([]), max_docs=10, max_usd=5.0)
+    assert later.replayed == 0
+    victim.close()
+
+
+def test_a_kill_at_the_per_document_commit_keeps_the_derived_row(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """The same rollback can land on the per-document commit, after `settle` has
+    written the derived row: re-applying the attempt is not enough, the fold has
+    to run again or the summary claims a validation the store does not hold."""
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    schema = str(schema_row["s"])
+    _seed_doc(pg)
+    victim = db.connect(TEST_DSN, schema=schema)
+    conn = KillingConn(victim, pg, "INSERT INTO extractions", at_next_commit=True)
+    summary = run(_settings(), conn, store, engine=FakeEngine([GOOD]),  # type: ignore[arg-type]
+                  max_docs=10, max_usd=5.0,
+                  connect=lambda: db.connect(TEST_DSN, schema=schema))
+    assert conn.fired and summary.validated == 1
+    row = _state_row(pg)
+    assert row and row["status"] == "validated"
+    attempts = pg.execute("SELECT count(*) AS n FROM extraction_attempts").fetchone()
+    assert attempts and attempts["n"] == 1
+    victim.close()
+
+
+def test_engine_failure_survives_a_dead_connection_teardown(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """The CI symptom (run 33632605810): a 402 abort whose cleanup ran against a
+    connection Neon had already dropped was reported as a database error."""
+    _seed_doc(pg)
+    flaky = FlakyConn(pg, die_on="pg_advisory_unlock")
+    with pytest.raises(EngineFatalError) as caught:
+        run(_settings(), flaky, store,  # type: ignore[arg-type]
+            engine=FakeEngine([EngineAuthError(402, "Insufficient credits")]),
+            max_docs=10, max_usd=5.0, connect=lambda: pg)
+    assert "402" in str(caught.value)
+
+
+def test_engine_failure_survives_losing_the_lock_while_recording_it(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """The engine failure is the news, even when its own bookkeeping loses the lock.
+
+    Recording the `engine_fatal` attempt can hit the dead connection; if the
+    replacement cannot re-take the extract lock, the LockLost must not be
+    reported as `lock_held` — that exits 0 saying "nothing done" and throws the
+    402 away.
+    """
+    _seed_doc(pg)
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    schema = str(schema_row["s"])
+    flaky = FlakyConn(pg, die_on="INSERT INTO extraction_attempts")
+    with pytest.raises(EngineFatalError) as caught:
+        run(_settings(), flaky, store,  # type: ignore[arg-type]
+            engine=FakeEngine([EngineAuthError(402, "Insufficient credits")]),
+            max_docs=10, max_usd=5.0,
+            # a genuinely new backend: the extract lock is still held elsewhere
+            connect=lambda: db.connect(TEST_DSN, schema=schema))
+    assert "402" in str(caught.value) and "Insufficient credits" in str(caught.value)
+    assert isinstance(caught.value.__cause__, LockLost)  # the lock loss is not hidden either
