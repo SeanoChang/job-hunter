@@ -99,6 +99,77 @@ class FlakyConn:
         self.closed = True  # the pg fixture owns the real connection
 
 
+def _terminate(killer: Conn, pid: int) -> None:
+    """End a backend the way Neon's idle suspend ends one, and wait for it to go.
+
+    Not a simulation: the terminated session's uncommitted rows are really rolled
+    back, which is the whole point — a simulated death that keeps writing into the
+    same live transaction cannot lose anything.
+    """
+    killer.execute("SELECT pg_terminate_backend(%s)", (pid,))
+    killer.commit()
+    for _ in range(500):
+        row = killer.execute(
+            "SELECT count(*) AS n FROM pg_stat_activity WHERE pid = %s", (pid,)
+        ).fetchone()
+        killer.commit()
+        if row and row["n"] == 0:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"backend {pid} did not die")
+
+
+class KillingConn:
+    """A real connection whose own backend is terminated at a chosen moment.
+
+    `die_on` names a SQL fragment: the kill lands on that statement, or — with
+    `at_next_commit` — on the first commit after it. Everything else is the real
+    connection, so assertions read real rows.
+    """
+
+    def __init__(self, real: Conn, killer: Conn, die_on: str, *,
+                 at_next_commit: bool = False) -> None:
+        self._real = real
+        self._killer = killer
+        self._die_on = die_on
+        self._at_next_commit = at_next_commit
+        row = real.execute("SELECT pg_backend_pid() AS p").fetchone()
+        assert row is not None
+        self._pid = int(row["p"])
+        self._armed = False
+        self.fired = False
+        self.closed = False
+
+    def _kill(self) -> None:
+        if self.fired:
+            return
+        self.fired = True
+        _terminate(self._killer, self._pid)
+
+    def execute(self, query: Any, params: Any = None, **kw: Any) -> Any:
+        if not self.fired and self._die_on in str(query):
+            if self._at_next_commit:
+                self._armed = True
+            else:
+                self._kill()
+        return self._real.execute(query, params, **kw)
+
+    def cursor(self, *a: Any, **kw: Any) -> Any:
+        return self._real.cursor(*a, **kw)
+
+    def commit(self) -> None:
+        if self._armed:
+            self._kill()
+        self._real.commit()
+
+    def rollback(self) -> None:
+        self._real.rollback()
+
+    def close(self) -> None:
+        self.closed = True
+        self._real.close()
+
+
 def _settings(**env: str) -> Settings:
     return Settings.load(
         {
@@ -575,6 +646,75 @@ def test_payment_required_is_an_engine_failure_that_trips_fast(
     row = pg.execute("SELECT outcome, error_detail FROM extraction_attempts").fetchone()
     assert row and row["outcome"] == "engine_fatal"
     assert "402" in row["error_detail"]["errors"][0]
+
+
+def test_attempts_before_a_mid_document_kill_stay_in_the_ledger(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """The run's own rolled-back attempts must reach the ledger.
+
+    When the backend dies between two attempts of ONE document, the earlier
+    attempts roll back while the later ones commit on the replacement — the
+    watermark (max started_at) jumps past the orphans and no catch-up scan ever
+    lists them again. The run must therefore re-apply what it wrote itself.
+    """
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    schema = str(schema_row["s"])
+    _seed_doc(pg)
+    victim = db.connect(TEST_DSN, schema=schema)
+    pid_row = victim.execute("SELECT pg_backend_pid() AS p").fetchone()
+    assert pid_row is not None
+    bad = EngineResult("not json", "z-ai/glm-5.2:free", 1, 1, 0.0)
+
+    class KillBetweenAttempts:
+        name = "fake"
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
+            self.calls.append(model)
+            if len(self.calls) == 1:
+                return bad  # attempt 1: archived and recorded, not yet committed
+            _terminate(pg, int(pid_row["p"]))  # attempt 1's row dies with the backend
+            return GOOD
+
+    summary = run(_settings(), victim, store, engine=KillBetweenAttempts(), max_docs=10,
+                  max_usd=5.0, connect=lambda: db.connect(TEST_DSN, schema=schema))
+    assert summary.validated == 1
+    rows = pg.execute(
+        "SELECT attempt_key FROM extraction_attempts ORDER BY attempt_key"
+    ).fetchall()
+    assert [r["attempt_key"] for r in rows] == sorted(store.list(keys.X_ATTEMPTS_PREFIX))
+    assert len(rows) == 2  # both attempts of the document, not just the survivor
+    # and nothing is left for a later catch-up to find, so no `extract rebuild`
+    later = run(_settings(), pg, store, engine=FakeEngine([]), max_docs=10, max_usd=5.0)
+    assert later.replayed == 0
+    victim.close()
+
+
+def test_a_kill_at_the_per_document_commit_keeps_the_derived_row(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """The same rollback can land on the per-document commit, after `settle` has
+    written the derived row: re-applying the attempt is not enough, the fold has
+    to run again or the summary claims a validation the store does not hold."""
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    schema = str(schema_row["s"])
+    _seed_doc(pg)
+    victim = db.connect(TEST_DSN, schema=schema)
+    conn = KillingConn(victim, pg, "INSERT INTO extractions", at_next_commit=True)
+    summary = run(_settings(), conn, store, engine=FakeEngine([GOOD]),  # type: ignore[arg-type]
+                  max_docs=10, max_usd=5.0,
+                  connect=lambda: db.connect(TEST_DSN, schema=schema))
+    assert conn.fired and summary.validated == 1
+    row = _state_row(pg)
+    assert row and row["status"] == "validated"
+    attempts = pg.execute("SELECT count(*) AS n FROM extraction_attempts").fetchone()
+    assert attempts and attempts["n"] == 1
+    victim.close()
 
 
 def test_engine_failure_survives_a_dead_connection_teardown(

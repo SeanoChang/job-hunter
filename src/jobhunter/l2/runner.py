@@ -63,22 +63,77 @@ class LockLost(RuntimeError):
     """The extract lock moved to another writer while our connection was down."""
 
 
+class _Journal:
+    """Everything this run has written to the extraction surface, replayable.
+
+    A dropped backend rolls back every uncommitted row, including the rows
+    written before the statement that died. The next run's catch-up scan cannot
+    heal those: the watermark is max(started_at) over the rows that DID commit,
+    so once the replacement connection commits a later attempt the orphans sit
+    behind the watermark forever and only `extract rebuild` would find them. The
+    run therefore re-applies its own writes onto the new connection. Both
+    `record_*` are ON CONFLICT DO NOTHING, so a row that survived is a no-op and
+    only what was actually lost is re-derived through `settle`.
+    """
+
+    def __init__(
+        self, store: ArchiveStore, globs: tuple[str, ...], now: Callable[[], datetime]
+    ) -> None:
+        self.store = store
+        self.globs = globs
+        self._now = now
+        self._attempts: dict[str, Attempt] = {}
+        self._reviews: dict[str, dict[str, Any]] = {}
+
+    def record_attempt(self, conn: Conn, attempt: Attempt) -> bool:
+        self._attempts[attempt.attempt_key] = attempt
+        return extraction.record_attempt(conn, attempt, derived_error_detail(attempt))
+
+    def record_review(self, conn: Conn, event: dict[str, Any]) -> bool:
+        self._reviews[event["review_key"]] = event
+        return extraction.record_review(conn, **event)
+
+    def replay(self, conn: Conn) -> None:
+        """Re-apply onto a fresh connection, then re-settle only what was lost."""
+        touched: set[tuple[str, str, str, str]] = set()
+        for attempt in self._attempts.values():
+            if extraction.record_attempt(conn, attempt, derived_error_detail(attempt)):
+                touched.add((attempt.document_hash, attempt.prompt_version,
+                             attempt.schema_version, attempt.validator_version))
+        for event in self._reviews.values():
+            if extraction.record_review(conn, **event):
+                touched.add((event["document_hash"], event["prompt_version"],
+                             event["schema_version"], event["validator_version"]))
+        updated_at = iso(self._now())
+        for dh, pv, sv, vv in touched:
+            # the derived row died with the attempt rows: without this a run can
+            # report a validation the store does not hold (death on the per-doc
+            # commit, after settle has already written it)
+            settle(conn, self.store, dh, self.globs, updated_at,
+                   prompt_version=pv, schema_version=sv, validator_version=vv)
+
+
 class _Session:
     """The runner's connection, replaceable mid-run.
 
     A managed Postgres (Neon) suspends an idle project after ~5 minutes and
     drops its connections; the next statement raises OperationalError. Every DB
-    touch goes through `do`, which reconnects once, re-takes the extract lock
-    and replays that one call. Replay is safe because an attempt is archived
-    BEFORE it is recorded and `record_attempt` is idempotent on attempt_key;
-    whatever the dead backend rolled back is re-applied by the next run's
-    catch-up scan.
+    touch goes through `do`, which reconnects once, re-takes the extract lock,
+    re-applies the run's journal and replays that one call. Replay is safe
+    because an attempt is archived BEFORE it is recorded and `record_attempt` is
+    idempotent on attempt_key.
     """
 
-    def __init__(self, conn: Conn, connect: Callable[[], Conn] | None) -> None:
+    def __init__(
+        self,
+        conn: Conn,
+        connect: Callable[[], Conn] | None,
+        journal: _Journal | None = None,
+    ) -> None:
         self.conn = conn
         self.holds_lock = False
         self._connect = connect
+        self._journal = journal
         self._owned = False  # the caller's connection stays the caller's to close
 
     def do[T](self, op: Callable[[Conn], T]) -> T:
@@ -101,6 +156,8 @@ class _Session:
         self.holds_lock = db.try_lock(self.conn, db.EXTRACT_LOCK_KEY)
         if not self.holds_lock:
             raise LockLost("the extract lock is held by another writer")
+        if self._journal is not None:
+            self._journal.replay(self.conn)
 
     def release(self) -> None:
         """Commit, unlock, and drop a connection we opened — best effort.
@@ -208,7 +265,8 @@ def settle(
     return state
 
 
-def _catch_up(conn: Conn, store: ArchiveStore, globs: tuple[str, ...], updated_at: str) -> int:
+def _catch_up(conn: Conn, journal: _Journal, updated_at: str) -> int:
+    store, globs = journal.store, journal.globs
     mark = extraction.watermark(conn)
     mark = mark.replace(microsecond=0) if mark is not None else None
     start_after = None
@@ -230,7 +288,9 @@ def _catch_up(conn: Conn, store: ArchiveStore, globs: tuple[str, ...], updated_a
         if mark is not None and parsed[0] < mark:
             continue
         attempt = from_bytes(store.get(key))
-        if extraction.record_attempt(conn, attempt, derived_error_detail(attempt)):
+        # through the journal: a reconnect later in this run must not roll the
+        # replay back into the same invisibility it just healed
+        if journal.record_attempt(conn, attempt):
             replayed += 1
             touched.add(
                 (attempt.document_hash, attempt.prompt_version, attempt.schema_version,
@@ -241,7 +301,7 @@ def _catch_up(conn: Conn, store: ArchiveStore, globs: tuple[str, ...], updated_a
     # rebuild. The prefix is tiny (human verbs), so a full idempotent scan is fine.
     for key in store.list(keys.X_REVIEWS_PREFIX):
         event = json.loads(store.get(key))
-        if extraction.record_review(conn, **event):
+        if journal.record_review(conn, event):
             replayed += 1
             touched.add(
                 (event["document_hash"], event["prompt_version"], event["schema_version"],
@@ -273,7 +333,8 @@ def run(
     if not db.try_lock(conn, db.EXTRACT_LOCK_KEY):
         summary.lock_held = True
         return summary
-    session = _Session(conn, connect)
+    journal = _Journal(store, settings.l2_models, now)
+    session = _Session(conn, connect, journal)
     session.holds_lock = True
     try:
         # done = a row exists under any ACCEPTED model (l2_models) at the current
@@ -292,9 +353,7 @@ def run(
             summary.queued = [only_doc] if only_doc else session.do(queue)
             return summary
         _ensure_write_once(store)
-        summary.replayed = session.do(
-            lambda c: _catch_up(c, store, settings.l2_models, iso(now()))
-        )
+        summary.replayed = session.do(lambda c: _catch_up(c, journal, iso(now())))
         session.do(lambda c: c.commit())
         docs = [only_doc] if only_doc else session.do(queue)
         summary.queued = docs
@@ -304,7 +363,7 @@ def run(
             # subscription-backfill mode), not "stop before the first document"
             if summary.docs_attempted >= max_docs or summary.spend_usd > max_usd:
                 break
-            result = _extract_doc(settings, session, store, engine, dh, summary, breaker, now)
+            result = _extract_doc(settings, session, journal, engine, dh, summary, breaker, now)
             if result is None:
                 continue  # document vanished (normalizer bump mid-flight)
             disposition, breaker = result
@@ -333,13 +392,14 @@ def run(
 def _extract_doc(
     settings: Settings,
     session: _Session,
-    store: ArchiveStore,
+    journal: _Journal,
     engine: Engine,
     dh: str,
     summary: ExtractSummary,
     breaker: int,
     now: Callable[[], datetime],
 ) -> tuple[str, int] | None:
+    store = journal.store
     markdown = session.do(lambda c: extraction.markdown_for(c, dh, NORMALIZER_VERSION))
     if markdown is None:
         return None
@@ -376,7 +436,7 @@ def _extract_doc(
             finished_at=now().isoformat(), record=record,
         )
         store.put(attempt.attempt_key, to_bytes(attempt))
-        session.do(lambda c: extraction.record_attempt(c, attempt, derived_error_detail(attempt)))
+        session.do(lambda c: journal.record_attempt(c, attempt))
         return attempt
 
     def settle_and_disposition() -> tuple[str, int]:
