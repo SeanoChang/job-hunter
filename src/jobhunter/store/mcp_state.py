@@ -8,11 +8,19 @@ state is one timestamp). Semantics are unchanged: the timestamp is
 authoritative, `event_ids_at` tie-breaks the events sharing that instant, and
 the cursor advances only once the response payload is built — hence the
 caller-commits contract every store helper here follows.
+
+Living in the store costs one thing the client file gets for free: `rebuild`
+replaces the live schema wholesale, and nothing here is derivable from the
+archive. `carry_cursors` is what keeps the watermarks across that swap, and
+`rebuild` calls it (see `db.capture_grants` for the privileges, which the swap
+would drop the same way).
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+
+from psycopg import sql
 
 from jobhunter.cursors import Watermark
 from jobhunter.store.db import Conn
@@ -43,3 +51,30 @@ def write_cursor(conn: Conn, name: str, wm: Watermark) -> None:
         "event_ids_at = EXCLUDED.event_ids_at",
         (name, parse_iso(wm.at), list(wm.event_ids_at)),
     )
+
+
+def carry_cursors(conn: Conn, *, src: str, dst: str) -> int:
+    """Copy every watermark in `src`'s `mcp_cursors` into `dst`'s, and say how many.
+
+    A rebuild replays the archive into a fresh schema, but a watermark is not in
+    the archive — it is the server's own place in the event stream. Uncarried, the
+    swap would silently reset every hosted cursor and the next `pulse` would report
+    its whole window as new. Returns 0 when `src` predates schema v4 and has no
+    such table. Joins the caller's transaction; the caller commits.
+    """
+    exists = conn.execute(
+        "SELECT 1 AS ok FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = %s AND c.relname = 'mcp_cursors'",
+        (src,),
+    ).fetchone()
+    if exists is None:
+        return 0
+    cur = conn.execute(
+        sql.SQL(
+            "INSERT INTO {}.mcp_cursors (name, at, event_ids_at) "
+            "SELECT name, at, event_ids_at FROM {}.mcp_cursors "
+            "ON CONFLICT (name) DO UPDATE SET at = EXCLUDED.at, "
+            "event_ids_at = EXCLUDED.event_ids_at"
+        ).format(sql.Identifier(dst), sql.Identifier(src))
+    )
+    return cur.rowcount

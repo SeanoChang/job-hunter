@@ -64,6 +64,44 @@ def test_write_upserts_and_leaves_other_names_alone(pg: Conn) -> None:
     )
 
 
+def _schema_of(conn: Conn) -> str:
+    row = conn.execute("SELECT current_schema() AS s").fetchone()
+    assert row is not None
+    return str(row["s"])
+
+
+def test_carry_cursors_copies_every_watermark_into_the_new_schema(pg: Conn) -> None:
+    """`rebuild` replays the archive into a fresh schema; the watermarks are not in
+    the archive, so they have to be carried over by hand or they are lost."""
+    from jobhunter.store import db
+
+    src = _schema_of(pg)
+    dst = f"{src}_new"
+    db.init(pg, dst)
+    mcp_state.write_cursor(pg, "hourly", Watermark("2026-09-01T06:00:00+00:00", (1, 2)))
+    mcp_state.write_cursor(pg, "smoketest", Watermark("2026-09-02T06:00:00+00:00", ()))
+    pg.commit()
+    assert mcp_state.carry_cursors(pg, src=src, dst=dst) == 2
+    pg.commit()
+    rows = pg.execute(
+        f'SELECT name, at, event_ids_at FROM "{dst}".mcp_cursors ORDER BY name'
+    ).fetchall()
+    assert [r["name"] for r in rows] == ["hourly", "smoketest"]
+    assert rows[0]["event_ids_at"] == [1, 2]
+
+
+def test_carry_cursors_from_a_store_older_than_v4_is_a_no_op(pg: Conn) -> None:
+    """A v3 store has no `mcp_cursors`; rebuilding it must still work."""
+    from jobhunter.store import db
+
+    src = _schema_of(pg)
+    dst = f"{src}_new"
+    db.init(pg, dst)
+    pg.execute(f'DROP TABLE "{src}".mcp_cursors')
+    pg.commit()
+    assert mcp_state.carry_cursors(pg, src=src, dst=dst) == 0
+
+
 def test_the_caller_commits(pg: Conn) -> None:
     """The watermark advances only once the payload is out, so the write joins
     the caller's transaction and a rollback loses it."""

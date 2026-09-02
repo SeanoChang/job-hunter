@@ -460,8 +460,10 @@ def rebuild(
     except Exception as e:
         fail("backend", f"database error: {e}", code=Exit.BACKEND, output=output)
     emit({"ingested": s.ingested, "skipped": s.skipped, "work_schema": s.work_schema,
-          "swapped": s.swapped},
-         human=f"rebuilt {s.ingested} attempts into {s.work_schema}; swapped live",
+          "swapped": s.swapped, "cursors_carried": s.cursors_carried,
+          "grants_reapplied": s.grants_reapplied},
+         human=(f"rebuilt {s.ingested} attempts into {s.work_schema}; swapped live "
+                f"({s.cursors_carried} cursors, {s.grants_reapplied} grants carried over)"),
          output=output)
 
 
