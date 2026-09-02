@@ -18,6 +18,7 @@ OUTCOMES = (
     "schema_invalid",
     "attribution_failed",
     "over_budget",
+    "engine_fatal",  # the provider refused the request (credentials, payment, bad request)
 )
 
 

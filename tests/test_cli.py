@@ -406,6 +406,20 @@ def test_extract_run_review_verify_status_end_to_end(
     assert counts["attempts"] == 1 and counts["reviews"] == 2
 
 
+def test_extract_human_separates_a_busy_lock_from_a_lost_one() -> None:
+    from jobhunter.l2.runner import ExtractSummary
+
+    busy = ExtractSummary(run_id="x-1", lock_held=True)
+    assert cli._extract_human(busy.to_dict(), False) == (
+        "already running (extract lock held); nothing done"
+    )
+    lost = ExtractSummary(run_id="x-1", lock_held=True, aborted="lock_lost",
+                          docs_attempted=2, spend_usd=0.25)
+    text = cli._extract_human(lost.to_dict(), False)
+    assert "nothing done" not in text  # $0.25 of engine calls is not nothing
+    assert "$0.25" in text and "lock" in text
+
+
 def test_extract_run_requires_l2_config(xenv: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("JOB_HUNTER_L2_BASE_URL")
     r = runner.invoke(cli.app, ["extract", "run"])
@@ -523,6 +537,23 @@ def test_sync_reports_extraction_failure_without_failing_the_run(
     data = json.loads(r.stdout)["data"]
     assert "credentials rejected" in data["extract"]["error"]
     assert data["fetch"]["counts"]["ok"] == 1
+
+
+def test_sync_reports_a_payment_failure_as_an_engine_error(
+    syncenv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobhunter.l2.engines import EngineAuthError
+    from tests.l2.test_runner import FakeEngine
+
+    monkeypatch.setattr(
+        cli, "_make_engine", lambda s: FakeEngine([EngineAuthError(402, "Insufficient credits")])
+    )
+    r = runner.invoke(cli.app, ["sync", "-o", "json"])
+    assert r.exit_code == 0, r.stdout
+    error = json.loads(r.stdout)["data"]["extract"]["error"]
+    # the operator must read who refused and why, not "database error"
+    assert error.startswith("engine error:") and "402" in error
+    assert "Insufficient credits" in error and "database" not in error
 
 
 def test_sync_throttled_extraction_with_no_progress_is_systemic(

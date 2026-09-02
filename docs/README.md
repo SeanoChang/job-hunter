@@ -156,3 +156,18 @@ and a dated judge run. Its README carries the superseded banner.
   id, so recording the requested one is opt-in
   (JOB_HUNTER_L2_TRUST_REQUESTED_MODEL) and marked as asserted, not
   observed, provenance.
+- 2026-09-02 — a drain outlives its database connection: the runner reconnects
+  and re-takes the extract lock mid-run (aborting as `lock_held` with
+  `aborted: "lock_lost"` if another writer has it — the counters and the spend
+  it already made stay on the summary, so that run is never described as
+  "nothing done"), and cleanup on a dead connection never replaces the failure
+  that killed the run — including a LockLost raised while recording an
+  `engine_fatal` attempt, which re-raises the engine failure instead.
+  A reconnecting run re-applies its OWN uncommitted
+  writes from a per-run journal, because the catch-up scan cannot: its
+  watermark is `max(started_at)` over committed rows, so an attempt rolled
+  back alongside a later one that committed sits behind the watermark forever.
+  A provider refusing the request (401/402/403) is the
+  new `engine_fatal` attempt outcome — recorded once, never retried or
+  laddered, and reported as an engine error carrying the status and the
+  provider's message.

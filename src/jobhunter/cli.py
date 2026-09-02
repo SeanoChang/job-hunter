@@ -1151,8 +1151,10 @@ def _extract_once(
             max_docs=max_docs if max_docs is not None else settings.l2_max_docs,
             max_usd=max_usd if max_usd is not None else settings.l2_max_usd,
             only_doc=doc, dry_run=dry_run,
+            # a batch outlives a managed Postgres' idle timeout; the runner
+            # replaces the dropped connection itself and commits its own work
+            connect=lambda: _db.connect(settings.require_database_url(), schema=_schema),
         )
-        conn.commit()
     except ArchiveError as e:
         raise _ExtractFailure("backend", f"archive error: {e}", Exit.BACKEND) from e
     except (psycopg.Error, _db.SchemaMismatch, ValueError) as e:
@@ -1170,7 +1172,9 @@ def _extract_stalled(data: dict[str, Any]) -> bool:
 
 
 def _extract_human(data: dict[str, Any], dry_run: bool) -> str:
-    if data.get("lock_held"):
+    if data.get("lock_held") and not data.get("aborted"):
+        # only a lock that was ALREADY held means nothing happened; a lock lost
+        # mid-run has real spend behind it and falls through to the counters
         return "already running (extract lock held); nothing done"
     if dry_run:
         return f"queue ({len(data['queued'])}):\n" + "\n".join(data["queued"])
@@ -1183,6 +1187,8 @@ def _extract_human(data: dict[str, Any], dry_run: bool) -> str:
         human += "  THROTTLED (batch stopped)"
     if data["breaker_abort"]:
         human += "  BREAKER: 5 consecutive model rejections"
+    if data.get("aborted") == "lock_lost":
+        human += "  ABORTED: the extract lock moved to another writer mid-run"
     return human
 
 
