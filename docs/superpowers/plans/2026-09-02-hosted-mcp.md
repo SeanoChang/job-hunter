@@ -183,7 +183,7 @@ Tool `pulse(cursor: str = "default", peek: bool = False, since: str | None = Non
 
 ### Task 7: Verification + PR prep
 
-- [ ] **Hermeticity fix** (open finding from PR #6, confirmed by Task 1): the test
+- [x] **Hermeticity fix** (open finding from PR #6, confirmed by Task 1): the test
   suite must not read the developer's real `./.env` or `~/.config/job-hunter/env`.
   Add an autouse fixture in `tests/conftest.py` that monkeypatches
   `XDG_CONFIG_HOME` to a per-session empty tmp dir and chdirs tests away from any
@@ -192,6 +192,19 @@ Tool `pulse(cursor: str = "default", peek: bool = False, since: str | None = Non
   `~/.config/job-hunter/env` under a fake `$HOME` and asserts `Settings.load()`
   inside the suite never sees it. Commit separately:
   `fix(tests): suite is hermetic against real user config files`.
-- [ ] Full `uv run pytest` (exit 0) + ruff + mypy; paste tails into the commit body of any final fix.
-- [ ] Local live smoke without docker: `JOB_HUNTER_MCP_TOKEN=t JOB_HUNTER_ARCHIVE_URL=file:///tmp/x JOB_HUNTER_DATABASE_URL=<local test DSN> uv run job-hunter-mcp &` then curl `/healthz` and an authenticated `tools/list`; kill it. Record output.
-- [ ] Tick all plan checkboxes; do NOT push (the driver session pushes and opens the PR).
+- [x] Full `uv run pytest` (exit 0) + ruff + mypy; paste tails into the commit body of any final fix.
+- [x] Local live smoke without docker: `JOB_HUNTER_MCP_TOKEN=t JOB_HUNTER_ARCHIVE_URL=file:///tmp/x JOB_HUNTER_DATABASE_URL=<local test DSN> uv run job-hunter-mcp &` then curl `/healthz` and an authenticated `tools/list`; kill it. Record output.
+- [x] Tick all plan checkboxes; do NOT push (the driver session pushes and opens the PR).
+
+**Verification record** (2026-09-02, local Postgres, no docker):
+
+- `uv run pytest` → `547 passed`; `uv run ruff check .` → `All checks passed!`;
+  `uv run mypy` → `Success: no issues found in 52 source files`. Green as well
+  with `JOB_HUNTER_ARCHIVE_URL`, `JOB_HUNTER_DROP_RATIO` and
+  `AWS_ACCESS_KEY_ID` exported — the hermeticity fix holds.
+- Live smoke: `job-hunter-mcp` on `PORT=8765` against the local corpus.
+  `GET /healthz` → `200 {"ok": true, "version": "0.1.0"}`; `tools/list` with no
+  bearer and with a wrong one → `401 {"error": "unauthorized"}`; with the
+  bearer → `200`, tools `boards, claims, document, events, posting, postings,
+  profile, pulse`; `tools/call boards` → the board rows, `isError: false`.
+  Process killed, port closed.
