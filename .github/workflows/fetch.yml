@@ -64,6 +64,9 @@ jobs:
           # OpenRouter reports usage.cost; direct providers do not, so the cost
           # cap needs prices (USD per 1M tokens: in,out)
           JOB_HUNTER_L2_PRICE: ${{ vars.JOB_HUNTER_L2_PRICE }}
+          # "false" turns off strict json_schema mode (OpenAI rejects our
+          # optional-property schema under strict; the validator stays the gate)
+          JOB_HUNTER_L2_SCHEMA_STRICT: ${{ vars.JOB_HUNTER_L2_SCHEMA_STRICT }}
           # free tiers cap daily requests and the ladder can spend 3 calls per
           # document, so the default stays well under 1,000 req/day
           JOB_HUNTER_L2_MAX_DOCS: ${{ vars.JOB_HUNTER_L2_MAX_DOCS || '50' }}

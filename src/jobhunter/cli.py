@@ -1104,6 +1104,7 @@ def _make_engine(settings: Settings) -> Any:
         settings.l2_api_key,
         prices=settings.l2_price,
         extra_body=settings.l2_extra_body,
+        strict=settings.l2_schema_strict,
     )
 
 
