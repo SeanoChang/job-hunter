@@ -54,7 +54,8 @@ jobs:
           JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
           JOB_HUNTER_L2_ENGINE: openai-compat
           JOB_HUNTER_L2_BASE_URL: ${{ vars.JOB_HUNTER_L2_BASE_URL || 'https://openrouter.ai/api/v1' }}
-          JOB_HUNTER_L2_API_KEY: ${{ secrets.JOB_HUNTER_L2_API_KEY }}
+          # the OpenAI platform key; JOB_HUNTER_L2_API_KEY holds the OpenRouter one
+          JOB_HUNTER_L2_API_KEY: ${{ secrets.JOB_HUNTER_L2_OPENAI_API_KEY }}
           JOB_HUNTER_L2_MODEL_CANDIDATES: ${{ vars.JOB_HUNTER_L2_MODEL_CANDIDATES || 'z-ai/glm-5.2:free' }}
           JOB_HUNTER_L2_MODELS: ${{ vars.JOB_HUNTER_L2_MODELS || 'z-ai/*' }}
           # provider knobs merged into the request body (e.g. reasoning_effort,
