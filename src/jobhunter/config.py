@@ -87,6 +87,9 @@ class Settings:
     # merged verbatim into openai-compat request bodies (provider knobs like
     # reasoning_effort or max_completion_tokens); other engines ignore it
     l2_extra_body: dict[str, Any] | None = None
+    # strict json_schema mode; OpenAI rejects schemas with optional object
+    # properties under strict, and the local validator is the gate regardless
+    l2_schema_strict: bool = True
     l2_reasoning_effort: str = "low"  # codex-cli: extraction is labeling, not reasoning
     # codex reports no model id; opt in to recording the requested one as
     # asserted (not observed) provenance — a silent swap becomes undetectable
@@ -215,6 +218,8 @@ class Settings:
             l2_max_usd=l2_max_usd,
             l2_price=l2_price,
             l2_extra_body=l2_extra_body,
+            l2_schema_strict=e.get("JOB_HUNTER_L2_SCHEMA_STRICT", "").strip().lower()
+            not in ("0", "false", "no"),
             l2_reasoning_effort=effort,
             l2_trust_requested_model=e.get("JOB_HUNTER_L2_TRUST_REQUESTED_MODEL", "")
             .strip()
