@@ -1,0 +1,5 @@
+# Standing hole queries (data, not code).
+queries:
+  - name: question-without-option
+  - name: decision-without-evidence
+  - name: question-with-competing-decisions
