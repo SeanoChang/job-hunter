@@ -31,7 +31,7 @@ jobs:
           # newest validated docs; the CLI (not raw SQL) renders each profile so
           # the dump matches exactly what `q profile --full` serves agents
           hashes=$(psql "$JOB_HUNTER_DATABASE_URL" -t -A \
-            -c "SELECT document_hash FROM extractions WHERE status='validated' ORDER BY updated_at DESC LIMIT ${{ github.event.inputs.limit }}")
+            -c "SELECT document_hash FROM jobhunter.extractions WHERE status='validated' ORDER BY updated_at DESC LIMIT ${{ github.event.inputs.limit }}")
           : > profiles.jsonl
           for h in $hashes; do
             uv run job-hunter q profile --doc "$h" --full -o json >> profiles.jsonl \
