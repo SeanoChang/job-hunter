@@ -124,6 +124,10 @@ class OpenAICompat:
             },
             **self._extra_body,
         }
+        if "max_completion_tokens" in self._extra_body and "max_tokens" not in self._extra_body:
+            # OpenAI reasoning models reject max_tokens outright; sending both is
+            # also an error, so the extra_body cap fully replaces the default
+            del body["max_tokens"]
         try:
             resp = self._client.post(f"{self._base_url}/chat/completions", json=body)
         except httpx.HTTPError as exc:

@@ -1099,7 +1099,12 @@ def _make_engine(settings: Settings) -> Any:
             trust_requested_model=settings.l2_trust_requested_model,
         )
     assert settings.l2_base_url is not None  # require_l2 ran
-    return OpenAICompat(settings.l2_base_url, settings.l2_api_key, prices=settings.l2_price)
+    return OpenAICompat(
+        settings.l2_base_url,
+        settings.l2_api_key,
+        prices=settings.l2_price,
+        extra_body=settings.l2_extra_body,
+    )
 
 
 class _ExtractFailure(Exception):

@@ -261,3 +261,16 @@ def test_l2_trust_requested_model_flag() -> None:
         ).l2_trust_requested_model
         is False
     )
+
+
+def test_l2_extra_body_parse() -> None:
+    import pytest as _pytest
+
+    raw = '{"max_completion_tokens": 16384, "reasoning_effort": "low"}'
+    s = Settings.load(_L2_BASE | {"JOB_HUNTER_L2_EXTRA_BODY": raw})
+    assert s.l2_extra_body == {"max_completion_tokens": 16384, "reasoning_effort": "low"}
+    assert Settings.load(_L2_BASE).l2_extra_body is None
+    with _pytest.raises(ConfigError, match="JOB_HUNTER_L2_EXTRA_BODY"):
+        Settings.load(_L2_BASE | {"JOB_HUNTER_L2_EXTRA_BODY": "not json"})
+    with _pytest.raises(ConfigError, match="JOB_HUNTER_L2_EXTRA_BODY"):
+        Settings.load(_L2_BASE | {"JOB_HUNTER_L2_EXTRA_BODY": '["a", "list"]'})

@@ -54,9 +54,16 @@ jobs:
           JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
           JOB_HUNTER_L2_ENGINE: openai-compat
           JOB_HUNTER_L2_BASE_URL: ${{ vars.JOB_HUNTER_L2_BASE_URL || 'https://openrouter.ai/api/v1' }}
-          JOB_HUNTER_L2_API_KEY: ${{ secrets.JOB_HUNTER_L2_API_KEY }}
+          # the OpenAI platform key; JOB_HUNTER_L2_API_KEY holds the OpenRouter one
+          JOB_HUNTER_L2_API_KEY: ${{ secrets.JOB_HUNTER_L2_OPENAI_API_KEY }}
           JOB_HUNTER_L2_MODEL_CANDIDATES: ${{ vars.JOB_HUNTER_L2_MODEL_CANDIDATES || 'z-ai/glm-5.2:free' }}
           JOB_HUNTER_L2_MODELS: ${{ vars.JOB_HUNTER_L2_MODELS || 'z-ai/*' }}
+          # provider knobs merged into the request body (e.g. reasoning_effort,
+          # max_completion_tokens for OpenAI reasoning models)
+          JOB_HUNTER_L2_EXTRA_BODY: ${{ vars.JOB_HUNTER_L2_EXTRA_BODY }}
+          # OpenRouter reports usage.cost; direct providers do not, so the cost
+          # cap needs prices (USD per 1M tokens: in,out)
+          JOB_HUNTER_L2_PRICE: ${{ vars.JOB_HUNTER_L2_PRICE }}
           # free tiers cap daily requests and the ladder can spend 3 calls per
           # document, so the default stays well under 1,000 req/day
           JOB_HUNTER_L2_MAX_DOCS: ${{ vars.JOB_HUNTER_L2_MAX_DOCS || '50' }}

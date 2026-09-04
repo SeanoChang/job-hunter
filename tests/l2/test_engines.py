@@ -48,6 +48,35 @@ def test_openai_compat_happy_path() -> None:
     assert body["response_format"]["json_schema"]["schema"] == SCHEMA
 
 
+def test_openai_compat_extra_body_max_completion_tokens_replaces_max_tokens() -> None:
+    # OpenAI reasoning models (o1 through gpt-5.x) reject max_tokens outright;
+    # the operator switches the cap via extra_body and the default must go away.
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "model": "gpt-5.6-luna",
+                "choices": [{"message": {"content": '{"ok": true}'}}],
+                "usage": {"prompt_tokens": 40, "completion_tokens": 9},
+            },
+        )
+
+    eng = OpenAICompat(
+        "https://x.test/v1",
+        "sk-test",
+        client=_client(handler),
+        extra_body={"max_completion_tokens": 16384, "reasoning_effort": "low"},
+    )
+    eng.complete("hello", SCHEMA, "gpt-5.6-luna")
+    body = seen["body"]
+    assert "max_tokens" not in body
+    assert body["max_completion_tokens"] == 16384
+    assert body["reasoning_effort"] == "low"
+
+
 @pytest.mark.parametrize(
     "status,exc",
     [(429, EngineThrottled), (404, EngineModelNotFound), (500, EngineTransportError)],
