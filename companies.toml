@@ -524,3 +524,44 @@ company = "Runway"
 source  = "ashby"
 board   = "runway"
 country = "US"
+
+[[boards]]
+company = "Box"
+source  = "greenhouse"
+board   = "boxinc"
+country = "US"
+
+[[boards]]
+company = "Fastly"
+source  = "greenhouse"
+board   = "fastly"
+country = "US"
+
+[[boards]]
+company = "DigitalOcean"
+source  = "greenhouse"
+board   = "digitalocean98"
+country = "US"
+
+[[boards]]
+company = "HubSpot"
+source  = "greenhouse"
+board   = "hubspotjobs"
+country = "US"
+
+[[boards]]
+company = "Mercari"
+source  = "greenhouse"
+board   = "mercari"
+
+[[boards]]
+company = "Nubank"
+source  = "greenhouse"
+board   = "nubank"
+country = "BR"
+
+[[boards]]
+company = "Mistral AI"
+source  = "ashby"
+board   = "mistral.ai"
+country = "FR"
