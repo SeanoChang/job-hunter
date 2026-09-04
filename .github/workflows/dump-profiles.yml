@@ -1,0 +1,45 @@
+# TEMPORARY: read-only inspection of validated profiles, until the hosted MCP
+# server is deployed (then `q profile` is reachable directly and this file goes).
+name: dump-profiles
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "How many of the newest validated profiles to dump"
+        required: false
+        default: "10"
+
+permissions:
+  contents: read
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen --no-dev
+      - name: dump
+        env:
+          JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
+          JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
+        run: |
+          # newest validated docs; the CLI (not raw SQL) renders each profile so
+          # the dump matches exactly what `q profile --full` serves agents
+          hashes=$(psql "$JOB_HUNTER_DATABASE_URL" -t -A \
+            -c "SELECT document_hash FROM extractions WHERE status='validated' ORDER BY updated_at DESC LIMIT ${{ github.event.inputs.limit }}")
+          : > profiles.jsonl
+          for h in $hashes; do
+            uv run job-hunter q profile --doc "$h" --full -o json >> profiles.jsonl \
+              || echo "{\"error\": \"dump failed for $h\"}" >> profiles.jsonl
+          done
+          wc -l profiles.jsonl
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: profiles-${{ github.run_id }}
+          path: profiles.jsonl
+          retention-days: 7
