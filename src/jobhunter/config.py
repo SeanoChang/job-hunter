@@ -7,10 +7,12 @@ files entirely — callers that supply an environment mean exactly it.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 class ConfigError(ValueError):
@@ -82,6 +84,9 @@ class Settings:
     l2_max_docs: int = 300
     l2_max_usd: float = 5.0
     l2_price: tuple[float, float] | None = None  # USD per 1M tokens (in, out)
+    # merged verbatim into openai-compat request bodies (provider knobs like
+    # reasoning_effort or max_completion_tokens); other engines ignore it
+    l2_extra_body: dict[str, Any] | None = None
     l2_reasoning_effort: str = "low"  # codex-cli: extraction is labeling, not reasoning
     # codex reports no model id; opt in to recording the requested one as
     # asserted (not observed) provenance — a silent swap becomes undetectable
@@ -164,6 +169,20 @@ class Settings:
                 raise ConfigError(
                     f"JOB_HUNTER_L2_PRICE must be 'in_usd_per_mtok,out_usd_per_mtok': {price_raw!r}"
                 ) from ex
+        extra_raw = e.get("JOB_HUNTER_L2_EXTRA_BODY")
+        l2_extra_body: dict[str, Any] | None = None
+        if extra_raw:
+            try:
+                parsed = json.loads(extra_raw)
+            except ValueError as ex:
+                raise ConfigError(
+                    f"JOB_HUNTER_L2_EXTRA_BODY must be a JSON object: {extra_raw!r}"
+                ) from ex
+            if not isinstance(parsed, dict):
+                raise ConfigError(
+                    f"JOB_HUNTER_L2_EXTRA_BODY must be a JSON object: {extra_raw!r}"
+                )
+            l2_extra_body = parsed
         try:
             l2_max_docs = int(e.get("JOB_HUNTER_L2_MAX_DOCS", "300"))
             l2_max_usd = float(e.get("JOB_HUNTER_L2_MAX_USD", "5.0"))
@@ -195,6 +214,7 @@ class Settings:
             l2_max_docs=l2_max_docs,
             l2_max_usd=l2_max_usd,
             l2_price=l2_price,
+            l2_extra_body=l2_extra_body,
             l2_reasoning_effort=effort,
             l2_trust_requested_model=e.get("JOB_HUNTER_L2_TRUST_REQUESTED_MODEL", "")
             .strip()
