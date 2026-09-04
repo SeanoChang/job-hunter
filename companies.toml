@@ -410,3 +410,117 @@ country = "SE"
 company = "Zoox"
 source  = "lever"
 board   = "zoox"
+
+# --- top-100 SWE employers, wave 1 (verified via public ATS APIs, 2026-09-04) ---
+
+[[boards]]
+company = "SpaceX"
+source  = "greenhouse"
+board   = "spacex"
+country = "US"
+
+[[boards]]
+company = "xAI"
+source  = "greenhouse"
+board   = "xai"
+country = "US"
+
+[[boards]]
+company = "Block"
+source  = "greenhouse"
+board   = "block"
+country = "US"
+
+[[boards]]
+company = "Jane Street"
+source  = "greenhouse"
+board   = "janestreet"
+country = "US"
+
+[[boards]]
+company = "Jump Trading"
+source  = "greenhouse"
+board   = "jumptrading"
+country = "US"
+
+[[boards]]
+company = "Riot Games"
+source  = "greenhouse"
+board   = "riotgames"
+country = "US"
+
+[[boards]]
+company = "Twitch"
+source  = "greenhouse"
+board   = "twitch"
+country = "US"
+
+[[boards]]
+company = "Zscaler"
+source  = "greenhouse"
+board   = "zscaler"
+country = "US"
+
+[[boards]]
+company = "Grafana Labs"
+source  = "greenhouse"
+board   = "grafanalabs"
+country = "US"
+
+[[boards]]
+company = "New Relic"
+source  = "greenhouse"
+board   = "newrelic"
+country = "US"
+
+[[boards]]
+company = "JetBrains"
+source  = "greenhouse"
+board   = "jetbrains"
+
+[[boards]]
+company = "GoDaddy"
+source  = "greenhouse"
+board   = "godaddy"
+country = "US"
+
+[[boards]]
+company = "Coupang"
+source  = "greenhouse"
+board   = "coupang"
+country = "KR"
+
+[[boards]]
+company = "Snowflake"
+source  = "ashby"
+board   = "snowflake"
+country = "US"
+
+[[boards]]
+company = "Confluent"
+source  = "ashby"
+board   = "confluent"
+country = "US"
+
+[[boards]]
+company = "Notion"
+source  = "ashby"
+board   = "notion"
+country = "US"
+
+[[boards]]
+company = "Miro"
+source  = "ashby"
+board   = "miro"
+
+[[boards]]
+company = "Cohere"
+source  = "ashby"
+board   = "cohere"
+country = "CA"
+
+[[boards]]
+company = "Runway"
+source  = "ashby"
+board   = "runway"
+country = "US"
