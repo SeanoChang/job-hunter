@@ -274,3 +274,15 @@ def test_l2_extra_body_parse() -> None:
         Settings.load(_L2_BASE | {"JOB_HUNTER_L2_EXTRA_BODY": "not json"})
     with _pytest.raises(ConfigError, match="JOB_HUNTER_L2_EXTRA_BODY"):
         Settings.load(_L2_BASE | {"JOB_HUNTER_L2_EXTRA_BODY": '["a", "list"]'})
+
+
+def test_l2_schema_strict_parse() -> None:
+    def strict(value: str | None) -> bool:
+        env = _L2_BASE if value is None else _L2_BASE | {"JOB_HUNTER_L2_SCHEMA_STRICT": value}
+        return Settings.load(env).l2_schema_strict
+
+    assert strict(None) is True
+    assert strict("") is True
+    assert strict("true") is True
+    for raw in ("false", "0", "no", "False"):
+        assert strict(raw) is False

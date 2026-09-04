@@ -100,6 +100,7 @@ class OpenAICompat:
         extra_body: dict[str, Any] | None = None,
         timeout: float = 120.0,
         prices: tuple[float, float] | None = None,  # USD per 1M tokens (in, out)
+        strict: bool = True,
     ) -> None:
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         self._client = client or httpx.Client(timeout=timeout, headers=headers)
@@ -108,6 +109,10 @@ class OpenAICompat:
         self._base_url = base_url.rstrip("/")
         self._extra_body = extra_body or {}
         self._prices = prices
+        # OpenAI's strict mode rejects schemas whose objects carry optional
+        # properties (required must list every key); ours does, so operators
+        # can turn strict off — the local validator chain stays the gate
+        self._strict = strict
 
     def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
         body = {
@@ -118,7 +123,7 @@ class OpenAICompat:
                 "type": "json_schema",
                 "json_schema": {
                     "name": "demand_profile",
-                    "strict": True,
+                    "strict": self._strict,
                     "schema": engine_schema(schema),
                 },
             },

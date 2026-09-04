@@ -77,6 +77,28 @@ def test_openai_compat_extra_body_max_completion_tokens_replaces_max_tokens() ->
     assert body["reasoning_effort"] == "low"
 
 
+def test_openai_compat_schema_strict_off() -> None:
+    # OpenAI strict mode rejects schemas whose objects have optional properties
+    # (required must list every key); ours does, so the operator can turn strict
+    # off and let the local validator chain stay the gate.
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "model": "gpt-5.6-luna",
+                "choices": [{"message": {"content": '{"ok": true}'}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    eng = OpenAICompat("https://x.test/v1", "sk-test", client=_client(handler), strict=False)
+    eng.complete("hello", SCHEMA, "gpt-5.6-luna")
+    assert seen["body"]["response_format"]["json_schema"]["strict"] is False
+
+
 @pytest.mark.parametrize(
     "status,exc",
     [(429, EngineThrottled), (404, EngineModelNotFound), (500, EngineTransportError)],
