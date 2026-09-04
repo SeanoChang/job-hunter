@@ -1,0 +1,12 @@
+schema_version: 1
+derived_from: defaults
+capture:
+  body_word_cap: 60
+  subtree_max_nodes: 40
+  askuserquestion: nodes
+  similarity: lexical
+planning:
+  ceremony: standard
+  touch_path_cap: 10
+  plan_dirs: [docs/superpowers/plans, docs/plans]
+  tbd_tokens: [TBD, "???"]

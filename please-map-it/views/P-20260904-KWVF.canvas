@@ -1,0 +1,234 @@
+{
+ "edges": [
+  {
+   "fromNode": "T-20260904-2MPS",
+   "id": "T-20260904-2MPS-dep-T-20260904-8J7V",
+   "label": "depends-on",
+   "toNode": "T-20260904-8J7V"
+  },
+  {
+   "fromNode": "T-20260904-797G",
+   "id": "T-20260904-797G-dep-T-20260904-JQXX",
+   "label": "depends-on",
+   "toNode": "T-20260904-JQXX"
+  },
+  {
+   "fromNode": "T-20260904-8J7V",
+   "id": "T-20260904-8J7V-dep-T-20260904-WKVF",
+   "label": "depends-on",
+   "toNode": "T-20260904-WKVF"
+  },
+  {
+   "fromNode": "T-20260904-9GQ8",
+   "id": "T-20260904-9GQ8-dep-T-20260904-8J7V",
+   "label": "depends-on",
+   "toNode": "T-20260904-8J7V"
+  },
+  {
+   "fromNode": "T-20260904-AA7Z",
+   "id": "T-20260904-AA7Z-dep-T-20260904-PZZQ",
+   "label": "depends-on",
+   "toNode": "T-20260904-PZZQ"
+  },
+  {
+   "fromNode": "T-20260904-AA7Z",
+   "id": "T-20260904-AA7Z-dep-T-20260904-VJKA",
+   "label": "depends-on",
+   "toNode": "T-20260904-VJKA"
+  },
+  {
+   "fromNode": "T-20260904-JQXX",
+   "id": "T-20260904-JQXX-dep-T-20260904-3MJK",
+   "label": "depends-on",
+   "toNode": "T-20260904-3MJK"
+  },
+  {
+   "fromNode": "T-20260904-JQXX",
+   "id": "T-20260904-JQXX-dep-T-20260904-8J7V",
+   "label": "depends-on",
+   "toNode": "T-20260904-8J7V"
+  },
+  {
+   "fromNode": "T-20260904-KXNR",
+   "id": "T-20260904-KXNR-dep-T-20260904-AA7Z",
+   "label": "depends-on",
+   "toNode": "T-20260904-AA7Z"
+  },
+  {
+   "fromNode": "T-20260904-PZZQ",
+   "id": "T-20260904-PZZQ-dep-T-20260904-SJCV",
+   "label": "depends-on",
+   "toNode": "T-20260904-SJCV"
+  },
+  {
+   "fromNode": "T-20260904-VJKA",
+   "id": "T-20260904-VJKA-dep-T-20260904-8J7V",
+   "label": "depends-on",
+   "toNode": "T-20260904-8J7V"
+  },
+  {
+   "fromNode": "T-20260904-VJKA",
+   "id": "T-20260904-VJKA-dep-T-20260904-VTZ6",
+   "label": "depends-on",
+   "toNode": "T-20260904-VTZ6"
+  },
+  {
+   "fromNode": "T-20260904-YZPA",
+   "id": "T-20260904-YZPA-dep-T-20260904-8J7V",
+   "label": "depends-on",
+   "toNode": "T-20260904-8J7V"
+  }
+ ],
+ "nodes": [
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-WKVF-http-py-post-bodies-and-same-host-spacin.md",
+   "height": 120,
+   "id": "T-20260904-WKVF",
+   "type": "file",
+   "width": 280,
+   "x": 0,
+   "y": 0
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-VTZ6-registry-per-source-extra-keys-host-site.md",
+   "height": 120,
+   "id": "T-20260904-VTZ6",
+   "type": "file",
+   "width": 280,
+   "x": 340,
+   "y": 0
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-SJCV-manifest-page-blobs-and-details-fields.md",
+   "height": 120,
+   "id": "T-20260904-SJCV",
+   "type": "file",
+   "width": 280,
+   "x": 680,
+   "y": 0
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-NFPW-policy-wording-first-party-json-endpoint.md",
+   "height": 120,
+   "id": "T-20260904-NFPW",
+   "type": "file",
+   "width": 280,
+   "x": 1020,
+   "y": 0
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-3MJK-probe-pin-oracle-ce-detail-finder-syntax.md",
+   "height": 120,
+   "id": "T-20260904-3MJK",
+   "type": "file",
+   "width": 280,
+   "x": 1360,
+   "y": 0
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-8J7V-twophasesource-protocol-fetch-py-driver-.md",
+   "height": 120,
+   "id": "T-20260904-8J7V",
+   "type": "file",
+   "width": 280,
+   "x": 0,
+   "y": 220
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-PZZQ-ingest-pending-detail-presence-version-o.md",
+   "height": 120,
+   "id": "T-20260904-PZZQ",
+   "type": "file",
+   "width": 280,
+   "x": 340,
+   "y": 220
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-VJKA-workday-adapter-recorded-fixtures.md",
+   "height": 120,
+   "id": "T-20260904-VJKA",
+   "type": "file",
+   "width": 280,
+   "x": 0,
+   "y": 440
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-JQXX-oracle-hcm-adapter-fixtures.md",
+   "height": 120,
+   "id": "T-20260904-JQXX",
+   "type": "file",
+   "width": 280,
+   "x": 340,
+   "y": 440
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-2MPS-amazon-adapter-search-json-detail-decide.md",
+   "height": 120,
+   "id": "T-20260904-2MPS",
+   "type": "file",
+   "width": 280,
+   "x": 680,
+   "y": 440
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-9GQ8-smartrecruiters-adapter-4-boards.md",
+   "height": 120,
+   "id": "T-20260904-9GQ8",
+   "type": "file",
+   "width": 280,
+   "x": 1020,
+   "y": 440
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-YZPA-eightfold-adapter-netflix.md",
+   "height": 120,
+   "id": "T-20260904-YZPA",
+   "type": "file",
+   "width": 280,
+   "x": 1360,
+   "y": 440
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-AA7Z-w1-add-workday-nvidia-canary-verify-nvid.md",
+   "height": 120,
+   "id": "T-20260904-AA7Z",
+   "type": "file",
+   "width": 280,
+   "x": 0,
+   "y": 660
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-797G-o-add-the-6-oracle-boards-jpmc-first.md",
+   "height": 120,
+   "id": "T-20260904-797G",
+   "type": "file",
+   "width": 280,
+   "x": 340,
+   "y": 660
+  },
+  {
+   "color": "4",
+   "file": "please-map-it/tickets/T-20260904-KXNR-w2-workday-wave-25-tenants-in-two-regist.md",
+   "height": 120,
+   "id": "T-20260904-KXNR",
+   "type": "file",
+   "width": 280,
+   "x": 0,
+   "y": 880
+  }
+ ]
+}
