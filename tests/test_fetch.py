@@ -13,8 +13,9 @@ from jobhunter.archive.keys import blob_key, registry_key
 from jobhunter.archive.local import LocalFS
 from jobhunter.archive.manifests import iter_manifests
 from jobhunter.config import Settings
-from jobhunter.fetch import gzip_bytes, run
+from jobhunter.fetch import gzip_bytes, is_healthy, run
 from jobhunter.http import Fetcher
+from jobhunter.models import AttemptManifest
 from tests.conftest import TEST_DSN, fixture_bytes
 
 REG = """
@@ -55,6 +56,29 @@ def _fake_ats(req: httpx.Request) -> httpx.Response:
 def test_gzip_bytes_is_deterministic() -> None:
     assert gzip_bytes(b"abc") == gzip_bytes(b"abc")
     assert gzip.decompress(gzip_bytes(b"abc")) == b"abc"
+
+
+def _manifest(**overrides: Any) -> AttemptManifest:
+    now = datetime(2026, 9, 4, tzinfo=UTC)
+    base: dict[str, Any] = dict(
+        attempt_id="a1", run_id="r1", source="workday", board="nvidia",
+        started_at=now, finished_at=now, url="https://x.example/jobs",
+        http_status=200, transport="ok", blob_sha256="b" * 64, payload_bytes=1,
+        record_count=1, adapter_version="workday/1", registry_revision="rev",
+        cli_version="0", error=None,
+    )
+    base.update(overrides)
+    return AttemptManifest(**base)
+
+
+def test_two_phase_manifest_without_blob_is_healthy() -> None:
+    m = _manifest(blob_sha256=None, page_blobs=("p" * 64,))
+    assert is_healthy(m)
+
+
+def test_two_phase_manifest_with_error_is_not_healthy() -> None:
+    m = _manifest(blob_sha256=None, page_blobs=("p" * 64,), error="boom")
+    assert not is_healthy(m)
 
 
 def test_run_writes_manifests_blobs_and_registry(tmp_path: Path) -> None:
