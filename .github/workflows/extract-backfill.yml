@@ -1,0 +1,75 @@
+# TEMPORARY while the L2 backlog drains (~20k open-posting docs as of
+# 2026-09-05): a long extraction run every 6 hours alongside the hourly
+# fetch. Delete this file when `extract run --dry-run` shows an empty queue.
+#
+# Safe next to fetch.yml by construction: `extract run` takes its own
+# advisory lock (EXTRACT_LOCK_KEY), so it never blocks collection, and the
+# hourly sync's extract step skips cleanly while this run holds the lock —
+# the lock is the dedup, no document is paid for twice.
+name: extract-backfill
+on:
+  workflow_dispatch:
+    inputs:
+      max_docs:
+        description: "Documents to extract this run"
+        default: "400"
+      max_usd:
+        description: "USD cap for this run"
+        default: "5"
+  schedule:
+    - cron: "37 */6 * * *"
+concurrency:
+  group: extract-backfill
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      # Third-party actions are pinned to commit SHAs (supply-chain). Tag shown for humans.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen --no-dev
+      - name: extract
+        timeout-minutes: 345
+        env:
+          JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
+          AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
+          JOB_HUNTER_L2_ENGINE: openai-compat
+          JOB_HUNTER_L2_BASE_URL: ${{ vars.JOB_HUNTER_L2_BASE_URL || 'https://openrouter.ai/api/v1' }}
+          # the OpenAI platform key; JOB_HUNTER_L2_API_KEY holds the OpenRouter one
+          JOB_HUNTER_L2_API_KEY: ${{ secrets.JOB_HUNTER_L2_OPENAI_API_KEY }}
+          JOB_HUNTER_L2_MODEL_CANDIDATES: ${{ vars.JOB_HUNTER_L2_MODEL_CANDIDATES || 'z-ai/glm-5.2:free' }}
+          JOB_HUNTER_L2_MODELS: ${{ vars.JOB_HUNTER_L2_MODELS || 'z-ai/*' }}
+          JOB_HUNTER_L2_EXTRA_BODY: ${{ vars.JOB_HUNTER_L2_EXTRA_BODY }}
+          JOB_HUNTER_L2_PRICE: ${{ vars.JOB_HUNTER_L2_PRICE }}
+          JOB_HUNTER_L2_SCHEMA_STRICT: ${{ vars.JOB_HUNTER_L2_SCHEMA_STRICT }}
+          MAX_DOCS: ${{ github.event.inputs.max_docs }}
+          MAX_USD: ${{ github.event.inputs.max_usd }}
+        run: |
+          if [ -z "${JOB_HUNTER_L2_API_KEY}" ]; then
+            echo "no JOB_HUNTER_L2_OPENAI_API_KEY secret set; nothing to do"
+            exit 0
+          fi
+          # Cron fires with empty inputs; dispatch may override them.
+          code=0
+          uv run job-hunter extract run \
+            --max-docs "${MAX_DOCS:-400}" --max-usd "${MAX_USD:-5}" \
+            | tee extract.json || code=$?
+          # A throttle or breaker stall is routine on a backfill and the next
+          # scheduled run resumes where this one stopped — warn, don't go red.
+          stalled=$(jq -r '(.data.throttled // false) or (.data.breaker_abort // false)' extract.json 2>/dev/null || true)
+          if [ "$code" -eq 6 ] && [ "$stalled" = "true" ]; then
+            echo "::warning::extraction stalled (throttled or breaker tripped); resuming next run"
+            code=0
+          fi
+          exit "$code"
