@@ -103,11 +103,14 @@ def _as_json(data: Any) -> Any:
     return json.loads(json.dumps(data, default=str))
 
 
-def test_healthz_is_the_only_open_route(client: TestClient) -> None:
-    r = client.get("/healthz")
-    assert r.status_code == 200
-    assert r.json()["version"] == mcp.__version__  # build version, no corpus data
-    assert "data" not in r.json()
+def test_health_paths_are_the_only_open_routes(client: TestClient) -> None:
+    # /health is the run.app-reachable spelling (Google's frontend intercepts
+    # the exact path /healthz there); /healthz stays for everything else.
+    for path in ("/health", "/healthz"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert r.json()["version"] == mcp.__version__  # build version, no corpus data
+        assert "data" not in r.json()
     for token in (None, "wrong", ""):
         denied = _rpc(client, "tools/list", token=token)
         assert denied.status_code == 401, denied.text
