@@ -565,3 +565,11 @@ company = "Mistral AI"
 source  = "ashby"
 board   = "mistral.ai"
 country = "FR"
+
+[[boards]]
+company = "NVIDIA"
+source  = "workday"
+board   = "nvidia"
+host    = "wd5"
+site    = "NVIDIAExternalCareerSite"
+country = "US"
