@@ -2,6 +2,7 @@ from jobhunter.sources.ashby import Ashby
 from jobhunter.sources.base import Source, TwoPhaseSource
 from jobhunter.sources.greenhouse import Greenhouse
 from jobhunter.sources.lever import Lever
+from jobhunter.sources.oraclehcm import OracleHCM
 from jobhunter.sources.workday import Workday
 
 SOURCES: dict[str, Source] = {
@@ -14,6 +15,7 @@ SOURCES: dict[str, Source] = {
 # two-phase path for a source registered here.
 TWO_PHASE_SOURCES: dict[str, TwoPhaseSource] = {
     "workday": Workday(),
+    "oraclehcm": OracleHCM(),
 }
 
 
