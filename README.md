@@ -9,9 +9,12 @@ machine; your existing agent subscription supplies the intelligence.
 
 Replace job-board grinding with an agent working in a structured local workspace:
 
-- **Corpus** — ingest postings directly from official ATS APIs (Greenhouse, Lever,
-  Ashby) into a local temporal store that tracks every posting's lifecycle from
-  first seen to closed. No LinkedIn/Indeed scraping, no auto-apply.
+- **Corpus** — ingest postings from official ATS APIs and other first-party
+  structured JSON endpoints (Greenhouse, Lever, Ashby, Workday, Oracle
+  Recruiting Cloud, Amazon, SmartRecruiters, Eightfold) into a local temporal
+  store that tracks every posting's lifecycle from first seen to closed. Never
+  HTML scraping, never authentication, never bypassing a bot challenge; no
+  auto-apply.
 - **Workspace & tracker** — a structured home for the hunt: companies sorted and
   researched, one folder of organized notes per application, a status board
   (applied → screen → onsite → offer), your personal fact base, and local memory
