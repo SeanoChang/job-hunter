@@ -1,5 +1,6 @@
 import gzip
 import json
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9,13 +10,16 @@ import httpx
 import psycopg
 import pytest
 
+import jobhunter.sources as sources_mod
+from jobhunter.archive.base import ArchiveStore
 from jobhunter.archive.keys import blob_key, registry_key
 from jobhunter.archive.local import LocalFS
 from jobhunter.archive.manifests import iter_manifests
 from jobhunter.config import Settings
-from jobhunter.fetch import gzip_bytes, is_healthy, run
+from jobhunter.fetch import TwoPhaseBudget, gzip_bytes, is_healthy, run
 from jobhunter.http import Fetcher
-from jobhunter.models import AttemptManifest
+from jobhunter.models import AttemptManifest, Board, PostingVersion
+from jobhunter.sources.base import ListPage, ListRow, RequestSpec
 from tests.conftest import TEST_DSN, fixture_bytes
 
 REG = """
@@ -313,3 +317,276 @@ def test_run_survives_ping_failure(tmp_path: Path) -> None:
     t = datetime(2026, 8, 18, 6, tzinfo=UTC)
     s = run(settings, fetcher=_fetcher(_fake_ats), now=lambda: t, ingest=False, ping=boom)
     assert s.db_error is None and len(s.outcomes) == 3
+
+
+# ---- two-phase boards (list + detail), spec 2026-09-04 §3.2/§3.4
+
+WD_REG = """
+[[boards]]
+company="NVIDIA"
+source="workday"
+board="nvidia"
+host="wd5"
+site="NVIDIAExternalCareerSite"
+"""
+
+
+class FakeTwoPhase:
+    """A TwoPhaseSource with no I/O at all: it only describes requests and parses bodies."""
+
+    name = "workday"
+    adapter_version = "fake/1"
+
+    def __init__(self, page_size: int = 2) -> None:
+        self.page_size = page_size
+
+    def list_url(self, board: Board, offset: int) -> RequestSpec:
+        return RequestSpec(
+            f"https://wd.example/{board.board}/jobs",
+            "POST",
+            {"offset": offset, "limit": self.page_size},
+        )
+
+    def parse_list(self, body: bytes) -> ListPage:
+        data = json.loads(body)
+        rows = tuple(
+            ListRow(uid=j["id"], detail_path=f"/job/{j['id']}", title=j["title"], payload=j)
+            for j in data["jobs"]
+        )
+        return ListPage(rows=rows, total=int(data["total"]))
+
+    def detail_url(self, board: Board, row: ListRow) -> RequestSpec:
+        return RequestSpec(f"https://wd.example{row.detail_path}")
+
+    def normalize_detail(self, body: bytes, row: ListRow, board: Board) -> PostingVersion:
+        d = json.loads(body)
+        return PostingVersion(
+            source=self.name, board=board.board, source_id=row.uid, title=row.title or "",
+            company=board.company, locations=(), workplace_type=None, is_remote=None,
+            department=None, team=None, employment_type=None, compensation=None,
+            url=None, apply_url=None, source_created_at=None, source_updated_at=None,
+            description_html=d["description"],
+        )
+
+
+class RecordingStore:
+    """An archive that remembers the order of its writes, to prove archive-first ordering."""
+
+    def __init__(self, inner: ArchiveStore) -> None:
+        self.inner = inner
+        self.writes: list[str] = []
+
+    def put(self, key: str, data: bytes) -> bool:
+        self.writes.append(key)
+        return self.inner.put(key, data)
+
+    def get(self, key: str) -> bytes:
+        return self.inner.get(key)
+
+    def exists(self, key: str) -> bool:
+        return self.inner.exists(key)
+
+    def list(self, prefix: str, start_after: str | None = None) -> Iterator[str]:
+        return self.inner.list(prefix, start_after=start_after)
+
+
+@pytest.fixture
+def two_phase(monkeypatch: pytest.MonkeyPatch) -> FakeTwoPhase:
+    src = FakeTwoPhase()
+    monkeypatch.setitem(sources_mod.TWO_PHASE_SOURCES, "workday", src)
+    return src
+
+
+def _wd_settings(tmp_path: Path) -> Settings:
+    (tmp_path / "companies.toml").write_text(WD_REG)
+    return Settings(archive_url=f"file://{tmp_path / 'archive'}",
+                    registry_path=tmp_path / "companies.toml", home=tmp_path, database_url=None)
+
+
+def _wd_handler(
+    *,
+    total: int = 5,
+    list_status: int = 200,
+    list_body: bytes | None = None,
+    detail_status: int = 200,
+    calls: list[str] | None = None,
+) -> Callable[[httpx.Request], httpx.Response]:
+    def h(req: httpx.Request) -> httpx.Response:
+        if calls is not None:
+            calls.append(f"{req.method} {req.url.path}")
+        if req.url.path.endswith("/jobs"):
+            if list_body is not None or list_status != 200:
+                return httpx.Response(list_status, content=list_body or b"denied")
+            q = json.loads(req.content)
+            off, lim = int(q["offset"]), int(q["limit"])
+            jobs = [{"id": f"j{i}", "title": f"Engineer {i}"} for i in range(off, min(off + lim,
+                                                                                     total))]
+            return httpx.Response(200, content=json.dumps({"total": total, "jobs": jobs}).encode())
+        uid = req.url.path.rsplit("/", 1)[-1]
+        body = json.dumps({"id": uid, "description": f"<p>{uid}</p>"}).encode()
+        return httpx.Response(detail_status, content=body)
+
+    return h
+
+
+def _detail_uids(m: AttemptManifest) -> list[str]:
+    return [d.uid for d in m.details or ()]
+
+
+def test_two_phase_pages_the_list_and_archives_pages_before_the_manifest(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    store = RecordingStore(LocalFS(tmp_path / "archive"))
+    t = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path), store=store, fetcher=_fetcher(_wd_handler(total=5)),
+            now=lambda: t, ingest=False, budget=TwoPhaseBudget(detail_budget=0))
+    m = s.outcomes[0].manifest
+
+    assert m.transport == "ok" and m.error is None and m.blob_sha256 is None
+    assert m.page_blobs is not None and len(m.page_blobs) == 3  # 5 rows at 2/page
+    assert m.record_count == 5 and m.details == ()
+    assert m.attempt_id == "attempts/workday/nvidia/2026/09/04T060000Z.json"
+    assert m.adapter_version == "fake/1"
+
+    for sha in m.page_blobs:
+        assert store.exists(blob_key(sha))
+    first = json.loads(gzip.decompress(store.get(blob_key(m.page_blobs[0]))))
+    assert [j["id"] for j in first["jobs"]] == ["j0", "j1"]
+
+    # archive-first: every page blob is written before the manifest that names it
+    assert store.writes[-1] == m.attempt_id
+    page_keys = [blob_key(sha) for sha in m.page_blobs]
+    assert store.writes[-4:-1] == page_keys
+
+
+def test_two_phase_stops_at_the_page_cap_and_says_so(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    t = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path), fetcher=_fetcher(_wd_handler(total=1000)), now=lambda: t,
+            ingest=False, budget=TwoPhaseBudget(page_cap=3, detail_budget=0))
+    m = s.outcomes[0].manifest
+    assert m.page_blobs is not None and len(m.page_blobs) == 3
+    assert m.record_count == 6  # 3 pages x 2 rows, of 1000 listed
+    assert m.error is not None and m.error.startswith("page cap:")
+    assert not is_healthy(m)  # truncated coverage never reads as a full snapshot
+
+
+def test_two_phase_budget_spends_new_uids_first_and_never_exceeds_the_limit(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    store = LocalFS(tmp_path / "archive")
+    t = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path), fetcher=_fetcher(_wd_handler(total=5)), now=lambda: t,
+            ingest=False, budget=TwoPhaseBudget(detail_budget=2))
+    m = s.outcomes[0].manifest
+    assert _detail_uids(m) == ["j0", "j1"]  # list order: newest listed first
+    assert m.record_count == 5  # presence still covers every row, budget or not
+    for d in m.details or ():
+        assert d.blob_sha256 is not None and store.exists(blob_key(d.blob_sha256))
+        assert json.loads(gzip.decompress(store.get(blob_key(d.blob_sha256))))["id"] == d.uid
+
+
+def test_two_phase_budget_skips_details_already_archived_and_still_fresh(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    settings = _wd_settings(tmp_path)
+    t1 = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    t2 = t1 + timedelta(hours=1)
+    budget = TwoPhaseBudget(detail_budget=2)
+    run(settings, fetcher=_fetcher(_wd_handler(total=5)), now=lambda: t1, ingest=False,
+        budget=budget)
+    s2 = run(settings, fetcher=_fetcher(_wd_handler(total=5)), now=lambda: t2, ingest=False,
+             budget=budget)
+    assert _detail_uids(s2.outcomes[0].manifest) == ["j2", "j3"]
+
+
+def test_two_phase_budget_sweeps_details_older_than_redetail_days(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    settings = _wd_settings(tmp_path)
+    t1 = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    t2 = t1 + timedelta(days=8)
+    budget = TwoPhaseBudget(detail_budget=2, redetail_days=7)
+    s1 = run(settings, fetcher=_fetcher(_wd_handler(total=3)), now=lambda: t1, ingest=False,
+             budget=budget)
+    assert _detail_uids(s1.outcomes[0].manifest) == ["j0", "j1"]
+    s2 = run(settings, fetcher=_fetcher(_wd_handler(total=3)), now=lambda: t2, ingest=False,
+             budget=budget)
+    # the one uid never fetched first, then the oldest detail; still exactly the budget
+    assert _detail_uids(s2.outcomes[0].manifest) == ["j2", "j0"]
+
+
+def test_two_phase_budget_of_zero_fetches_no_details_but_still_lists(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    t = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path), fetcher=_fetcher(_wd_handler(total=5)), now=lambda: t,
+            ingest=False, budget=TwoPhaseBudget(detail_budget=0))
+    m = s.outcomes[0].manifest
+    assert m.details == () and m.record_count == 5
+
+
+def test_two_phase_blocked_on_a_403_list_skips_the_board_without_retry(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    calls: list[str] = []
+    t = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path), fetcher=_fetcher(_wd_handler(list_status=403, calls=calls)),
+            now=lambda: t, ingest=False)
+    m = s.outcomes[0].manifest
+    assert m.transport == "blocked" and m.http_status == 403
+    assert m.error is not None and m.error.startswith("blocked:")
+    assert m.page_blobs == () and m.details == () and m.record_count is None
+    assert not is_healthy(m)
+    assert calls == ["POST /nvidia/jobs"]  # one request: no retry, no details
+
+
+def test_two_phase_blocked_on_a_challenge_page_body(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    challenge = b"<html><head><title>Just a moment...</title></head><body>captcha</body></html>"
+    calls: list[str] = []
+    t = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path), fetcher=_fetcher(_wd_handler(list_body=challenge, calls=calls)),
+            now=lambda: t, ingest=False)
+    m = s.outcomes[0].manifest
+    assert m.transport == "blocked" and m.http_status == 200
+    assert m.page_blobs == () and m.details == ()
+    assert calls == ["POST /nvidia/jobs"]
+
+
+def test_two_phase_detail_failure_is_recorded_and_the_run_survives(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    t = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path), fetcher=_fetcher(_wd_handler(total=3, detail_status=404)),
+            now=lambda: t, ingest=False, budget=TwoPhaseBudget(detail_budget=2))
+    m = s.outcomes[0].manifest
+    assert m.transport == "ok" and m.error is None and m.record_count == 3
+    assert [(d.uid, d.blob_sha256, d.http_status, d.error) for d in m.details or ()] == [
+        ("j0", None, 404, "HTTP 404"), ("j1", None, 404, "HTTP 404"),
+    ]
+    # a failed detail leaves the uid new, so the next run retries it ahead of the sweep
+    s2 = run(_wd_settings(tmp_path), fetcher=_fetcher(_wd_handler(total=3)),
+             now=lambda: t + timedelta(hours=1), ingest=False,
+             budget=TwoPhaseBudget(detail_budget=2))
+    assert _detail_uids(s2.outcomes[0].manifest) == ["j0", "j1"]
+
+
+def test_two_phase_manifest_round_trips_through_the_archive(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    t = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path), fetcher=_fetcher(_wd_handler(total=3)), now=lambda: t,
+            ingest=False, budget=TwoPhaseBudget(detail_budget=1))
+    (stored,) = list(iter_manifests(LocalFS(tmp_path / "archive"), "workday", "nvidia"))
+    assert stored == s.outcomes[0].manifest
+
+
+def test_two_phase_dry_run_writes_nothing(tmp_path: Path, two_phase: FakeTwoPhase) -> None:
+    t = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path), fetcher=_fetcher(_wd_handler(total=3)), now=lambda: t,
+            dry_run=True)
+    assert s.outcomes[0].manifest.record_count == 3
+    assert list(iter_manifests(LocalFS(tmp_path / "archive"))) == []

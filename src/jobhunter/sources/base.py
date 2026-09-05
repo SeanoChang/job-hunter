@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass, field
+from datetime import datetime
+from types import MappingProxyType
 from typing import Any, Protocol
 
 from jobhunter.models import Board, PostingVersion, RawRecord
@@ -25,6 +28,58 @@ class Source(Protocol):
     def url(self, board: Board) -> str: ...
     def parse(self, body: bytes) -> Iterator[RawRecord]: ...
     def normalize(self, rec: RawRecord, board: Board) -> PostingVersion: ...
+
+
+# -- two-phase sources (spec 2026-09-04 §3.2): a list phase that returns rows
+# without descriptions, then one detail request per row. The adapter only
+# *describes* the requests; `fetch.py` issues them, so adapters stay pure.
+
+_EMPTY_PAYLOAD: Mapping[str, Any] = MappingProxyType({})
+
+
+@dataclass(frozen=True, slots=True)
+class RequestSpec:
+    """One HTTP request, described. `json_body` is sent as a JSON body (Workday CXS posts)."""
+
+    url: str
+    method: str = "GET"
+    json_body: Any | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ListRow:
+    """One row of a list page: the uid plus the coarse fields the list carries.
+
+    `uid` is the source's own identifier for the posting (the `source_id` the
+    detail normalises to), stable across runs — the detail budget keys on it.
+    `payload` is the row verbatim, so an adapter can normalise from the list
+    alone when a source's list is already complete.
+    """
+
+    uid: str
+    detail_path: str | None = None
+    title: str | None = None
+    locations: tuple[str, ...] = ()
+    posted_at: datetime | None = None
+    payload: Mapping[str, Any] = field(default=_EMPTY_PAYLOAD)
+
+
+@dataclass(frozen=True, slots=True)
+class ListPage:
+    """One parsed list page: its rows, and the board's total as the source reports it."""
+
+    rows: tuple[ListRow, ...]
+    total: int
+
+
+class TwoPhaseSource(Protocol):
+    name: str
+    adapter_version: str
+
+    def list_url(self, board: Board, offset: int) -> RequestSpec: ...
+    def parse_list(self, body: bytes) -> ListPage: ...
+    def detail_url(self, board: Board, row: ListRow) -> RequestSpec: ...
+    def normalize_detail(self, body: bytes, row: ListRow, board: Board) -> PostingVersion: ...
 
 
 def load_json(body: bytes) -> Any:
