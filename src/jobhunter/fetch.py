@@ -277,6 +277,7 @@ def _fetch_list(
 ) -> _ListPhase:
     """Page the list to `total`, archiving each page BEFORE it is parsed or used."""
     phase = _ListPhase()
+    total: int | None = None
     offset = 0
     seen: set[str] = set()
     for page_no in range(budget.page_cap):
@@ -308,8 +309,13 @@ def _fetch_list(
             if row.uid not in seen:  # a uid repeated across pages is one posting
                 seen.add(row.uid)
                 phase.rows.append(row)
+        # Workday CXS reports the board's total only at offset 0 — later pages
+        # say 0 (observed live, nvidia.wd5 2026-09-05) — so the first page's
+        # figure governs the walk.
+        if total is None:
+            total = page.total
         offset += len(page.rows)
-        if not page.rows or offset >= page.total:
+        if not page.rows or offset >= total:
             return phase
     # Truncated coverage must never read as a complete snapshot.
     phase.error = (

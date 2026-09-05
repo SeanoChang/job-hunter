@@ -410,6 +410,7 @@ def _wd_handler(
     list_body: bytes | None = None,
     detail_status: int = 200,
     calls: list[str] | None = None,
+    total_first_page_only: bool = False,
 ) -> Callable[[httpx.Request], httpx.Response]:
     def h(req: httpx.Request) -> httpx.Response:
         if calls is not None:
@@ -421,7 +422,10 @@ def _wd_handler(
             off, lim = int(q["offset"]), int(q["limit"])
             jobs = [{"id": f"j{i}", "title": f"Engineer {i}"} for i in range(off, min(off + lim,
                                                                                      total))]
-            return httpx.Response(200, content=json.dumps({"total": total, "jobs": jobs}).encode())
+            # Workday CXS reports the real total only at offset 0; later pages
+            # say 0 (observed live on nvidia.wd5, 2026-09-05).
+            said = total if (not total_first_page_only or off == 0) else 0
+            return httpx.Response(200, content=json.dumps({"total": said, "jobs": jobs}).encode())
         uid = req.url.path.rsplit("/", 1)[-1]
         body = json.dumps({"id": uid, "description": f"<p>{uid}</p>"}).encode()
         return httpx.Response(detail_status, content=body)
@@ -457,6 +461,20 @@ def test_two_phase_pages_the_list_and_archives_pages_before_the_manifest(
     assert store.writes[-1] == m.attempt_id
     page_keys = [blob_key(sha) for sha in m.page_blobs]
     assert store.writes[-4:-1] == page_keys
+
+
+def test_two_phase_pages_past_a_total_reported_only_on_the_first_page(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    """Workday CXS says total only at offset 0; later pages report 0. The first
+    canary run stopped at 40 of 2,000 rows because the driver read each page's
+    own total — the first page's figure must be the one that governs."""
+    t = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path),
+            fetcher=_fetcher(_wd_handler(total=7, total_first_page_only=True)),
+            now=lambda: t, ingest=False, budget=TwoPhaseBudget(detail_budget=0))
+    m = s.outcomes[0].manifest
+    assert m.error is None and m.record_count == 7  # all rows, not the first two pages
 
 
 def test_two_phase_stops_at_the_page_cap_and_says_so(
