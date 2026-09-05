@@ -11,7 +11,7 @@ from typing import Any
 from jobhunter.hashing import canonical_json
 from jobhunter.timeutil import iso, parse_iso
 
-SOURCE_PREFIX: dict[str, str] = {"greenhouse": "gh", "lever": "lv", "ashby": "ab"}
+SOURCE_PREFIX: dict[str, str] = {"greenhouse": "gh", "lever": "lv", "ashby": "ab", "workday": "wd"}
 
 _EMPTY_EXTRA: MappingProxyType[str, str] = MappingProxyType({})
 
