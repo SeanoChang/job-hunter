@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from jobhunter.archive.manifests import (
     latest_per_board,
     write_manifest,
 )
-from jobhunter.models import AttemptManifest
+from jobhunter.models import AttemptManifest, DetailAttempt
 
 
 def _m(source: str, board: str, t: datetime) -> AttemptManifest:
@@ -19,6 +20,39 @@ def _m(source: str, board: str, t: datetime) -> AttemptManifest:
         blob_sha256=None, payload_bytes=0, record_count=0, adapter_version="x/1",
         registry_revision="rev", cli_version="0.1.0", error=None,
     )
+
+
+def test_manifest_without_page_blobs_or_details_omits_them_from_json() -> None:
+    m = _m("lever", "palantir", datetime(2026, 8, 18, 6, tzinfo=UTC))
+    data = m.to_json()
+    assert b"page_blobs" not in data
+    assert b"details" not in data
+    assert AttemptManifest.from_json(data) == m
+    assert m.page_blobs is None
+    assert m.details is None
+
+
+def test_manifest_with_page_blobs_and_details_roundtrips() -> None:
+    t = datetime(2026, 8, 18, 6, tzinfo=UTC)
+    base = _m("workday", "nvidia", t)
+    m = replace(
+        base,
+        page_blobs=("aa" * 32, "bb" * 32),
+        details=(
+            DetailAttempt(uid="wd:nvidia:1", blob_sha256="cc" * 32, http_status=200, error=None),
+            DetailAttempt(uid="wd:nvidia:2", blob_sha256=None, http_status=500, error="http_error"),
+        ),
+    )
+    data = m.to_json()
+    assert b'"page_blobs":["' in data
+    assert b'"details":[{' in data
+    parsed = AttemptManifest.from_json(data)
+    assert parsed == m
+    assert parsed.page_blobs == ("aa" * 32, "bb" * 32)
+    assert parsed.details is not None
+    assert parsed.details[0].uid == "wd:nvidia:1"
+    assert parsed.details[1].blob_sha256 is None
+    assert parsed.details[1].error == "http_error"
 
 
 def test_write_and_iter_roundtrip(tmp_path: Path) -> None:
