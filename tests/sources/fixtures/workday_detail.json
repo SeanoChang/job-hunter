@@ -1,0 +1,78 @@
+{
+  "jobPostingInfo": {
+    "id": "1bbdf8ad35f410020b8060c598100000",
+    "title": "Senior DFT Engineer",
+    "jobDescription": "<p>NVIDIA has continuously reinvented itself over two decades. Our invention of the GPU in 1999 sparked the growth of the PC gaming market, redefined modern computer graphics, and revolutionized parallel computing. More recently, GPU deep learning ignited modern AI \u2014 the next era of computing. NVIDIA is a \u201clearning machine\u201d that constantly evolves by adapting to new opportunities that are hard to solve, that only we can tackle, and that matter to the world. This is our life\u2019s work, to amplify human creativity and intelligence. Make the choice to join us today.</p><p></p><p>NVIDIA\u2019s DFX team is looking for an exceptional DFT Engineer to help shape the future of compute. As stewards of the entire Scan Test Lifecycle, we drive innovation for the most advanced silicon in the world\u2014spanning 2.5D/3D AI data center platforms, Gaming and Enterprise GPUs, and complex SOCs powering Autonomous Machines, Robotics, and Industrial systems. You will innovate at scale, designing and prototyping breakthrough Test Architectures for reticle sized, multi-chiplet products\u2014from RTL to verification to post-silicon ATE bring-up. Join a globally recognized team that consistently delivers breakthrough performance across multiple high-impact tape-outs each year.</p><p></p><p><b>What you&#39;ll be doing:</b></p><ul><li><p>Develop and deploy Industry-leading test methodologies on NVIDIA\u2019s next-generation silicon platforms.</p></li><li><p>Collaborate with leading EDA vendors to shape tool capabilities that meet NVIDIA\u2019s ambitious design goals, and partner with internal CAD teams to drive scalable, automated solutions.</p></li><li><p>Co-architect novel DFT strategies alongside VLSI and Product Engineering teams to push the boundaries of silicon test innovation.</p></li><li><p>Own the full ATPG lifecycle\u2014verification, coverage analysis, pattern generation, and ATE bring-up\u2014across NVIDIA\u2019s full product portfolio.</p></li><li><p>Guide and mentor junior engineers, helping them navigate complex design trade-offs to achieve world-class quality and efficiency.</p></li></ul><p></p><p><b>What we need to see:</b></p><ul><li><p>MS/PhD or equivalent experience in Electrical Engineering or a related field</p></li><li><p>6&#43; years of hands-on experience in Design-For-Test (DFT)</p></li><li><p>Deep knowledge of DFT tools, methodologies, and test strategies for complex, large-scale designs</p></li><li><p>Strong experience with industry standard ATPG tools</p></li><li><p>Clear, effective communicator\u2014strong written and verbal skills</p></li><li><p>Passion for mentoring and scaling technical excellence in a team</p></li></ul><p></p><p><b>Ways to stand out from the crowd:</b></p><ul><li><p>Experience with 2.5D/3D ICs, multi-chiplet architectures, or reticle-sized designs</p></li><li><p>Background in developing or enhancing EDA tool flows</p></li><li><p>Experience with Silicon testing and Automatic Test Equipment (ATE)</p></li><li><p>Expertise in using programming languages and AI for automation</p></li><li><p>Personal success stories in leading org wide changes</p></li></ul><p></p><p>NVIDIA offers highly competitive salaries and a comprehensive benefits package. At NVIDIA, we work on the hardest problems, and some of the most brilliant and motivated people in their fields choose to work here. Our world-class engineering teams are growing, as we lead the AI revolution from the front. If you are ready to make an impact in this journey, we want to hear from you!</p><p></p><p>#LI-Hybrid</p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p>Your base salary will be determined based on your location, experience, and the pay of employees in similar positions. The base salary range is 168,000 USD - 264,500 USD for Level 4, and 196,000 USD - 310,500 USD for Level 5.<div><div><div><div><div><div><div><p></p><p><span>You will also be eligible for equity and <a href=\"https://www.nvidia.com/en-us/benefits/\" target=\"_blank\">benefits</a>.</span></p><p></p></div></div></div></div></div></div></div>Applications for this job will be accepted at least until September 8, 2026.<p></p><p>This posting is for an existing vacancy.\u00a0</p><p>NVIDIA uses AI tools in its recruiting processes.</p><p></p>NVIDIA is committed to fostering an inclusive work environment and proud to be an equal opportunity employer. As we highly value diversity in our current and future employees, we do not discriminate (including in our hiring and promotion practices) on the basis of race, religion, color, national origin, gender, gender expression, sexual orientation, age, marital status, veteran status, disability status or any other characteristic protected by law.<p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p>",
+    "location": "US, CA, Santa Clara",
+    "postedOn": "Posted Today",
+    "startDate": "2026-09-04",
+    "timeType": "Full time",
+    "jobReqId": "JR2006356",
+    "jobPostingId": "Senior-DFT-Engineer_JR2006356",
+    "jobPostingSiteId": "NVIDIAExternalCareerSite",
+    "country": {
+      "descriptor": "United States of America",
+      "id": "bc33aa3152ec42d4995f4791a106ed09"
+    },
+    "canApply": true,
+    "posted": true,
+    "includeResumeParsing": true,
+    "jobRequisitionLocation": {
+      "descriptor": "US, CA, Santa Clara",
+      "country": {
+        "descriptor": "United States of America",
+        "id": "bc33aa3152ec42d4995f4791a106ed09",
+        "alpha2Code": "US"
+      }
+    },
+    "externalUrl": "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/Senior-DFT-Engineer_JR2006356",
+    "questionnaireId": "3403860341171001f57d5c603f290000"
+  },
+  "hiringOrganization": {
+    "name": "2100 NVIDIA USA",
+    "url": ""
+  },
+  "similarJobs": [
+    {
+      "title": "Senior DFT Engineer",
+      "externalPath": "/job/US-CA-Santa-Clara/Senior-DFT-Engineer_JR2000499",
+      "timeType": "Full time",
+      "locationsText": "US, CA, Santa Clara",
+      "postedOn": "Posted Today",
+      "startDate": "2026-09-04"
+    },
+    {
+      "title": "Senior DFT Engineer",
+      "externalPath": "/job/US-CA-Santa-Clara/Senior-DFT-Engineer_JR2020872",
+      "timeType": "Full time",
+      "locationsText": "US, CA, Santa Clara",
+      "postedOn": "Posted 30+ Days Ago",
+      "startDate": "2026-07-08"
+    },
+    {
+      "title": "Senior DFT Engineer",
+      "externalPath": "/job/US-CA-Santa-Clara/Senior-DFT-Engineer_JR2022681",
+      "timeType": "Full time",
+      "locationsText": "US, CA, Santa Clara",
+      "postedOn": "Posted 18 Days Ago",
+      "startDate": "2026-08-17"
+    },
+    {
+      "title": "Senior DFT Engineer",
+      "externalPath": "/job/US-CA-Santa-Clara/Senior-DFT-Engineer_JR2020790",
+      "timeType": "Full time",
+      "locationsText": "US, CA, Santa Clara",
+      "postedOn": "Posted 30 Days Ago",
+      "startDate": "2026-08-05"
+    },
+    {
+      "title": "DFT Engineer - New College Grad",
+      "externalPath": "/job/US-CA-Santa-Clara/DFT-Engineer---New-College-Grad_JR2016865",
+      "timeType": "Full time",
+      "locationsText": "US, CA, Santa Clara",
+      "postedOn": "Posted 30+ Days Ago",
+      "startDate": "2026-06-25"
+    }
+  ],
+  "userAuthenticated": false
+}

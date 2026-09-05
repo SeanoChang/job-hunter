@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from typing import Any
 
 import httpx
 
@@ -51,32 +52,48 @@ class Fetcher:
         backoff: float = 1.0,
         max_bytes: int = 64 * 2**20,
         sleep: Callable[[float], None] = time.sleep,
+        spacing_ms: int = 0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._client = client or default_client()
         self._retries = max(1, retries)  # attempts; 0 still means one request
         self._backoff = backoff
         self._max_bytes = max_bytes
         self._sleep = sleep
+        self._spacing_ms = spacing_ms
+        self._clock = clock
+        self._last_request_at: dict[str, float] = {}
 
     def close(self) -> None:
         self._client.close()
 
-    def fetch(self, url: str) -> FetchResult:
-        """GET url with bounded retries. The verdict always describes the LAST attempt."""
-        t0 = time.monotonic()
+    def fetch(
+        self,
+        url: str,
+        *,
+        method: str = "GET",
+        json_body: Any | None = None,
+    ) -> FetchResult:
+        """Request url with bounded retries. The verdict always describes the LAST attempt.
+
+        POST sends json_body as the request body with Content-Type application/json.
+        Consecutive requests to the same host are spaced at least spacing_ms apart.
+        """
+        self._wait_for_spacing(url)
+        t0 = self._clock()
         last_resp: tuple[int, bytes] | None = None
         last_exc: Exception | None = None
         for attempt in range(self._retries):
             if attempt:
                 self._sleep(self._backoff * (2 ** (attempt - 1)))
             try:
-                with self._client.stream("GET", url) as resp:
+                with self._client.stream(method, url, json=json_body) as resp:
                     body = self._read_capped(resp)
                     if body is None:
-                        return FetchResult(resp.status_code, b"", time.monotonic() - t0,
+                        return FetchResult(resp.status_code, b"", self._clock() - t0,
                                            "too_large", f"body exceeded {self._max_bytes} bytes")
                     if 200 <= resp.status_code < 300:
-                        return FetchResult(resp.status_code, body, time.monotonic() - t0,
+                        return FetchResult(resp.status_code, body, self._clock() - t0,
                                            "ok", None)
                     last_resp, last_exc = (resp.status_code, body), None
                     if resp.status_code not in _RETRY_STATUSES:
@@ -85,13 +102,25 @@ class Fetcher:
                 last_resp, last_exc = None, e
                 if not _retryable(e):
                     break
-        elapsed = time.monotonic() - t0
+        elapsed = self._clock() - t0
         if last_exc is not None:
             return FetchResult(None, b"", elapsed, _classify(last_exc),
                                f"{type(last_exc).__name__}: {last_exc}")
         assert last_resp is not None  # the loop ran at least once and did not raise
         return FetchResult(last_resp[0], last_resp[1], elapsed, "http_error",
                            f"HTTP {last_resp[0]}")
+
+    def _wait_for_spacing(self, url: str) -> None:
+        if self._spacing_ms <= 0:
+            return
+        host = httpx.URL(url).host
+        now = self._clock()
+        last = self._last_request_at.get(host)
+        if last is not None:
+            remaining = self._spacing_ms / 1000 - (now - last)
+            if remaining > 0:
+                self._sleep(remaining)
+        self._last_request_at[host] = self._clock()
 
     def _read_capped(self, resp: httpx.Response) -> bytes | None:
         chunks: list[bytes] = []

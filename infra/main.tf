@@ -130,8 +130,11 @@ resource "google_cloud_run_v2_service" "mcp" {
       command = ["job-hunter-mcp"]
 
       # Serving is a psycopg connection and a JSON encode; the floor of the
-      # billable shapes is already more than enough.
+      # billable shapes is already more than enough. cpu_idle keeps CPU
+      # allocated only during requests — always-allocated would bill the idle
+      # instance and refuses memory under 512Mi.
       resources {
+        cpu_idle = true
         limits = {
           cpu    = "1"
           memory = "256Mi"

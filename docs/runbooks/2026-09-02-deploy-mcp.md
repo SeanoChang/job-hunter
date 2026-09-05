@@ -151,7 +151,9 @@ commit. The token stays an environment reference — the repository is public.
 ```bash
 URL=$(terraform -chdir=infra output -raw service_uri)
 
-curl -sS "$URL/healthz"                      # {"ok": true, "version": "0.1.0"}
+curl -sS "$URL/health"                       # {"ok": true, "version": "0.1.0"}
+# NOT /healthz on a *.run.app URL: Google's frontend intercepts that exact
+# path and serves its own 404 before the container ever sees the request.
 curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$URL/mcp"   # 401: the gate is on
 
 curl -sS -X POST "$URL/mcp" \

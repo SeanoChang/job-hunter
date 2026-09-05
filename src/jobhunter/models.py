@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any
 
 from jobhunter.hashing import canonical_json
 from jobhunter.timeutil import iso, parse_iso
 
-SOURCE_PREFIX: dict[str, str] = {"greenhouse": "gh", "lever": "lv", "ashby": "ab"}
+SOURCE_PREFIX: dict[str, str] = {"greenhouse": "gh", "lever": "lv", "ashby": "ab", "workday": "wd"}
+
+_EMPTY_EXTRA: MappingProxyType[str, str] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,10 +23,26 @@ class Board:
     board: str
     country: str | None = None
     tags: tuple[str, ...] = ()
+    extra: MappingProxyType[str, str] = _EMPTY_EXTRA
 
     @property
     def key(self) -> str:
         return f"{self.source}:{self.board}"
+
+    def __hash__(self) -> int:
+        # MappingProxyType isn't hashable, so hash the sorted items instead of
+        # `extra` itself; frozen dataclasses only auto-generate __hash__ when
+        # the class doesn't already define one, so this replaces that default.
+        return hash(
+            (
+                self.company,
+                self.source,
+                self.board,
+                self.country,
+                self.tags,
+                tuple(sorted(self.extra.items())),
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +95,23 @@ class FetchResult:
 
 
 _MANIFEST_DT_FIELDS = ("started_at", "finished_at")
+# Fields added after the initial manifest shape: optional, and OMITTED from the
+# serialized form entirely when None so every manifest written before they existed
+# still parses byte-for-byte the same (spec §3.3).
+_MANIFEST_OPTIONAL_FIELDS = ("page_blobs", "details")
+
+
+@dataclass(frozen=True, slots=True)
+class DetailAttempt:
+    """One detail fetch for a two-phase (list + detail) board, this attempt.
+
+    A failed detail fetch has `blob_sha256` None and `error` set.
+    """
+
+    uid: str
+    blob_sha256: str | None
+    http_status: int | None
+    error: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,12 +132,21 @@ class AttemptManifest:
     registry_revision: str
     cli_version: str
     error: str | None
+    # Two-phase boards only (spec §3.3); one manifest per board per run either way.
+    page_blobs: tuple[str, ...] | None = None
+    details: tuple[DetailAttempt, ...] | None = None
 
     def to_json(self) -> bytes:
         d: dict[str, Any] = {}
         for f in fields(self):
+            if f.name in _MANIFEST_OPTIONAL_FIELDS:
+                continue
             v = getattr(self, f.name)
             d[f.name] = iso(v) if f.name in _MANIFEST_DT_FIELDS else v
+        if self.page_blobs is not None:
+            d["page_blobs"] = list(self.page_blobs)
+        if self.details is not None:
+            d["details"] = [asdict(da) for da in self.details]
         return canonical_json(d)
 
     @classmethod
@@ -109,4 +154,8 @@ class AttemptManifest:
         d = json.loads(data.decode("utf-8"))
         for name in _MANIFEST_DT_FIELDS:
             d[name] = parse_iso(d[name])
+        if d.get("page_blobs") is not None:
+            d["page_blobs"] = tuple(d["page_blobs"])
+        if d.get("details") is not None:
+            d["details"] = tuple(DetailAttempt(**item) for item in d["details"])
         return cls(**d)

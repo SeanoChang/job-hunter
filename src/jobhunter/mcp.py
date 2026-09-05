@@ -10,7 +10,8 @@ envelope, the exit codes, `--fields`, the human table.
 The transport is streamable HTTP, stateless and JSON: a Cloud Run instance can
 be reaped between two calls, so no session survives a request and no connection
 is pooled. Auth is one static bearer checked in ASGI middleware ahead of the
-MCP app; `/healthz` is the only route that answers without it. Nothing here
+MCP app; the health routes (`/health`, `/healthz`) are the only ones that
+answer without it. Nothing here
 writes — `mcp_cursors` is the sole exception, and only the `pulse` tool touches
 it.
 
@@ -41,7 +42,10 @@ from jobhunter.store import db, mcp_state
 from jobhunter.timeutil import parse_iso, utcnow
 
 MCP_PATH = "/mcp"
-HEALTH_PATH = "/healthz"
+# Google's frontend on *.run.app answers the exact path /healthz itself (its
+# own 404 page) — the request never reaches the container. /health is the
+# reachable spelling; /healthz stays for local runs and any non-run.app domain.
+HEALTH_PATHS = ("/health", "/healthz")
 _HEALTH_BODY = json.dumps({"ok": True, "version": __version__}).encode("utf-8")
 
 # Indirections so tests can point the serving path at a throwaway schema and a
@@ -352,9 +356,9 @@ async def _respond(send: Send, status: int, body: bytes) -> None:
 class BearerAuth:
     """The static-bearer gate ahead of the MCP app, and the one open route (spec §2).
 
-    Owner-internal serving, so one token and no OAuth: every request but
-    `/healthz` must carry it, compared in constant time so a wrong token leaks
-    nothing through timing. `/healthz` answers here — liveness and build version
+    Owner-internal serving, so one token and no OAuth: every request but the
+    health routes must carry it, compared in constant time so a wrong token leaks
+    nothing through timing. Health answers here — liveness and build version
     are the platform's business, not the protocol's, and the probe must not
     depend on an MCP session. Non-HTTP scopes (the lifespan the session manager
     runs on) pass straight through.
@@ -371,7 +375,7 @@ class BearerAuth:
         if scope["type"] != "http":
             await self._app(scope, receive, send)
             return
-        if scope.get("path") == HEALTH_PATH:
+        if scope.get("path") in HEALTH_PATHS:
             await _respond(send, 200, _HEALTH_BODY)
             return
         offered = next(
@@ -384,7 +388,7 @@ class BearerAuth:
 
 
 def build_app(token: str) -> BearerAuth:
-    """The served ASGI app: guarded MCP at `/mcp`, open `/healthz`.
+    """The served ASGI app: guarded MCP at `/mcp`, open `/health` + `/healthz`.
 
     `host` is the bind address the SDK reads to decide whether to enable its
     DNS-rebinding defence; naming 0.0.0.0 keeps it off, because on Cloud Run the

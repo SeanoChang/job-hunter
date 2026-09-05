@@ -28,6 +28,16 @@ would have grown to ~9M rows a year); `description_html` moved out of the DB
 into content-addressed archive objects; `sync` and the ETag protocol were
 removed.
 
+Revision, 2026-09-04, after `superpowers/specs/2026-09-04-multi-ats-expansion-design.md`
+§2: the sourcing constraint in section 1 is amended from official ATS APIs
+only to official ATS APIs and, absent one, the first-party JSON endpoint the
+company's own careers page calls (Workday CXS, Oracle Recruiting Cloud,
+amazon.jobs search.json, SmartRecruiters, Eightfold). HTML scraping,
+authentication, and bypassing bot challenges or rate limits stay out of scope;
+every request carries an honest User-Agent, per-host request spacing, and a
+per-board detail budget, with backoff on errors. A blocked or challenged
+board is marked `blocked`, never retried around.
+
 > [!TLDR] Files are truth, the database is a build artifact
 >
 > Every fetch writes an immutable manifest and a content-addressed raw blob to
@@ -49,7 +59,11 @@ every later layer (extraction, matching, research, the public API) reads.
 
 **Constraints, all previously ruled and carried here:**
 
-- Official ATS APIs only (Greenhouse, Lever, Ashby); no scraping, no auto-apply.
+- Official ATS APIs and other first-party structured JSON endpoints
+  (Greenhouse, Lever, Ashby, Workday, Oracle Recruiting Cloud, Amazon,
+  SmartRecruiters, Eightfold); never HTML scraping, never authentication,
+  never bypassing a bot challenge (2026-09-04 amendment, see revision note
+  above); no auto-apply.
 - **One hosted corpus.** Users install a CLI/MCP client; they never run the
   ingestion or the database. Postings are public data and live in the cloud.
   Users' personal data (résumé, notes, applications, fact base) stays on their

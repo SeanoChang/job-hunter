@@ -47,7 +47,14 @@ dispositions of the 2026-08-17 external review:
   layer: one hosted corpus, R2 archive as truth, artifact identities, Postgres
   (Neon) store with presence intervals, lifecycle algorithm with drop guard and
   interval-censored closes, CLI, deployment, testing. Resolves the first
-  next-step of the parsing-direction doc.
+  next-step of the parsing-direction doc. Amended 2026-09-04 (see below).
+- `superpowers/specs/2026-09-04-multi-ats-expansion-design.md` — **current,
+  approved.** §2 is the in-force policy amendment: ingestion widens from
+  official ATS APIs only to official ATS APIs and other first-party structured
+  JSON endpoints (Workday CXS, Oracle Recruiting Cloud, amazon.jobs,
+  SmartRecruiters, Eightfold); still no HTML scraping, no authentication, no
+  bypassing bot challenges. The rest of the design (two-phase source
+  architecture, the five adapters) is being built as plan P-20260904-KWVF.
 - `2026-08-17-parsing-direction.md` — **current, canonical.** Parsing model,
   unified record, engine choice, external-review dispositions.
 - `2026-08-17-parsing-vs-other-tools.md` — current. How 16 tools ingest and
@@ -189,3 +196,11 @@ and a dated judge run. Its README carries the superseded banner.
   Terraform (`infra/`), never hand-run gcloud, and secret *values* never enter
   tf state; Cloudflare Containers rejected at a $5/mo baseline against Cloud
   Run's free tier.
+- 2026-09-04 — ingestion policy amended: official ATS APIs only widens to
+  official ATS APIs and, absent one, the first-party structured JSON endpoint
+  the company's own careers page calls (Workday CXS, Oracle Recruiting Cloud,
+  amazon.jobs search.json, SmartRecruiters, Eightfold). Never HTML scraping,
+  never authentication, never bypassing a bot challenge or rate limit; every
+  request carries an honest User-Agent, per-host request spacing, a per-board
+  detail budget, and backoff on errors. A blocked or challenged board is
+  marked `blocked`, never retried around.
