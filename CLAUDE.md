@@ -1,9 +1,12 @@
 # job-hunter
 
 Local-first job-hunting kit that turns an existing coding agent into a personal
-job-hunting agent: postings are ingested from official ATS APIs (Greenhouse,
-Lever, Ashby) into an immutable archive and a temporal Postgres store tracking
-each posting's lifecycle from first seen to closed. No scraping, no auto-apply.
+job-hunting agent: postings are ingested from official ATS APIs and other
+first-party structured JSON endpoints (Greenhouse, Lever, Ashby, Workday,
+Oracle Recruiting Cloud, Amazon, SmartRecruiters, Eightfold) into an immutable
+archive and a temporal Postgres store tracking each posting's lifecycle from
+first seen to closed. Never HTML scraping, never authentication, never
+bypassing a bot challenge; no auto-apply.
 Built: the ingestion layer, the L2 demand-profile extractor, the agent-first
 CLI, and the hosted MCP server that serves the same read surface over HTTPS.
 The concept linker (L3), the workspace/tracker, the TUI and the skills are
