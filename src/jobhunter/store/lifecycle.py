@@ -24,8 +24,8 @@ from jobhunter.archive.base import ArchiveStore
 from jobhunter.archive.keys import blob_key, version_key
 from jobhunter.hashing import VERSION_HASH_V, sha256_hex, version_hash
 from jobhunter.models import AttemptManifest, Board, PostingVersion
-from jobhunter.sources import get_source
-from jobhunter.sources.base import EnvelopeError, NormalizeError
+from jobhunter.sources import get_source, get_two_phase
+from jobhunter.sources.base import EnvelopeError, ListRow, NormalizeError, TwoPhaseSource
 from jobhunter.store import db
 from jobhunter.store.db import Conn
 from jobhunter.store.panel import apply_snapshot, load_snapshot
@@ -33,6 +33,12 @@ from jobhunter.timeutil import iso, parse_iso
 
 PUT_WORKERS = 8
 """Parallel R2 puts per attempt. The archive is content-addressed, so the puts commute."""
+
+PENDING_DETAIL = "pending_detail"
+"""`presence.parse_status` for a uid a two-phase list has shown but whose detail has not
+been fetched yet (spec 2026-09-04 §3.4). The posting is open and its presence interval
+runs; it has no version and therefore no document, so it cannot enter the L2 queue —
+that queue selects from `documents`. It leaves the status the moment a detail lands."""
 
 
 class OutOfOrder(Exception):
@@ -51,6 +57,8 @@ class AttemptResult:
     parsed_count: int = 0
     failed_count: int = 0
     unidentifiable_count: int = 0
+    pending_count: int = 0
+    """Two-phase only: listed uids whose detail this attempt did not carry."""
     new_versions: int = 0
     new_documents: int = 0
     opened: int = 0
@@ -65,9 +73,12 @@ class _Seen:
     uid: str
     source_id: str
     version_hash: str | None
-    parse_status: str  # ok | failed
+    parse_status: str  # ok | failed | pending_detail
     pv: PostingVersion | None
     source_updated_at: datetime | None
+    pending: bool = False
+    """A two-phase list row this attempt carried no detail for: what it observed depends on
+    what the store already holds, so `version_hash`/`parse_status` are settled in `_plan`."""
 
 
 @dataclass(slots=True)
@@ -266,19 +277,26 @@ class Ingestor:
 
     # ---- steps
     def _ingest_inner(self, m: AttemptManifest) -> AttemptResult:
+        if is_two_phase(m):
+            return self._ingest_two_phase(m)
+        return self._ingest_single_phase(m)
+
+    def _error_attempt(self, m: AttemptManifest, error: str | None) -> AttemptResult:
+        """An attempt we cannot read as an observation: provenance only, nothing derived."""
+        res = AttemptResult(m.attempt_id, "error")
+        self._insert_attempt(m, "error", res, None, error)
+        return res
+
+    def _ingest_single_phase(self, m: AttemptManifest) -> AttemptResult:
         if m.transport != "ok" or not m.blob_sha256:
-            res = AttemptResult(m.attempt_id, "error")
-            self._insert_attempt(m, "error", res, None, m.error)
-            return res
+            return self._error_attempt(m, m.error)
         source = get_source(m.source)
         board = self._board(m)
         body = gunzip(self.store.get(blob_key(m.blob_sha256)))
         try:
             records = list(source.parse(body))
         except EnvelopeError as e:
-            res = AttemptResult(m.attempt_id, "error")
-            self._insert_attempt(m, "error", res, None, f"envelope: {e}")
-            return res
+            return self._error_attempt(m, f"envelope: {e}")
 
         # phase 1: pure compute
         seen: dict[str, _Seen] = {}
@@ -302,7 +320,69 @@ class Ingestor:
             )
             res.parsed_count += 1
         res.observed_count = len(seen)
+        return self._finish(m, seen, res)
 
+    # ---- two-phase (list + detail) attempts, spec 2026-09-04 §3.4
+    def _ingest_two_phase(self, m: AttemptManifest) -> AttemptResult:
+        """The LIST is the presence snapshot; each fetched detail is a version.
+
+        Every uid the archived list pages name is present this attempt, with or without a
+        detail this run — that is what keeps close-on-absence honest while the detail budget
+        works through the board. A uid whose detail has landed carries the version it
+        normalises to, exactly as a single-phase record does; a uid still owed one carries no
+        version and presence records it as `pending_detail`.
+        """
+        if m.transport != "ok" or m.error is not None:
+            # A list that was truncated (page cap), refused (blocked) or unparseable is not a
+            # snapshot: reconciling against it would close every posting it never reached.
+            return self._error_attempt(m, m.error)
+        source = get_two_phase(m.source)
+        if source is None:
+            return self._error_attempt(m, f"no two-phase adapter for source {m.source!r}")
+        board = self._board(m)
+        try:
+            rows = self._replay_list(m, source)
+        except EnvelopeError as e:
+            return self._error_attempt(m, f"envelope: {e}")
+
+        blobs = {d.uid: d.blob_sha256 for d in m.details or () if d.blob_sha256 is not None}
+        seen: dict[str, _Seen] = {}
+        res = AttemptResult(m.attempt_id, "ok")
+        for row in rows:
+            if not row.uid:
+                res.unidentifiable_count += 1
+                continue
+            uid = f"{_prefix(m.source)}:{m.board}:{row.uid}"
+            sha = blobs.get(row.uid)
+            if sha is None:  # detail not fetched this run, or its fetch failed
+                seen[row.uid] = _Seen(uid, row.uid, None, PENDING_DETAIL, None, None, pending=True)
+                res.pending_count += 1
+                continue
+            try:
+                pv = source.normalize_detail(gunzip(self.store.get(blob_key(sha))), row, board)
+            except (EnvelopeError, NormalizeError):
+                seen[row.uid] = _Seen(uid, row.uid, None, "failed", None, None)
+                res.failed_count += 1
+                continue
+            seen[row.uid] = _Seen(pv.uid, row.uid, version_hash(pv), "ok", pv, pv.source_updated_at)
+            res.parsed_count += 1
+        res.observed_count = len(seen)
+        return self._finish(m, seen, res)
+
+    def _replay_list(self, m: AttemptManifest, source: TwoPhaseSource) -> list[ListRow]:
+        """The archived list pages in order, deduplicated as the fetcher deduplicated them:
+        a uid repeated across pages (unstable pagination) is one posting, first occurrence
+        wins. Details naming a uid the list does not are ignored — presence comes from the
+        list alone."""
+        rows: dict[str, ListRow] = {}
+        for sha in m.page_blobs or ():
+            for row in source.parse_list(gunzip(self.store.get(blob_key(sha)))).rows:
+                rows.setdefault(row.uid, row)
+        return list(rows.values())
+
+    def _finish(
+        self, m: AttemptManifest, seen: dict[str, _Seen], res: AttemptResult
+    ) -> AttemptResult:
         # Two different "previous" attempts, on purpose:
         #  - prev (non-error) feeds the drop guard: it is the last attempt that said anything
         #    about the board's size;
@@ -369,6 +449,8 @@ class Ingestor:
             str(r["uid"]): r for r in self.conn.execute(_LOCK_POSTINGS, (uids,)).fetchall()
         }
         for s in seen.values():
+            if s.pending:
+                _resolve_pending(s, postings.get(s.uid))
             if s.pv is not None and s.version_hash is not None:
                 self._plan_version(w, m, s, s.pv, s.version_hash, pairs, known_hashes, known_docs)
             self._plan_presence(w, s, presence.get(s.uid), prev_any_id)
@@ -526,6 +608,24 @@ class Ingestor:
             "boards_suspect = EXCLUDED.boards_suspect, boards_error = EXCLUDED.boards_error",
             (run_id,),
         )
+
+
+def is_two_phase(m: AttemptManifest) -> bool:
+    """A list+detail attempt: it carries list pages and detail fetches instead of one body.
+    Single-phase manifests leave both fields absent, so the two shapes never blur."""
+    return m.page_blobs is not None or m.details is not None
+
+
+def _resolve_pending(s: _Seen, row: dict[str, Any] | None) -> None:
+    """Settle what a detail-less list row observed, against the posting as it stands.
+
+    Once a detail has landed, later list-only sightings observe that same version: saying
+    `pending_detail` again would split the presence interval every run and claim the store
+    has no text when it does. Only a posting still without a version is pending.
+    """
+    cur = row["current_version_hash"] if row is not None else None
+    s.version_hash = str(cur) if cur else None
+    s.parse_status = "ok" if cur else PENDING_DETAIL
 
 
 def _prefix(source: str) -> str:

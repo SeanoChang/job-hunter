@@ -6,16 +6,22 @@ from typing import Any
 import psycopg
 import pytest
 
+from jobhunter import sources
 from jobhunter.archive.keys import version_key
 from jobhunter.archive.local import LocalFS
-from jobhunter.models import Board
-from jobhunter.store.lifecycle import Ingestor, OutOfOrder
+from jobhunter.models import SOURCE_PREFIX, Board
+from jobhunter.store import extraction
+from jobhunter.store.lifecycle import PENDING_DETAIL, Ingestor, OutOfOrder
 from tests.store.helpers import (
+    FakeTwoPhase,
     ab_record,
     board_payload,
     gh_record,
     lv_record,
     make_manifest,
+    make_two_phase_manifest,
+    wd_detail,
+    wd_row,
     write_registry,
 )
 
@@ -408,6 +414,279 @@ def test_registry_watermark_not_set_when_snapshot_missing(
     ing2.ingest(make_manifest(store, "ashby", "ramp", day(1), body, registry_revision="missing"))
     pg.commit()
     assert q(pg, "SELECT count(*) AS n FROM panel")[0]["n"] == 1
+
+
+# ---- two-phase boards (list + detail), spec 2026-09-04 §3.4 ------------------
+
+WD_BOARD = Board("NVIDIA", "workday", "nvidia")
+
+
+@pytest.fixture
+def wd(monkeypatch: pytest.MonkeyPatch, store: LocalFS) -> str:
+    """Register the fake list+detail adapter and return the registry revision naming it."""
+    monkeypatch.setitem(sources.TWO_PHASE_SOURCES, "workday", FakeTwoPhase())
+    monkeypatch.setitem(SOURCE_PREFIX, "workday", "wd")
+    return write_registry(store, [*BOARDS, WD_BOARD])
+
+
+def _presence(pg: psycopg.Connection[dict[str, Any]]) -> list[dict[str, Any]]:
+    return q(
+        pg,
+        "SELECT uid, version_hash, parse_status, runs, first_at, last_at FROM presence "
+        "ORDER BY uid, first_at",
+    )
+
+
+def test_two_phase_list_only_opens_postings_pending_detail(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, wd: str
+) -> None:
+    """The list alone establishes presence: a uid never seen before becomes an open posting
+    with no version, no document, and presence parse_status pending_detail."""
+    m = make_two_phase_manifest(
+        store, "nvidia", day(0), [wd_row("j0"), wd_row("j1")], registry_revision=wd
+    )
+    r = Ingestor(pg, store).ingest(m)
+    pg.commit()
+    assert r is not None and r.health == "ok"
+    assert (r.observed_count, r.parsed_count, r.pending_count, r.failed_count) == (2, 0, 2, 0)
+    assert (r.opened, r.changed, r.closed) == (2, 0, 0)
+    assert q(pg, "SELECT blob_sha256 FROM fetch_attempts")[0]["blob_sha256"] is None
+    ps = q(pg, "SELECT * FROM postings ORDER BY uid")
+    assert [p["uid"] for p in ps] == ["wd:nvidia:j0", "wd:nvidia:j1"]
+    assert all(p["status"] == "open" for p in ps)
+    assert all(p["current_version_hash"] is None and p["version_count"] == 0 for p in ps)
+    assert all(p["source_id"] == p["uid"].rsplit(":", 1)[1] for p in ps)
+    pres = _presence(pg)
+    assert all(p["parse_status"] == PENDING_DETAIL and p["version_hash"] is None for p in pres)
+    assert q(pg, "SELECT count(*) AS n FROM posting_versions")[0]["n"] == 0
+    assert q(pg, "SELECT count(*) AS n FROM documents")[0]["n"] == 0
+    assert _events(pg) == [("opened", "wd:nvidia:j0"), ("opened", "wd:nvidia:j1")]
+
+
+def test_two_phase_pending_detail_presence_extends_while_the_detail_is_owed(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, wd: str
+) -> None:
+    """A uid listed run after run with no detail yet keeps one presence interval, so
+    pending_detail does not churn the timeline while the budget works through the board."""
+    ing = Ingestor(pg, store)
+    for n in range(3):
+        ing.ingest(make_two_phase_manifest(store, "nvidia", day(n), [wd_row("j0")],
+                                           registry_revision=wd))
+    pg.commit()
+    pres = _presence(pg)
+    assert len(pres) == 1
+    assert pres[0]["parse_status"] == PENDING_DETAIL and pres[0]["runs"] == 3
+    assert pres[0]["first_at"] == day(0) and pres[0]["last_at"] == day(2)
+
+
+def test_two_phase_version_on_detail_flips_the_pending_posting(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, wd: str
+) -> None:
+    """A fetched detail creates the version+document exactly like a single-phase record and
+    flips current_version_hash; the uid whose detail is still owed stays pending."""
+    ing = Ingestor(pg, store)
+    rows = [wd_row("j0"), wd_row("j1")]
+    ing.ingest(make_two_phase_manifest(store, "nvidia", day(0), rows, registry_revision=wd))
+    r = ing.ingest(make_two_phase_manifest(
+        store, "nvidia", day(1), rows, {"j0": wd_detail("<p>hello</p>")}, registry_revision=wd
+    ))
+    pg.commit()
+    assert r is not None and r.health == "ok"
+    assert (r.observed_count, r.parsed_count, r.pending_count) == (2, 1, 1)
+    assert (r.new_versions, r.new_documents, r.changed, r.opened) == (1, 1, 1, 0)
+    v = q(pg, "SELECT * FROM posting_versions")[0]
+    assert v["uid"] == "wd:nvidia:j0" and v["title"] == "Engineer j0" and v["company"] == "NVIDIA"
+    assert store.exists(version_key(v["version_hash"]))
+    docs = q(pg, "SELECT version_hash, normalizer_version, markdown FROM documents")
+    assert len(docs) == 1 and docs[0]["markdown"] == "hello"
+    assert docs[0]["version_hash"] == v["version_hash"] and docs[0]["normalizer_version"] == "md/1"
+    ps = {p["uid"]: p for p in q(pg, "SELECT * FROM postings")}
+    assert ps["wd:nvidia:j0"]["current_version_hash"] == v["version_hash"]
+    assert ps["wd:nvidia:j0"]["version_count"] == 1
+    assert ps["wd:nvidia:j1"]["current_version_hash"] is None
+    pres = {(p["uid"], p["first_at"]): p for p in _presence(pg)}
+    assert pres[("wd:nvidia:j0", day(0))]["parse_status"] == PENDING_DETAIL
+    landed = pres[("wd:nvidia:j0", day(1))]
+    assert landed["parse_status"] == "ok" and landed["version_hash"] == v["version_hash"]
+    assert pres[("wd:nvidia:j1", day(0))]["runs"] == 2  # still one pending interval
+    changed = q(pg, "SELECT * FROM posting_events WHERE kind = 'changed'")[0]
+    assert changed["from_version"] is None and changed["to_version"] == v["version_hash"]
+
+
+def test_two_phase_re_ingesting_the_same_detail_is_a_no_op(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, wd: str
+) -> None:
+    """Identity is the version_hash, as for every other version: the same detail body on a
+    later attempt writes no version, no document, no event — the posting is only touched."""
+    ing = Ingestor(pg, store)
+    rows = [wd_row("j0")]
+    detail = {"j0": wd_detail("<p>hello</p>")}
+    ing.ingest(make_two_phase_manifest(store, "nvidia", day(0), rows, detail,
+                                       registry_revision=wd))
+    r = ing.ingest(make_two_phase_manifest(store, "nvidia", day(1), rows, detail,
+                                           registry_revision=wd))
+    pg.commit()
+    assert r is not None
+    assert (r.new_versions, r.new_documents, r.changed, r.opened, r.closed) == (0, 0, 0, 0, 0)
+    assert q(pg, "SELECT count(*) AS n FROM posting_versions")[0]["n"] == 1
+    assert q(pg, "SELECT count(*) AS n FROM documents")[0]["n"] == 1
+    p = q(pg, "SELECT * FROM postings")[0]
+    assert p["version_count"] == 1 and p["last_seen_at"] == day(1)
+    pres = _presence(pg)
+    assert len(pres) == 1 and pres[0]["runs"] == 2 and pres[0]["parse_status"] == "ok"
+    assert _events(pg) == [("opened", "wd:nvidia:j0")]
+    # a genuinely edited detail on the next attempt is a new version, as usual
+    r2 = ing.ingest(make_two_phase_manifest(store, "nvidia", day(2), rows,
+                                            {"j0": wd_detail("<p>hello again</p>")},
+                                            registry_revision=wd))
+    pg.commit()
+    assert r2 is not None and r2.new_versions == 1 and r2.changed == 1
+
+
+def test_two_phase_uid_absent_from_the_next_list_closes(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, wd: str
+) -> None:
+    """The list is the presence snapshot, so absence closes exactly as on a single-phase
+    board — interval-censored, and for a pending posting too."""
+    ing = Ingestor(pg, store)
+    detail = {"j0": wd_detail("<p>a</p>"), "j1": wd_detail("<p>b</p>")}
+    ing.ingest(make_two_phase_manifest(
+        store, "nvidia", day(0), [wd_row("j0"), wd_row("j1"), wd_row("j2"), wd_row("j3")],
+        detail, registry_revision=wd,
+    ))
+    r = ing.ingest(make_two_phase_manifest(
+        store, "nvidia", day(1), [wd_row("j0"), wd_row("j2")], registry_revision=wd
+    ))
+    pg.commit()
+    assert r is not None and r.health == "ok" and r.closed == 2
+    closed = {p["uid"]: p for p in q(pg, "SELECT * FROM postings WHERE status = 'closed'")}
+    assert sorted(closed) == ["wd:nvidia:j1", "wd:nvidia:j3"]  # a versioned and a pending one
+    assert all(p["closed_lower_at"] == day(0) and p["closed_upper_at"] == day(1)
+               for p in closed.values())
+    assert closed["wd:nvidia:j3"]["current_version_hash"] is None
+    assert [e for e in _events(pg) if e[0] == "closed"] == [
+        ("closed", "wd:nvidia:j1"), ("closed", "wd:nvidia:j3")
+    ]
+    # and it reopens on the next list that names it again
+    r2 = ing.ingest(make_two_phase_manifest(
+        store, "nvidia", day(2), [wd_row("j0"), wd_row("j2"), wd_row("j3")], registry_revision=wd
+    ))
+    pg.commit()
+    assert r2 is not None and r2.reopened == 1
+    j3 = q(pg, "SELECT * FROM postings WHERE uid = 'wd:nvidia:j3'")[0]
+    assert j3["status"] == "open" and j3["current_version_hash"] is None
+
+
+def test_two_phase_truncated_list_is_an_error_attempt_that_closes_nothing(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, wd: str
+) -> None:
+    """A list that stopped at the page cap (or failed to parse) is not a snapshot: using it
+    would close every posting it never reached."""
+    ing = Ingestor(pg, store)
+    ing.ingest(make_two_phase_manifest(store, "nvidia", day(0), [wd_row("j0"), wd_row("j1")],
+                                       registry_revision=wd))
+    r = ing.ingest(make_two_phase_manifest(store, "nvidia", day(1), [wd_row("j0")],
+                                           registry_revision=wd,
+                                           error="page cap: stopped after 3 pages"))
+    pg.commit()
+    assert r is not None and r.health == "error" and r.closed == 0
+    assert q(pg, "SELECT count(*) AS n FROM postings WHERE status = 'open'")[0]["n"] == 2
+    att = q(pg, "SELECT error FROM fetch_attempts ORDER BY started_at")[1]
+    assert att["error"].startswith("page cap")
+    assert all(p["last_at"] == day(0) for p in _presence(pg))
+
+
+def test_two_phase_detail_that_fails_to_normalise_is_present_without_a_version(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, wd: str
+) -> None:
+    ing = Ingestor(pg, store)
+    r = ing.ingest(make_two_phase_manifest(
+        store, "nvidia", day(0), [wd_row("j0", title=""), wd_row("j1")],
+        {"j0": wd_detail("<p>a</p>")}, failed_details={"j1": "HTTP 500"}, registry_revision=wd,
+    ))
+    pg.commit()
+    assert r is not None
+    assert (r.observed_count, r.parsed_count, r.failed_count, r.pending_count) == (2, 0, 1, 1)
+    pres = {p["uid"]: p for p in _presence(pg)}
+    assert pres["wd:nvidia:j0"]["parse_status"] == "failed"          # detail body, unusable
+    assert pres["wd:nvidia:j1"]["parse_status"] == PENDING_DETAIL    # detail fetch failed
+    assert q(pg, "SELECT count(*) AS n FROM posting_versions")[0]["n"] == 0
+    assert q(pg, "SELECT count(*) AS n FROM postings WHERE status='open'")[0]["n"] == 2
+
+
+def test_two_phase_pending_detail_posting_never_enters_the_l2_queue(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, wd: str
+) -> None:
+    """The queue keys on documents; a posting with no version has none to offer."""
+    Ingestor(pg, store).ingest(make_two_phase_manifest(
+        store, "nvidia", day(0), [wd_row("j0"), wd_row("j1")], {"j0": wd_detail("<p>a</p>")},
+        registry_revision=wd,
+    ))
+    pg.commit()
+    queued = extraction.queue(
+        pg, prompt_version="p", schema_version="1", validator_version="1",
+        model_regex=".*", normalizer_version="md/1", limit=10,
+    )
+    docs = q(pg, "SELECT d.document_hash FROM documents d JOIN posting_versions v "
+                 "ON v.version_hash = d.version_hash WHERE v.uid = 'wd:nvidia:j0'")
+    assert queued == [docs[0]["document_hash"]]  # j1 is pending_detail: not in the queue
+
+
+def test_two_phase_rebuild_replays_list_presence_and_versions(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, wd: str
+) -> None:
+    """Both paths replay from the archive alone: the store after a rebuild is row for row
+    the store the incremental ingest built."""
+    from jobhunter.rebuild import rebuild
+    from tests.conftest import TEST_DSN
+
+    ing = Ingestor(pg, store)
+    ing.ingest(make_two_phase_manifest(store, "nvidia", day(0),
+                                       [wd_row("j0"), wd_row("j1"), wd_row("j2")],
+                                       registry_revision=wd))
+    ing.ingest(make_two_phase_manifest(store, "nvidia", day(1),
+                                       [wd_row("j0"), wd_row("j1"), wd_row("j2")],
+                                       {"j0": wd_detail("<p>a</p>")}, registry_revision=wd))
+    ing.ingest(make_two_phase_manifest(store, "nvidia", day(2), [wd_row("j0"), wd_row("j1")],
+                                       {"j1": wd_detail("<p>b</p>")}, registry_revision=wd))
+    pg.commit()
+    before = {
+        "postings": q(pg, "SELECT uid, status, current_version_hash, version_count, "
+                          "closed_lower_at, closed_upper_at FROM postings ORDER BY uid"),
+        "presence": _presence(pg),
+        "versions": q(pg, "SELECT uid, version_hash FROM posting_versions ORDER BY uid"),
+        "documents": q(pg, "SELECT version_hash, markdown FROM documents ORDER BY markdown"),
+        "events": _events(pg),
+    }
+    assert [p["parse_status"] for p in before["presence"]].count(PENDING_DETAIL) >= 2
+
+    row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert row is not None
+    target = str(row["s"])
+    pg.commit()  # the swap renames the live schema: no reader may still hold it
+    s = rebuild(store, TEST_DSN, schema=target, work_schema=f"{target}_new")
+    assert s.swapped and s.ingested == 3
+    check = db_connect(TEST_DSN, target)
+    try:
+        after = {
+            "postings": q(check, "SELECT uid, status, current_version_hash, version_count, "
+                                 "closed_lower_at, closed_upper_at FROM postings ORDER BY uid"),
+            "presence": _presence(check),
+            "versions": q(check, "SELECT uid, version_hash FROM posting_versions ORDER BY uid"),
+            "documents": q(check, "SELECT version_hash, markdown FROM documents ORDER BY markdown"),
+            "events": _events(check),
+        }
+        assert after == before
+        check.execute(f'DROP SCHEMA "{target}_previous" CASCADE')
+        check.commit()
+    finally:
+        check.close()
+
+
+def db_connect(dsn: str, schema: str) -> psycopg.Connection[dict[str, Any]]:
+    from jobhunter.store import db
+
+    return db.connect(dsn, schema=schema)
 
 
 class _CountingConn:
