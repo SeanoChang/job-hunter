@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, fields
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any
 
 from jobhunter.hashing import canonical_json
 from jobhunter.timeutil import iso, parse_iso
 
 SOURCE_PREFIX: dict[str, str] = {"greenhouse": "gh", "lever": "lv", "ashby": "ab"}
+
+_EMPTY_EXTRA: MappingProxyType[str, str] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,10 +23,26 @@ class Board:
     board: str
     country: str | None = None
     tags: tuple[str, ...] = ()
+    extra: MappingProxyType[str, str] = _EMPTY_EXTRA
 
     @property
     def key(self) -> str:
         return f"{self.source}:{self.board}"
+
+    def __hash__(self) -> int:
+        # MappingProxyType isn't hashable, so hash the sorted items instead of
+        # `extra` itself; frozen dataclasses only auto-generate __hash__ when
+        # the class doesn't already define one, so this replaces that default.
+        return hash(
+            (
+                self.company,
+                self.source,
+                self.board,
+                self.country,
+                self.tags,
+                tuple(sorted(self.extra.items())),
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)

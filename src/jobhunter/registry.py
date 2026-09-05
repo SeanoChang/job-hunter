@@ -6,13 +6,40 @@ import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from jobhunter.hashing import canonical_json, sha256_hex
 from jobhunter.models import Board
 
-VALID_SOURCES = frozenset({"greenhouse", "lever", "ashby"})
+VALID_SOURCES = frozenset({"greenhouse", "lever", "ashby", "workday", "oraclehcm", "eightfold"})
 _BOARD_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+# Per-source required extra keys (spec §3.5). Sources absent from this map
+# (greenhouse/lever/ashby) accept no extra keys at all.
+_REQUIRED_EXTRA_KEYS: dict[str, frozenset[str]] = {
+    "workday": frozenset({"host", "site"}),
+    "oraclehcm": frozenset({"base", "site"}),
+    "eightfold": frozenset({"base", "domain"}),
+}
+
+# A worked example per source, shown in the teaching error for a missing key.
+_EXTRA_EXAMPLE: dict[str, str] = {
+    "workday": (
+        '[[boards]]\ncompany = "NVIDIA"\nsource  = "workday"\nboard   = "nvidia"\n'
+        'host    = "wd5"\nsite    = "NVIDIAExternalCareerSite"'
+    ),
+    "oraclehcm": (
+        '[[boards]]\ncompany = "JPMorgan Chase"\nsource  = "oraclehcm"\nboard   = "jpmc"\n'
+        'base    = "https://jpmc.fa.oraclecloud.com"\nsite    = "CX_1001"'
+    ),
+    "eightfold": (
+        '[[boards]]\ncompany = "Netflix"\nsource  = "eightfold"\nboard   = "netflix"\n'
+        'base    = "https://explore.jobs.netflix.net"\ndomain  = "netflix.com"'
+    ),
+}
+
+_KNOWN_BOARD_KEYS = frozenset({"company", "source", "board", "country", "tags"})
 
 
 class RegistryError(ValueError):
@@ -34,12 +61,38 @@ def _snapshot(boards: tuple[Board, ...]) -> bytes:
             "board": b.board,
             "company": b.company,
             "country": b.country,
+            "extra": dict(b.extra),
             "source": b.source,
             "tags": list(b.tags),
         }
         for b in boards
     ]
     return canonical_json(rows)
+
+
+def _extra(entry: dict[str, Any], source: str, board: str, i: int) -> MappingProxyType[str, str]:
+    """Validate and collect the per-source extra keys (spec §3.5)."""
+    raw = {k: v for k, v in entry.items() if k not in _KNOWN_BOARD_KEYS}
+    required = _REQUIRED_EXTRA_KEYS.get(source, frozenset())
+    unknown = sorted(set(raw) - required)
+    if unknown:
+        raise RegistryError(
+            f"boards[{i}] ({board}): unknown key(s) {', '.join(unknown)} for source "
+            f"{source!r} (no extra keys are recognized for this source)"
+            if not required
+            else f"boards[{i}] ({board}): unknown key(s) {', '.join(unknown)} for source "
+            f"{source!r} (allowed: {', '.join(sorted(required))})"
+        )
+    missing = sorted(required - set(raw))
+    if missing:
+        raise RegistryError(
+            f"boards[{i}] ({board}): {source} boards require {missing[0]!r} "
+            f"(missing); a valid {source} entry looks like:\n{_EXTRA_EXAMPLE[source]}"
+        )
+    for k, v in raw.items():
+        if not isinstance(v, str) or not v.strip():
+            raise RegistryError(f"boards[{i}] ({board}): {k!r} must be a non-empty string")
+    return MappingProxyType(dict(sorted(raw.items())))
 
 
 def _board(entry: Any, i: int) -> Board:
@@ -60,8 +113,9 @@ def _board(entry: Any, i: int) -> Board:
     tags = entry.get("tags", [])
     if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
         raise RegistryError(f"boards[{i}]: tags must be a list of strings")
+    extra = _extra(entry, source, board, i)
     return Board(company=company.strip(), source=source, board=board, country=country,
-                 tags=tuple(tags))
+                 tags=tuple(tags), extra=extra)
 
 
 def load(path: Path) -> Registry:
