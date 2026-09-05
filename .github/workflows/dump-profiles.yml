@@ -1,11 +1,22 @@
-# TEMPORARY: read-only inspection of validated profiles, until the hosted MCP
+# TEMPORARY: read-mostly inspection of demand profiles, until the hosted MCP
 # server is deployed (then `q profile` is reachable directly and this file goes).
+# With `board` set it first extracts that board's newest unextracted documents
+# (same engine and caps as the hourly sync), so a specific company's parse can
+# be inspected without waiting for the queue to reach it.
 name: dump-profiles
 on:
   workflow_dispatch:
     inputs:
+      board:
+        description: "source:board to extract before dumping (e.g. greenhouse:waymo); empty dumps newest validated"
+        required: false
+        default: ""
+      extract_count:
+        description: "How many of that board's docs to extract"
+        required: false
+        default: "4"
       limit:
-        description: "How many of the newest validated profiles to dump"
+        description: "How many of the newest validated profiles to dump (no-board mode)"
         required: false
         default: "10"
 
@@ -15,7 +26,7 @@ permissions:
 jobs:
   dump:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
@@ -26,16 +37,49 @@ jobs:
       - name: dump
         env:
           JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
+          AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
           JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
+          JOB_HUNTER_L2_ENGINE: openai-compat
+          JOB_HUNTER_L2_BASE_URL: ${{ vars.JOB_HUNTER_L2_BASE_URL || 'https://openrouter.ai/api/v1' }}
+          JOB_HUNTER_L2_API_KEY: ${{ secrets.JOB_HUNTER_L2_OPENAI_API_KEY }}
+          JOB_HUNTER_L2_MODEL_CANDIDATES: ${{ vars.JOB_HUNTER_L2_MODEL_CANDIDATES }}
+          JOB_HUNTER_L2_MODELS: ${{ vars.JOB_HUNTER_L2_MODELS }}
+          JOB_HUNTER_L2_EXTRA_BODY: ${{ vars.JOB_HUNTER_L2_EXTRA_BODY }}
+          JOB_HUNTER_L2_PRICE: ${{ vars.JOB_HUNTER_L2_PRICE }}
+          JOB_HUNTER_L2_SCHEMA_STRICT: ${{ vars.JOB_HUNTER_L2_SCHEMA_STRICT }}
+          BOARD: ${{ github.event.inputs.board }}
+          EXTRACT_COUNT: ${{ github.event.inputs.extract_count }}
+          LIMIT: ${{ github.event.inputs.limit }}
         run: |
-          # newest validated docs; the CLI (not raw SQL) renders each profile so
-          # the dump matches exactly what `q profile --full` serves agents
-          hashes=$(psql "$JOB_HUNTER_DATABASE_URL" -t -A \
-            -c "SELECT document_hash FROM jobhunter.extractions WHERE status='validated' ORDER BY updated_at DESC LIMIT ${{ github.event.inputs.limit }}")
+          if [ -n "$BOARD" ]; then
+            src="${BOARD%%:*}"; brd="${BOARD#*:}"
+            # newest open postings on the board whose current document has no
+            # extraction row yet under any engine tuple
+            hashes=$(psql "$JOB_HUNTER_DATABASE_URL" -t -A -c "
+              SELECT DISTINCT ON (p.last_seen_at, d.document_hash) d.document_hash
+              FROM jobhunter.postings p
+              JOIN jobhunter.documents d ON d.version_hash = p.current_version_hash
+              WHERE p.source = '$src' AND p.board = '$brd' AND p.status = 'open'
+                AND NOT EXISTS (SELECT 1 FROM jobhunter.extractions e
+                                WHERE e.document_hash = d.document_hash)
+              ORDER BY p.last_seen_at DESC, d.document_hash
+              LIMIT $EXTRACT_COUNT")
+            for h in $hashes; do
+              uv run job-hunter extract run --doc "$h" -o json || true
+            done
+          else
+            hashes=$(psql "$JOB_HUNTER_DATABASE_URL" -t -A \
+              -c "SELECT document_hash FROM jobhunter.extractions WHERE status='validated' ORDER BY updated_at DESC LIMIT $LIMIT")
+          fi
+          # the CLI (not raw SQL) renders each profile so the dump matches
+          # exactly what `q profile --full` serves agents
           : > profiles.jsonl
           for h in $hashes; do
             uv run job-hunter q profile --doc "$h" --full -o json >> profiles.jsonl \
-              || echo "{\"error\": \"dump failed for $h\"}" >> profiles.jsonl
+              || echo "{\"error\": \"no validated profile for $h\"}" >> profiles.jsonl
           done
           wc -l profiles.jsonl
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
