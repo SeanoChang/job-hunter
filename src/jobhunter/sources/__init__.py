@@ -2,6 +2,7 @@ from jobhunter.sources.ashby import Ashby
 from jobhunter.sources.base import Source, TwoPhaseSource
 from jobhunter.sources.greenhouse import Greenhouse
 from jobhunter.sources.lever import Lever
+from jobhunter.sources.workday import Workday
 
 SOURCES: dict[str, Source] = {
     "greenhouse": Greenhouse(),
@@ -9,9 +10,11 @@ SOURCES: dict[str, Source] = {
     "ashby": Ashby(),
 }
 
-# Two-phase adapters (list + detail, spec §3.2). Empty until the first one
-# lands: with nothing registered here `fetch.py` never takes the two-phase path.
-TWO_PHASE_SOURCES: dict[str, TwoPhaseSource] = {}
+# Two-phase adapters (list + detail, spec §3.2). `fetch.py` only takes the
+# two-phase path for a source registered here.
+TWO_PHASE_SOURCES: dict[str, TwoPhaseSource] = {
+    "workday": Workday(),
+}
 
 
 def get_source(name: str) -> Source:
