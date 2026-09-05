@@ -2,7 +2,7 @@
   "mcpServers": {
     "job-hunter": {
       "type": "http",
-      "url": "https://REPLACE-AFTER-DEPLOY.run.app/mcp",
+      "url": "https://job-hunter-mcp-gd47w4lojq-uk.a.run.app/mcp",
       "headers": {"Authorization": "Bearer ${JOB_HUNTER_MCP_TOKEN}"}
     }
   }
