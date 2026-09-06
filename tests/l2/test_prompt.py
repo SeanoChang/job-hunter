@@ -4,7 +4,7 @@ from jobhunter.l2.prompt import PROMPT_VERSION, TEMPLATE, prompt_sha, render
 
 
 def test_version_and_sha() -> None:
-    assert PROMPT_VERSION == "demand-profile/v4"
+    assert PROMPT_VERSION == "demand-profile/v5"
     assert re.fullmatch(r"[0-9a-f]{64}", prompt_sha())
     assert prompt_sha() == prompt_sha()  # stable
 

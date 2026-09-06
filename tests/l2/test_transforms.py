@@ -10,7 +10,7 @@ from jobhunter.l2.transforms import (
 
 
 def test_registry_shape() -> None:
-    assert VALIDATOR_VERSION == "2"
+    assert VALIDATOR_VERSION == "3"
     assert set(TRANSFORMS[VALIDATOR_VERSION]) == {
         "experience_months", "compensation", "deadline",
     }
@@ -121,5 +121,33 @@ def test_compensation_currencies(text: str, expected: dict[str, object] | None) 
     assert parse_compensation(text) == expected
 
 
+# --- code-suffixed amounts (validator/3) -----------------------------------
+# Found by the NVIDIA canary: Workday postings write "136,000 USD - 218,500
+# USD for Level 3" — currency code after the amount, no symbol at all. The
+# symbol-first grammar returned None on 86 correctly-anchored quotes across
+# one board's quarantines (SEA-186).
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("136,000 USD - 218,500 USD for Level 3",
+         {"min": 136000, "max": 218500, "currency": "USD", "period": None}),
+        # code on the trailing amount only still names the range's currency
+        ("136,000 - 218,500 USD",
+         {"min": 136000, "max": 218500, "currency": "USD", "period": None}),
+        ("8,000,000 JPY - 12,000,000 JPY",
+         {"min": 8000000, "max": 12000000, "currency": "JPY", "period": None}),
+        ("130K - 150K USD per year",
+         {"min": 130000, "max": 150000, "currency": "USD", "period": "year"}),
+        # mismatched codes are not a range
+        ("100,000 USD - 120,000 EUR", None),
+        # no symbol and no code anywhere: not evidently money (null-over-guess)
+        ("136,000 - 218,500", None),
+    ],
+)
+def test_compensation_code_suffixed(text: str, expected: dict[str, object] | None) -> None:
+    assert parse_compensation(text) == expected
+
+
 def test_validator_version_bumped_for_the_grammar_change() -> None:
-    assert VALIDATOR_VERSION == "2"
+    assert VALIDATOR_VERSION == "3"

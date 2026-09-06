@@ -14,7 +14,7 @@ import re
 from collections.abc import Callable
 from datetime import date
 
-VALIDATOR_VERSION = "2"
+VALIDATOR_VERSION = "3"
 
 _RANGE = re.compile(r"(\d+)\s*(?:-|–|—|to|and)\s*(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 _FLOOR = re.compile(r"(\d+)\s*\+\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
@@ -29,6 +29,15 @@ _AMOUNT = r"(\d{1,3}(?:,\d{3})*|\d+)\s*(k)?"
 _MONEY = re.compile(
     r"([$£€¥])\s*" + _AMOUNT + r"\s*(?:-|–|—|to)\s*"
     r"([$£€¥])\s*" + _AMOUNT,
+    re.IGNORECASE,
+)
+# validator/3: Workday postings write the code after the amount with no symbol
+# at all — "136,000 USD - 218,500 USD for Level 3" (NVIDIA canary, SEA-186).
+# The trailing code names the currency; a leading one, when present, must match.
+_CODE = r"(USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|CNY|CHF|SEK|INR|TWD|KRW)"
+_MONEY_CODE = re.compile(
+    _AMOUNT + r"\s*" + _CODE + r"?\s*(?:-|–|—|to)\s*"
+    + _AMOUNT + r"\s+" + _CODE + r"\b",
     re.IGNORECASE,
 )
 _HOURLY = re.compile(r"(?:/\s*(?:hr|hour)|per\s+hour)\b", re.IGNORECASE)
@@ -67,20 +76,26 @@ def _amount(digits: str, k_suffix: str | None) -> int:
 
 
 def parse_compensation(text: str) -> dict[str, object] | None:
-    m = _MONEY.search(text)
-    if not m:
+    currency: str | None
+    if m := _MONEY.search(text):
+        sym_lo, lo_digits, lo_k, sym_hi, hi_digits, hi_k = m.groups()
+        if sym_lo != sym_hi:
+            return None  # "£100,000 - €120,000" is not a range
+        code = _CURRENCY.search(text)
+        currency = code.group(1).upper() if code else _SYMBOL_CURRENCY.get(sym_lo)
+    elif m := _MONEY_CODE.search(text):
+        lo_digits, lo_k, code_lo, hi_digits, hi_k, code_hi = m.groups()
+        if code_lo and code_lo.upper() != code_hi.upper():
+            return None  # "100,000 USD - 120,000 EUR" is not a range
+        currency = code_hi.upper()
+    else:
         return None
-    sym_lo, lo_digits, lo_k, sym_hi, hi_digits, hi_k = m.groups()
-    if sym_lo != sym_hi:
-        return None  # "£100,000 - €120,000" is not a range
     lo = _amount(lo_digits, lo_k)
     hi = _amount(hi_digits, hi_k)
     if hi_k and not lo_k and lo < 1000:
         lo *= 1000  # "$130 - $150K": the trailing K covers both bounds
     if lo > hi:
         return None  # inverted range: ambiguous
-    code = _CURRENCY.search(text)
-    currency = code.group(1).upper() if code else _SYMBOL_CURRENCY.get(sym_lo)
     period = "hour" if _HOURLY.search(text) else "year" if _YEARLY.search(text) else None
     return {"min": lo, "max": hi, "currency": currency, "period": period}
 
