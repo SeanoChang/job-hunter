@@ -47,7 +47,11 @@ jobs:
       # is a second thing that can die silently (durability doc §1). It takes its
       # own advisory lock (job2), so it can never collide with ingestion's.
       - name: sync
-        timeout-minutes: 45
+        # Must track the job timeout above, less teardown margin: at 45 the step
+        # was axed one millisecond after printing a fully green envelope
+        # (2026-09-06, run 34014403704) once 138 boards + the hourly extract
+        # pushed past it.
+        timeout-minutes: 100
         env:
           JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
           AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
