@@ -38,8 +38,14 @@ def rebuild(
     work = work_schema or f"{schema}_new"
     conn = db.connect(dsn, schema=work)
     try:
+        # Both writer locks, fixed order (review P0-4): the swap replaces the
+        # extraction tables too, and advisory locks are cooperative — holding
+        # only the ingest key would let an active extraction or review land in
+        # the schema generation being replaced.
         if not db.try_lock(conn):
             raise LockHeld("already running (advisory lock held)")
+        if not db.try_lock(conn, db.EXTRACT_LOCK_KEY):
+            raise LockHeld("an extraction run or review holds the extract lock")
         try:
             # A fresh schema has an empty ACL, so the swap would strip the reader
             # and MCP roles of everything they were granted. Read that off the

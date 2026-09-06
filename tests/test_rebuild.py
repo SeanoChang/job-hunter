@@ -1,13 +1,15 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import psycopg
+import pytest
 
 from jobhunter.archive.local import LocalFS
 from jobhunter.cursors import Watermark
 from jobhunter.models import Board
-from jobhunter.rebuild import rebuild
+from jobhunter.rebuild import LockHeld, rebuild
 from jobhunter.store import db, mcp_state
 from tests.conftest import TEST_DSN
 from tests.store.helpers import ab_record, board_payload, make_manifest, write_registry
@@ -157,3 +159,20 @@ def test_lock_contention_is_a_distinct_exception(
             rebuild(store, TEST_DSN, drop_ratio=0.5, schema=target, work_schema=f"{target}_new")
     finally:
         db.unlock(pg)
+
+
+def test_rebuild_refuses_while_the_extract_lock_is_held(
+    pg: psycopg.Connection[dict[str, Any]], tmp_path: Path
+) -> None:
+    """Review P0-4: the swap replaces extraction tables, so an active
+    extraction writer must block it — different advisory keys never exclude
+    each other on their own."""
+    from jobhunter.store import db as _db
+
+    store = LocalFS(tmp_path / "archive")
+    assert _db.try_lock(pg, _db.EXTRACT_LOCK_KEY)
+    try:
+        with pytest.raises(LockHeld, match="extract lock"):
+            rebuild(store, TEST_DSN, work_schema=f"w_{uuid4().hex[:12]}")
+    finally:
+        _db.unlock(pg, _db.EXTRACT_LOCK_KEY)

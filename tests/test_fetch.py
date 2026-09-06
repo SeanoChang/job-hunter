@@ -735,3 +735,59 @@ def test_embedded_board_ingests_versions_from_rows(
         "SELECT count(*) AS n FROM documents"
     ).fetchone()
     assert doc is not None and doc["n"] >= 1
+
+
+# --- listing coverage (architecture review 2026-09-06, P0-3) ----------------
+# An incomplete listing must never read as a snapshot: reconciling against it
+# would close every posting it never reached. Both premature-empty pages and
+# repeated pages (dup uids inflating the offset) are coverage failures.
+
+
+def _scripted_handler(pages: list[list[dict[str, str]]], total: int):
+    calls = {"n": 0}
+
+    def h(req: httpx.Request) -> httpx.Response:
+        body = pages[calls["n"]] if calls["n"] < len(pages) else []
+        calls["n"] += 1
+        return httpx.Response(200, content=json.dumps({"total": total, "jobs": body}).encode())
+
+    return h
+
+
+def test_premature_empty_page_is_an_error_not_a_snapshot(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    # declares ten, serves six, then an empty page: coverage failed
+    pages = [[{"id": f"j{i}", "title": f"T{i}"} for i in range(6)], []]
+    t = datetime(2026, 9, 6, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path), fetcher=_fetcher(_scripted_handler(pages, total=10)),
+            now=lambda: t, ingest=False)
+    m = s.outcomes[0].manifest
+    assert m.transport == "ok"
+    assert m.error is not None and "incomplete" in m.error
+
+
+def test_repeated_pages_fail_the_distinct_check(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    # the same two rows on every page: offset climbs to total but coverage is 2 of 6
+    dup = [{"id": "j1", "title": "A"}, {"id": "j2", "title": "B"}]
+    t = datetime(2026, 9, 6, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path), fetcher=_fetcher(_scripted_handler([dup, dup, dup], total=6)),
+            now=lambda: t, ingest=False)
+    m = s.outcomes[0].manifest
+    assert m.error is not None and "incomplete" in m.error
+
+
+def test_late_churn_within_tolerance_is_still_a_snapshot(
+    tmp_path: Path, two_phase: FakeTwoPhase
+) -> None:
+    # 97 of a declared 100 with a clean end: upstream churn, accepted
+    pages = [[{"id": f"j{i + off}", "title": "T"} for i in range(2)] for off in range(0, 96, 2)]
+    pages.append([{"id": "j97", "title": "T"}])
+    pages.append([])
+    t = datetime(2026, 9, 6, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path), fetcher=_fetcher(_scripted_handler(pages, total=100)),
+            now=lambda: t, ingest=False)
+    m = s.outcomes[0].manifest
+    assert m.error is None and m.record_count == 97
