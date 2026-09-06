@@ -172,7 +172,11 @@ def test_normalize_detail_real_fixture(board: Board) -> None:
     assert "Jersey City, NJ" in pv.locations
     assert pv.employment_type is None
     assert pv.compensation is None
-    assert pv.url is None
+    # The payload carries no link field; the CE site URL is deterministic
+    # (probe-verified 200 on jpmc, 2026-09-06).
+    assert pv.url == (
+        "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/210642927"
+    )
     assert pv.apply_url is None
     assert pv.source_created_at == parse_iso("2026-09-03T15:57:40+00:00")
     assert DISTINCTIVE_SENTENCE in pv.description_html

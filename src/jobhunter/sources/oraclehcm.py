@@ -116,7 +116,13 @@ class OracleHCM:
             employment_type=None,
             # no structured compensation field observed; ranges (if any) live in the description
             compensation=None,
-            url=None,  # the fixture carries no apply/posting link field
+            # The payload carries no link field, but the CE site URL is
+            # deterministic: {base}/hcmUI/CandidateExperience/en/sites/{site}/job/{id}
+            # (probe-verified live on jpmc, 2026-09-06).
+            url=(
+                f"{board.extra['base']}/hcmUI/CandidateExperience/en/sites/"
+                f"{board.extra['site']}/job/{row.uid}"
+            ),
             apply_url=None,
             source_created_at=_dt(rec.get("ExternalPostedStartDate")),
             source_updated_at=None,
