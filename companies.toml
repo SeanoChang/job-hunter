@@ -859,3 +859,11 @@ company = "Snap"
 source  = "smartrecruiters"
 board   = "SNAPInc1"
 country = "US"
+
+[[boards]]
+company = "Netflix"
+source  = "eightfold"
+board   = "netflix"
+base    = "https://explore.jobs.netflix.net"
+domain  = "netflix.com"
+country = "US"
