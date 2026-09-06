@@ -18,6 +18,8 @@ from typing import Any, Protocol
 
 import httpx
 
+from jobhunter.l2.schemas import strict_schema
+
 
 @dataclass(frozen=True)
 class EngineResult:
@@ -128,7 +130,12 @@ class OpenAICompat:
                 "json_schema": {
                     "name": "demand_profile",
                     "strict": self._strict,
-                    "schema": engine_schema(schema),
+                    # strict mode requires every property required (validator/5):
+                    # the strict variant makes optionals nullable, and
+                    # normalize_emit strips the forced nulls before validation
+                    "schema": strict_schema(engine_schema(schema))
+                    if self._strict
+                    else engine_schema(schema),
                 },
             },
             **self._extra_body,

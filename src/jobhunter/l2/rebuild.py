@@ -21,7 +21,7 @@ from jobhunter.l2.agreement import cohort_hook
 from jobhunter.l2.assemble import AssembleError, assemble
 from jobhunter.l2.attempts import Attempt, derived_error_detail, from_bytes
 from jobhunter.l2.prompt import PROMPT_VERSION
-from jobhunter.l2.schemas import validate_emit
+from jobhunter.l2.schemas import normalize_emit, validate_emit
 from jobhunter.l2.state import Review, derive_state
 from jobhunter.l2.transforms import VALIDATOR_VERSION
 from jobhunter.store import extraction
@@ -42,6 +42,7 @@ def _rejudge(attempt: Attempt, markdown: str) -> Attempt:
         emit = json.loads(raw)
         if not isinstance(emit, dict):
             raise ValueError("top level is not an object")
+        emit = normalize_emit(emit, attempt.schema_version)
     except ValueError as exc:
         return replace(base, outcome="schema_invalid",
                        validation=[{"error": f"response is not valid JSON: {exc}"}])

@@ -14,7 +14,7 @@ import re
 from collections.abc import Callable
 from datetime import date
 
-VALIDATOR_VERSION = "4"
+VALIDATOR_VERSION = "5"
 
 _RANGE = re.compile(r"(\d+)\s*(?:-|–|—|to|and)\s*(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 _FLOOR = re.compile(
