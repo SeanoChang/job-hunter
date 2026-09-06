@@ -835,3 +835,27 @@ company = "Amazon"
 source  = "amazonjobs"
 board   = "amazon"
 country = "US"
+
+[[boards]]
+company = "Grab"
+source  = "smartrecruiters"
+board   = "Grab"
+country = "SG"
+
+[[boards]]
+company = "Canva"
+source  = "smartrecruiters"
+board   = "canva"
+country = "AU"
+
+[[boards]]
+company = "Wix"
+source  = "smartrecruiters"
+board   = "Wix2"
+country = "IL"
+
+[[boards]]
+company = "Snap"
+source  = "smartrecruiters"
+board   = "SNAPInc1"
+country = "US"
