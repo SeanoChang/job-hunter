@@ -13,7 +13,8 @@ from jobhunter.hashing import canonical_json, sha256_hex
 from jobhunter.models import Board
 
 VALID_SOURCES = frozenset(
-    {"greenhouse", "lever", "ashby", "workday", "oraclehcm", "eightfold", "amazonjobs"}
+    {"greenhouse", "lever", "ashby", "workday", "oraclehcm", "eightfold",
+     "amazonjobs", "smartrecruiters"}
 )
 _BOARD_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
