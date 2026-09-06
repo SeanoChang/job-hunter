@@ -120,11 +120,12 @@ class OpenAICompat:
         body = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            # gpt-oss-class models default to 256 (spec §8); 16k because the
-            # W2 wave's biggest postings (Capital One, Salesforce) push the
-            # emit past 8k and truncate mid-JSON (345 quarantines, 2026-09-06).
-            # Billing is per token USED, so the ceiling costs nothing extra.
-            "max_tokens": 16384,
+            # gpt-oss-class models default to 256 (spec §8). 24k: the W2
+            # wave's biggest postings truncated at 8k (345 quarantines,
+            # 2026-09-06) and strict mode's forced nulls inflate emits enough
+            # that a few still clipped at 16k. Billing is per token USED, so
+            # the ceiling costs nothing extra.
+            "max_tokens": 24576,
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
