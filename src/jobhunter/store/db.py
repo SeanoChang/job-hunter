@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -11,6 +12,40 @@ from typing import Any, LiteralString
 import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
+
+
+class Heartbeat:
+    """Keeps a connection audibly alive through a long non-DB phase.
+
+    Neon reaps quiet connections (compute autosuspend, idle timeouts; three
+    sync runs died with AdminShutdown on 2026-09-06, and the first Amazon
+    ingest died holding a transaction open through ~10k R2 puts). Between
+    start() and stop() the heartbeat owns the connection exclusively — the
+    caller must not touch it — and stop() joins before DB work resumes. A
+    ping failure ends the thread quietly; the dead connection is then
+    discovered, and reported, by the resuming DB path.
+    """
+
+    def __init__(self, conn: Conn, interval_seconds: float = 60.0) -> None:
+        self._conn = conn
+        self._interval = interval_seconds
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._beat, daemon=True)
+
+    def _beat(self) -> None:
+        while not self._stop.wait(self._interval):
+            try:
+                self._conn.execute("SELECT 1")
+                self._conn.commit()
+            except Exception:
+                return
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join()
 
 
 class SchemaMismatch(RuntimeError):

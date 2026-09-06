@@ -825,3 +825,46 @@ def test_event_order_is_payload_order_then_closed_events_by_uid(
         ("closed", f"{u}2"), ("closed", f"{u}4"),        # reconcile closes in uid order
         ("reopened", f"{u}4"), ("reopened", f"{u}2"),    # payload order again
     ]
+
+
+# --- R2 puts stay out of the write transaction (2026-09-06 outage) ----------
+# Amazon's first embedded cycle archived 10k version blobs INSIDE the open
+# ingest transaction; the minutes of R2 latency held the transaction open and
+# Neon killed the session ("SSL connection has been closed unexpectedly",
+# run 34038848125). Content-addressed blobs are safe to write before the
+# transaction — a rolled-back attempt leaves only harmless objects behind.
+
+
+class TxnWatchingStore:
+    """Records the DB transaction status at every blob put."""
+
+    def __init__(self, inner: LocalFS, conn: psycopg.Connection[dict[str, Any]]) -> None:
+        self._inner = inner
+        self._conn = conn
+        self.put_txn_states: list[int] = []
+
+    def put(self, key: str, data: bytes) -> bool:
+        if key.startswith("versions/"):
+            self.put_txn_states.append(int(self._conn.info.transaction_status))
+        return self._inner.put(key, data)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def test_version_blob_puts_happen_outside_the_write_transaction(
+    pg: psycopg.Connection[dict[str, Any]], store: LocalFS, rev: str
+) -> None:
+    body = board_payload(
+        "greenhouse", [gh_record(1, "A", "<p>a</p>"), gh_record(2, "B", "<p>b</p>")]
+    )
+    m = make_manifest(store, "greenhouse", "anthropic", day(0), body, registry_revision=rev)
+    watching = TxnWatchingStore(store, pg)
+    r = Ingestor(pg, watching, drop_ratio=0.5).ingest(m)  # type: ignore[arg-type]
+    pg.commit()
+    assert r is not None and r.health == "ok"
+    assert watching.put_txn_states, "the attempt archived no version blobs"
+    # psycopg TransactionStatus.IDLE == 0: no transaction open during any put
+    assert set(watching.put_txn_states) == {0}
+    # and the attempt still landed atomically
+    assert q(pg, "SELECT count(*) AS n FROM postings")[0]["n"] == 2
