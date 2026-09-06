@@ -94,6 +94,14 @@ def parse_x_attempt_key(key: str) -> tuple[datetime, str, int, int] | None:
     return at, dochash12, int(slot), int(no)
 
 
+X_CONSOLIDATION_PREFIX = "extractions/consolidation/"
+
+
+def x_consolidation_key(at: datetime) -> str:
+    """One append-only artifact per consolidation run (harness spec §2)."""
+    return f"{X_CONSOLIDATION_PREFIX}{_x_stamp(at)}.json"
+
+
 def x_review_key(at: datetime, document_hash: str, verb: str, seq: int) -> str:
     # seq is the per-document review ordinal: utcnow() is second-granular, so
     # same-second verbs need an order the fold can reproduce from the event

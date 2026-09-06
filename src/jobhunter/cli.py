@@ -1257,6 +1257,31 @@ def extract_refute(
     )
 
 
+@extract_app.command("consolidate")
+def extract_consolidate(
+    force: bool = typer.Option(False, "--force", help="Emit even if the last artifact is fresh"),
+    output: str | None = output_option(),
+) -> None:
+    """Weekly drift report + audit queue + refuter summary, append-only (spec §2)."""
+    from jobhunter.l2.consolidate import consolidate
+
+    settings = _settings(output)
+    store = _store(settings, output)
+    conn = _conn(settings, schema=_schema, output=output)
+    try:
+        data = consolidate(conn, store, force=force)
+    except Exception as e:
+        fail("backend", f"database error: {e}", code=Exit.BACKEND, output=output)
+    finally:
+        conn.close()
+    human = (
+        f"fresh (last {data['last']}); nothing emitted"
+        if data["skipped"] == "fresh"
+        else f"emitted {data['artifact']} (audit queue depth {data['audit_queue_depth']})"
+    )
+    emit(data, human=human, output=output)
+
+
 @extract_app.command("rebuild")
 def extract_rebuild(output: str | None = output_option()) -> None:
     """Truncate the extraction surface and replay it from the archive. No LLM."""
