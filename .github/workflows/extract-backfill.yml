@@ -51,6 +51,7 @@ jobs:
           JOB_HUNTER_L2_MODEL_CANDIDATES: ${{ vars.JOB_HUNTER_L2_MODEL_CANDIDATES || 'z-ai/glm-5.2:free' }}
           JOB_HUNTER_L2_MODELS: ${{ vars.JOB_HUNTER_L2_MODELS || 'z-ai/*' }}
           JOB_HUNTER_L2_EXTRA_BODY: ${{ vars.JOB_HUNTER_L2_EXTRA_BODY }}
+          JOB_HUNTER_L2_CONCURRENCY: "6"
           JOB_HUNTER_L2_PRICE: ${{ vars.JOB_HUNTER_L2_PRICE }}
           JOB_HUNTER_L2_SCHEMA_STRICT: ${{ vars.JOB_HUNTER_L2_SCHEMA_STRICT }}
           MAX_DOCS: ${{ github.event.inputs.max_docs }}

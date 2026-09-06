@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -41,6 +42,7 @@ from jobhunter.l2.engines import (
     Engine,
     EngineFatalError,
     EngineModelNotFound,
+    EngineResult,
     EngineThrottled,
     EngineTransportError,
 )
@@ -399,28 +401,84 @@ def run(
         docs = [only_doc] if only_doc else session.do(queue)
         summary.queued = docs
         breaker = 0
-        for dh in docs:
-            # strict >: a cap of 0 means "free work only" (the documented
-            # subscription-backfill mode), not "stop before the first document"
-            if summary.docs_attempted >= max_docs or summary.spend_usd > max_usd:
-                break
-            result = _extract_doc(settings, session, journal, engine, dh, summary, breaker, now)
-            if result is None:
-                continue  # document vanished (normalizer bump mid-flight)
-            disposition, breaker = result
-            session.do(lambda c: c.commit())
-            if disposition == "validated":
-                summary.validated += 1
-            elif disposition == "quarantined":
-                summary.quarantined += 1
-            elif disposition == "pending":
-                summary.pending += 1
-            elif disposition == "throttled":
-                summary.throttled = True
-                break
-            elif disposition == "breaker":
-                summary.breaker_abort = True
-                break
+        if settings.l2_concurrency <= 1:
+            for dh in docs:
+                # strict >: a cap of 0 means "free work only" (the documented
+                # subscription-backfill mode), not "stop before the first document"
+                if summary.docs_attempted >= max_docs or summary.spend_usd > max_usd:
+                    break
+                result = _extract_doc(settings, session, journal, engine, dh, summary,
+                                      breaker, now)
+                if result is None:
+                    continue  # document vanished (normalizer bump mid-flight)
+                disposition, breaker = result
+                session.do(lambda c: c.commit())
+                if disposition == "validated":
+                    summary.validated += 1
+                elif disposition == "quarantined":
+                    summary.quarantined += 1
+                elif disposition == "pending":
+                    summary.pending += 1
+                elif disposition == "throttled":
+                    summary.throttled = True
+                    break
+                elif disposition == "breaker":
+                    summary.breaker_abort = True
+                    break
+        else:
+            # Parallel drain (T-20260906-SVY4): workers overlap ONLY the engine
+            # waits. One gate serializes every DB/journal/summary/breaker touch
+            # (released inside _extract_doc strictly around engine.complete), so
+            # the single-writer semantics are those of the serial loop. The
+            # breaker's "consecutive" is approximate across workers — five
+            # rejections with no success between them still abort. A side
+            # benefit: some worker is almost always mid-transactionless DB work,
+            # so the connection never goes quiet enough for Neon to reap.
+            gate = threading.RLock()
+            stop = threading.Event()
+            doc_iter = iter(docs)
+            breaker_box = [breaker]
+
+            def _worker() -> None:
+                while not stop.is_set():
+                    with gate:
+                        if (summary.docs_attempted >= max_docs
+                                or summary.spend_usd > max_usd or stop.is_set()):
+                            return
+                        dh = next(doc_iter, None)
+                        b = breaker_box[0]
+                    if dh is None:
+                        return
+                    result = _extract_doc(settings, session, journal, engine, dh,
+                                          summary, b, now, gate)
+                    with gate:
+                        if result is None:
+                            continue
+                        disposition, b_after = result
+                        breaker_box[0] = b_after
+                        session.do(lambda c: c.commit())
+                        if disposition == "validated":
+                            summary.validated += 1
+                        elif disposition == "quarantined":
+                            summary.quarantined += 1
+                        elif disposition == "pending":
+                            summary.pending += 1
+                        elif disposition == "throttled":
+                            summary.throttled = True
+                            stop.set()
+                            return
+                        elif disposition == "breaker":
+                            summary.breaker_abort = True
+                            stop.set()
+                            return
+
+            from concurrent.futures import ThreadPoolExecutor
+
+            workers = min(settings.l2_concurrency, max(len(docs), 1))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(_worker) for _ in range(workers)]
+                for f in futures:
+                    f.result()  # a worker's LockLost or bug must surface, not vanish
     except LockLost:
         # another writer owns the drain now; our uncommitted work died with the
         # connection and the archive lets the next run replay it. The counters
@@ -443,6 +501,40 @@ def _extract_doc(
     summary: ExtractSummary,
     breaker: int,
     now: Callable[[], datetime],
+    gate: threading.RLock | None = None,
+) -> tuple[str, int] | None:
+    """With a gate (parallel drain): the gate is held for ALL state — DB,
+    journal, summary, breaker — and released strictly around engine calls, so
+    the semantics stay those of the serial drain while the waiting overlaps."""
+    if gate is None:
+        return _extract_doc_inner(settings, session, journal, engine, dh, summary,
+                                  breaker, now, None)
+    with gate:
+        return _extract_doc_inner(settings, session, journal, engine, dh, summary,
+                                  breaker, now, gate)
+
+
+def _ungated[T](gate: threading.RLock | None, fn: Callable[[], T]) -> T:
+    """Run an engine call with the gate released; everything else stays gated."""
+    if gate is None:
+        return fn()
+    gate.release()
+    try:
+        return fn()
+    finally:
+        gate.acquire()
+
+
+def _extract_doc_inner(
+    settings: Settings,
+    session: _Session,
+    journal: _Journal,
+    engine: Engine,
+    dh: str,
+    summary: ExtractSummary,
+    breaker: int,
+    now: Callable[[], datetime],
+    gate: threading.RLock | None,
 ) -> tuple[str, int] | None:
     store = journal.store
     markdown = session.do(lambda c: extraction.markdown_for(c, dh, NORMALIZER_VERSION))
@@ -523,7 +615,10 @@ def _extract_doc(
             # atomically at the caller's ~line 375.
             session.do(lambda c: c.commit())
             try:
-                result = engine.complete(prompt, schema, model)
+                def _call(p: str = prompt, m: str = model) -> EngineResult:
+                    return engine.complete(p, schema, m)
+
+                result = _ungated(gate, _call)
             except EngineThrottled as exc:
                 archive_attempt(requested_model=model, observed_model=None,
                                 outcome="throttled", raw_response=None,
@@ -657,7 +752,7 @@ def _extract_doc(
             if audit or reprompted:
                 verdict = _take_samples(
                     settings, session, engine, model, markdown, schema,
-                    summary, archive_attempt, now, dh,
+                    summary, archive_attempt, now, dh, gate,
                 )
                 if verdict is not None:
                     return verdict, breaker
@@ -677,6 +772,7 @@ def _take_samples(
     archive_attempt: Callable[..., Attempt],
     now: Callable[[], datetime],
     dh: str,
+    gate: threading.RLock | None = None,
 ) -> str | None:
     """Slots 2 and 3: one fresh single-shot generation each, archived whatever
     the outcome. A transport failure leaves that slot without a record — the
@@ -687,7 +783,10 @@ def _take_samples(
         prompt = render(markdown, [])
         session.do(lambda c: c.commit())  # transaction-idle while the model runs
         try:
-            result = engine.complete(prompt, schema, model)
+            def _call(p: str = prompt, m: str = model) -> EngineResult:
+                return engine.complete(p, schema, m)
+
+            result = _ungated(gate, _call)
         except EngineThrottled as exc:
             archive_attempt(requested_model=model, observed_model=None,
                             outcome="throttled", raw_response=None, fed=[],
