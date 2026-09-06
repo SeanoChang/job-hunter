@@ -17,13 +17,60 @@ Pure: no I/O, no LLM, no store imports.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 JACCARD_MIN = 0.5
 F1_MIN = 0.80
 IMPORTANCE_MIN = 0.90
+
+
+def cohort_hook(
+    records_of: Callable[[Any], Mapping[str, Any] | None],
+) -> Callable[[list[Any], int], tuple[bool, str, dict[str, Any]]]:
+    """The one agreement gate every fold shares (architecture review P0-1/P0-2:
+    live settlement and rebuild replay must derive identically, and an
+    incomplete cohort must never certify).
+
+    `records_of` resolves an ok attempt to its record — the archived object on
+    the live path, the in-memory re-judged record on replay. One record per
+    slot (the slot's first ok wins); fewer than two resolvable records means
+    the audit never completed, which is itself a failure (`sample_failed`), as
+    is any attempted slot beyond the resolvable ones.
+    """
+
+    def hook(ok_attempts: list[Any], slots_attempted: int) -> tuple[bool, str, dict[str, Any]]:
+        by_slot: dict[int, Any] = {}
+        for a in ok_attempts:
+            by_slot.setdefault(a.sample_slot, a)
+        slot_order = sorted(by_slot)
+        resolved = [
+            (s, rec) for s in slot_order if (rec := records_of(by_slot[s])) is not None
+        ]
+        if len(resolved) < 2:
+            medoid_key = by_slot[slot_order[0]].attempt_key
+            report: dict[str, Any] = {
+                "k": slots_attempted,
+                "mean_f1": None,
+                "pair_f1": {},
+                "required_importance_agreement": None,
+                "negation_disagreements": 0,
+                "thresholds": {"jaccard": JACCARD_MIN, "f1": F1_MIN,
+                               "importance": IMPORTANCE_MIN},
+                "failures": ["sample_failed"],
+                "medoid": 0,
+            }
+            return (False, medoid_key, report)
+        result = agree([rec for _, rec in resolved])
+        report = dict(result.report)
+        report["k"] = slots_attempted
+        if slots_attempted > len(resolved):
+            report["failures"] = [*report["failures"], "sample_failed"]
+        medoid_slot = resolved[result.medoid][0]
+        return (not report["failures"], by_slot[medoid_slot].attempt_key, report)
+
+    return hook
 
 
 @dataclass(frozen=True, slots=True)

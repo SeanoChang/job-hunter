@@ -35,7 +35,7 @@ from jobhunter.archive import keys
 from jobhunter.archive.base import ArchiveStore
 from jobhunter.config import Settings
 from jobhunter.l2 import verify
-from jobhunter.l2.agreement import agree
+from jobhunter.l2.agreement import cohort_hook
 from jobhunter.l2.assemble import AssembleError, assemble
 from jobhunter.l2.attempts import Attempt, derived_error_detail, from_bytes, to_bytes
 from jobhunter.l2.engines import (
@@ -262,28 +262,14 @@ def settle(
         validator_version=validator_version,
     )
 
-    def agreement_of(
-        ok_attempts: list[Attempt], slots_attempted: int
-    ) -> tuple[bool, str, dict[str, Any]]:
-        # One ok record per slot (the slot's LAST ok wins, matching the fold's
-        # first-ok-validates within a slot being superseded by nothing); the
-        # archived attempt object carries the record the DB row does not.
-        by_slot: dict[int, Attempt] = {}
-        for a in ok_attempts:
-            by_slot.setdefault(a.sample_slot, a)
-        slot_order = sorted(by_slot)
-        loaded = [from_bytes(store.get(by_slot[s].attempt_key)) for s in slot_order]
-        profiles = [_profile_of(a.record) for a in loaded if a.record is not None]
-        result = agree(profiles)
-        report = dict(result.report)
-        if slots_attempted > len(profiles):
-            # a chosen sample produced no valid record: that IS a disagreement
-            # about a document the audit selected — escalate, never validate
-            report["failures"] = [*report["failures"], "sample_failed"]
-        medoid_key = by_slot[slot_order[result.medoid]].attempt_key
-        return (not report["failures"], medoid_key, report)
+    # The ONE gate every fold shares (review P0-1): live settlement loads each
+    # ok sample's record from its archived attempt object; rebuild passes the
+    # same hook over its in-memory re-judged records.
+    def _archived_record(a: Attempt) -> dict[str, Any] | None:
+        loaded = from_bytes(store.get(a.attempt_key))
+        return _profile_of(loaded.record) if loaded.record is not None else None
 
-    state = derive_state(attempts, reviews, globs, agreement_of)
+    state = derive_state(attempts, reviews, globs, cohort_hook(_archived_record))
     chosen = {a.attempt_key: a for a in attempts}.get(state.chosen_attempt or "")
     model_col = (
         (chosen.observed_model if chosen else None)

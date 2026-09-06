@@ -85,50 +85,64 @@ def derive_state(
     agreement: dict[str, Any] | None = None
     ok_in_glob: list[Attempt] = []
     slots_attempted: set[int] = set()
+    ruled = False  # a review verdict has spoken; later samples never override it
     for _, _, _, event in sorted(events, key=lambda e: (e[0], e[1], e[2])):
         if isinstance(event, Attempt):
             slots_attempted.add(event.sample_slot)
-            if event.outcome == "ok":
-                in_glob = model_matches(event.observed_model, accepted_globs)
+            in_glob = event.outcome == "ok" and model_matches(
+                event.observed_model, accepted_globs
+            )
+            if in_glob:
+                ok_in_glob.append(event)
                 # only PENDING work validates: needs_review/rejected/quarantined
                 # can be cleared solely by a human retry (human-only promotion)
-                if in_glob:
-                    ok_in_glob.append(event)
-                if in_glob and status is None:
+                if status is None and not ruled:
                     status, chosen = "validated", event.attempt_key
-                # k-sampling (spec §4.5): once ok records span more than one
-                # slot, the agreement gate re-settles the verdict at THIS point
-                # in the event order — a later human accept still lands on the
-                # needs_review it produces, live and on replay alike.
-                if (
-                    in_glob
-                    and agreement_of is not None
-                    and status in ("validated", "needs_review")
-                    and len({a.sample_slot for a in ok_in_glob}) >= 2
-                ):
-                    passed, medoid_key, report = agreement_of(
-                        ok_in_glob, len(slots_attempted)
-                    )
-                    status = "validated" if passed else "needs_review"
-                    chosen = medoid_key
-                    agreement = report
-            elif event.outcome == "over_budget":
+            # k-sampling (spec §4.5, hardened per the 2026-09-06 review P0-2):
+            # once a second slot EXISTS — whatever its outcome — the cohort is
+            # open and the gate re-settles the verdict on every attempt, at
+            # THIS point in the event order. A failed or missing sample is a
+            # disagreement (`sample_failed` from the hook), so an incomplete
+            # audit can never certify; a review ruling (`ruled`) is final
+            # against later automated samples.
+            if (
+                agreement_of is not None
+                and not ruled
+                and ok_in_glob
+                and len(slots_attempted) >= 2
+                and status in ("validated", "needs_review")
+            ):
+                passed, medoid_key, report = agreement_of(
+                    ok_in_glob, len(slots_attempted)
+                )
+                status = "validated" if passed else "needs_review"
+                chosen = medoid_key
+                agreement = report
+            if event.outcome == "over_budget":
                 if status is None:
                     status = "quarantined"
-            elif event.outcome in ("schema_invalid", "attribution_failed"):
-                if status is None and event.attempt_no >= 3 and event.ladder_exhausted:
-                    status = "quarantined"
+            elif (event.outcome in ("schema_invalid", "attribution_failed")
+                  and status is None and event.attempt_no >= 3 and event.ladder_exhausted):
+                status = "quarantined"
             # transport / throttled / model_rejected / engine_fatal say nothing
             # about the document, so they never settle anything
         else:
             if event.verb == "retry":
-                status, chosen = None, None
+                # a retry starts a FRESH cohort (review P0-2): old slot
+                # successes and their agreement never carry into the re-run
+                status, chosen, agreement = None, None, None
+                ok_in_glob.clear()
+                slots_attempted.clear()
+                ruled = False
             elif event.verb == "reject" and status is not None:
                 status = "rejected"
+                ruled = True
             elif event.verb in ("flag", "refute") and status == "validated":
                 status = "needs_review"
+                ruled = True
             elif event.verb == "accept" and status == "needs_review":
                 status = "validated"
+                ruled = True
             # accept from quarantined/pending, flag on pending: ignored
 
     # chosen_attempt is provenance and survives rejection (the row's identity
