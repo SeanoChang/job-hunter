@@ -174,17 +174,29 @@ def document_view(conn: Conn, document_hash: str, *, slice_: str | None = None) 
 
 
 def profile_row(conn: Conn, document_hash: str) -> dict[str, Any] | None:
-    """The row a profile is reported from: validated first, else the newest
-    state, so a quarantined document can explain itself instead of looking
-    absent."""
+    """The row a profile is reported from: the engine tuple in force first —
+    a retired prompt's "validated" never outranks the current engine's verdict
+    — then validated over the newest state, so a quarantined document can
+    explain itself instead of looking absent. A row only a retired tuple left
+    behind still surfaces, with `current_tuple` false so the payload can label
+    it historical."""
+    from jobhunter.l2.prompt import PROMPT_VERSION
+    from jobhunter.l2.runner import SCHEMA_VERSION
+    from jobhunter.l2.transforms import VALIDATOR_VERSION
+
+    tup = (PROMPT_VERSION, SCHEMA_VERSION, VALIDATOR_VERSION)
     return conn.execute(
-        "SELECT e.status, e.model, e.prompt_version, e.profile, e.updated_at,"
-        " v.title, v.company, v.url FROM extractions e"
+        "SELECT e.status, e.model, e.prompt_version, e.validator_version, e.profile,"
+        " e.updated_at, v.title, v.company, v.url,"
+        " (e.prompt_version, e.schema_version, e.validator_version) = (%s, %s, %s)"
+        "   AS current_tuple"
+        " FROM extractions e"
         " LEFT JOIN documents d ON d.document_hash = e.document_hash"
         " LEFT JOIN posting_versions v ON v.version_hash = d.version_hash"
         " WHERE e.document_hash = %s"
-        " ORDER BY (e.status = 'validated') DESC, e.updated_at DESC LIMIT 1",
-        (document_hash,),
+        " ORDER BY ((e.prompt_version, e.schema_version, e.validator_version) = (%s, %s, %s))"
+        " DESC, (e.status = 'validated') DESC, e.updated_at DESC LIMIT 1",
+        (*tup, document_hash, *tup),
     ).fetchone()
 
 
@@ -196,7 +208,10 @@ def profile_payload(
     profile = row["profile"]
     return {
         "document_hash": document_hash, "status": row["status"], "model": row["model"],
-        "prompt_version": row["prompt_version"], "updated_at": iso(row["updated_at"]),
+        "prompt_version": row["prompt_version"],
+        "validator_version": row["validator_version"],
+        "historical": not row["current_tuple"],
+        "updated_at": iso(row["updated_at"]),
         "title": row["title"], "company": row["company"], "url": row["url"],
         "profile": profile if full else profile_summary(profile),
     }

@@ -135,6 +135,57 @@ def test_profile_view_matches_summary_and_full(
     assert views.profile_row(pg, dh) is not None
 
 
+def test_profile_row_pins_the_current_engine_tuple(
+    corpus: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    from jobhunter.l2.prompt import PROMPT_VERSION
+    from jobhunter.l2.runner import SCHEMA_VERSION
+    from jobhunter.l2.state import DerivedState
+    from jobhunter.l2.transforms import VALIDATOR_VERSION
+    from jobhunter.store import extraction
+
+    # the current engine quarantined the doc; a retired prompt left a newer
+    # "validated" row — the current verdict must win, not the stale profile
+    dh = _doc_hash()
+    extraction.upsert_state(
+        pg, document_hash=dh, model="z-ai/glm-5.2:free", prompt_version=PROMPT_VERSION,
+        schema_version=SCHEMA_VERSION, validator_version=VALIDATOR_VERSION,
+        state=DerivedState("quarantined", None), profile=None,
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    extraction.upsert_state(
+        pg, document_hash=dh, model="z-ai/glm-5.2:free", prompt_version="demand-profile/v0",
+        schema_version=SCHEMA_VERSION, validator_version=VALIDATOR_VERSION,
+        state=DerivedState("validated", None), profile={"facts": {}, "demand_profile": []},
+        updated_at="2026-08-30T00:00:00Z",
+    )
+    pg.commit()
+    row = views.profile_row(pg, dh)
+    assert row is not None
+    assert row["prompt_version"] == PROMPT_VERSION and row["status"] == "quarantined"
+    assert views.profile_view(pg, dh) is None  # the stale profile is not served
+
+    # a doc only ever extracted under a retired tuple still explains itself — labeled
+    old = "e" * 64
+    extraction.upsert_state(
+        pg, document_hash=old, model="z-ai/glm-5.2:free", prompt_version="demand-profile/v0",
+        schema_version=SCHEMA_VERSION, validator_version=VALIDATOR_VERSION,
+        state=DerivedState("validated", None), profile={"facts": {}, "demand_profile": []},
+        updated_at="2026-08-30T00:00:00Z",
+    )
+    pg.commit()
+    hist = views.profile_row(pg, old)
+    assert hist is not None
+    assert views.profile_payload(old, hist)["historical"] is True
+
+    # and a current-tuple row is not so labeled
+    fresh = "f" * 64
+    _seed_profile(pg, fresh)
+    current = views.profile_row(pg, fresh)
+    assert current is not None
+    assert views.profile_payload(fresh, current)["historical"] is False
+
+
 def test_claims_view_is_what_q_claims_emits(
     corpus: Path, pg: psycopg.Connection[dict[str, Any]]
 ) -> None:
