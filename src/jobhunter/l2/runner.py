@@ -34,6 +34,7 @@ from jobhunter.archive import keys
 from jobhunter.archive.base import ArchiveStore
 from jobhunter.config import Settings
 from jobhunter.l2 import verify
+from jobhunter.l2.agreement import agree
 from jobhunter.l2.assemble import AssembleError, assemble
 from jobhunter.l2.attempts import Attempt, derived_error_detail, from_bytes, to_bytes
 from jobhunter.l2.engines import (
@@ -258,7 +259,29 @@ def settle(
         conn, dh, prompt_version=prompt_version, schema_version=schema_version,
         validator_version=validator_version,
     )
-    state = derive_state(attempts, reviews, globs)
+
+    def agreement_of(
+        ok_attempts: list[Attempt], slots_attempted: int
+    ) -> tuple[bool, str, dict[str, Any]]:
+        # One ok record per slot (the slot's LAST ok wins, matching the fold's
+        # first-ok-validates within a slot being superseded by nothing); the
+        # archived attempt object carries the record the DB row does not.
+        by_slot: dict[int, Attempt] = {}
+        for a in ok_attempts:
+            by_slot.setdefault(a.sample_slot, a)
+        slot_order = sorted(by_slot)
+        loaded = [from_bytes(store.get(by_slot[s].attempt_key)) for s in slot_order]
+        profiles = [_profile_of(a.record) for a in loaded if a.record is not None]
+        result = agree(profiles)
+        report = dict(result.report)
+        if slots_attempted > len(profiles):
+            # a chosen sample produced no valid record: that IS a disagreement
+            # about a document the audit selected — escalate, never validate
+            report["failures"] = [*report["failures"], "sample_failed"]
+        medoid_key = by_slot[slot_order[result.medoid]].attempt_key
+        return (not report["failures"], medoid_key, report)
+
+    state = derive_state(attempts, reviews, globs, agreement_of)
     chosen = {a.attempt_key: a for a in attempts}.get(state.chosen_attempt or "")
     model_col = (
         (chosen.observed_model if chosen else None)
@@ -276,7 +299,7 @@ def settle(
     extraction.upsert_state(
         conn, document_hash=dh, model=model_col, prompt_version=prompt_version,
         schema_version=schema_version, validator_version=validator_version,
-        state=state, profile=profile,
+        state=state, profile=profile, k=state.k, agreement=state.agreement,
         reviewed_by=reviews[-1].actor if reviews else None,
         updated_at=updated_at,
     )
@@ -435,7 +458,7 @@ def _extract_doc(
         ladder_exhausted: bool, findings: list[dict[str, Any]] | None = None,
         tokens: tuple[int | None, int | None] = (None, None),
         cost: float | None = None, started_at: datetime | None = None,
-        record: dict[str, Any] | None = None,
+        record: dict[str, Any] | None = None, sample_slot: int = 1,
     ) -> Attempt:
         # `fed` reproduces the rendered prompt (spec §4.2: prior_errors is the
         # non-reconstructible part of the request); `produced` is what this
@@ -445,9 +468,9 @@ def _extract_doc(
         t0 = started_at or now()
         validation = list(findings or []) + [{"error": e} for e in produced]
         attempt = Attempt(
-            attempt_key=keys.x_attempt_key(t0, dh, 1, seq),
+            attempt_key=keys.x_attempt_key(t0, dh, sample_slot, seq),
             run_id=summary.run_id, cli_version=__version__, document_hash=dh,
-            normalizer_version=NORMALIZER_VERSION, sample_slot=1, attempt_no=seq,
+            normalizer_version=NORMALIZER_VERSION, sample_slot=sample_slot, attempt_no=seq,
             requested_engine=engine.name, requested_model=requested_model,
             observed_model=observed_model, prompt_version=PROMPT_VERSION,
             prompt_sha256=prompt_sha(), schema_version=SCHEMA_VERSION,
@@ -623,6 +646,111 @@ def _extract_doc(
                             findings=findings, ladder_exhausted=False, started_at=t0,
                             tokens=(result.input_tokens, result.output_tokens),
                             cost=result.cost_usd, record=record)
+            # k-sampling (spec §4.5): 5% deterministic audit by hash slot, plus
+            # any document whose slot-1 pass needed a reprompt — the cheapest
+            # predictor of a hard document. Samples are single-shot generations
+            # under their own slots; the agreement gate settles the verdict.
+            audit = settings.l2_audit_mod <= 1 or (
+                int(dh[:8], 16) % settings.l2_audit_mod == 0
+            )
+            reprompted = bool(prior_errors) or content_no > 1
+            if audit or reprompted:
+                verdict = _take_samples(
+                    settings, session, engine, model, markdown, schema,
+                    summary, archive_attempt, now, dh,
+                )
+                if verdict is not None:
+                    return verdict, breaker
             return settle_and_disposition()
 
     return settle_and_disposition()
+
+
+def _take_samples(
+    settings: Settings,
+    session: _Session,
+    engine: Engine,
+    model: str,
+    markdown: str,
+    schema: dict[str, Any],
+    summary: ExtractSummary,
+    archive_attempt: Callable[..., Attempt],
+    now: Callable[[], datetime],
+    dh: str,
+) -> str | None:
+    """Slots 2 and 3: one fresh single-shot generation each, archived whatever
+    the outcome. A transport failure leaves that slot without a record — the
+    agreement hook reads that as sample_failed. Returns "throttled" to abort
+    the batch, else None (the caller settles)."""
+    for slot in (2, 3):
+        t0 = now()
+        prompt = render(markdown, [])
+        session.do(lambda c: c.commit())  # transaction-idle while the model runs
+        try:
+            result = engine.complete(prompt, schema, model)
+        except EngineThrottled as exc:
+            archive_attempt(requested_model=model, observed_model=None,
+                            outcome="throttled", raw_response=None, fed=[],
+                            produced=[str(exc)], ladder_exhausted=False,
+                            started_at=t0, sample_slot=slot)
+            return "throttled"
+        except EngineTransportError as exc:
+            archive_attempt(requested_model=model, observed_model=None,
+                            outcome="transport", raw_response=None, fed=[],
+                            produced=[str(exc)], ladder_exhausted=False,
+                            started_at=t0, sample_slot=slot)
+            continue
+        except (EngineModelNotFound, EngineFatalError) as exc:
+            archive_attempt(requested_model=model, observed_model=None,
+                            outcome="engine_fatal", raw_response=None, fed=[],
+                            produced=[str(exc)], ladder_exhausted=False,
+                            started_at=t0, sample_slot=slot)
+            continue
+        summary.spend_usd += result.cost_usd or 0.0
+        observed = result.observed_model
+        common: dict[str, Any] = {
+            "requested_model": model, "observed_model": observed,
+            "raw_response": result.raw_text, "fed": [], "ladder_exhausted": False,
+            "started_at": t0, "sample_slot": slot,
+            "tokens": (result.input_tokens, result.output_tokens),
+            "cost": result.cost_usd,
+        }
+        if not model_matches(observed, settings.l2_models):
+            archive_attempt(outcome="model_rejected",
+                            produced=[f"observed model {observed!r} outside globs"],
+                            **common)
+            continue
+        assert observed is not None  # model_matches guarantees it
+        try:
+            emit = json.loads(result.raw_text)
+            if not isinstance(emit, dict):
+                raise ValueError("top level is not an object")
+        except ValueError as exc:
+            archive_attempt(outcome="schema_invalid",
+                            produced=[f"response is not valid JSON: {exc}"], **common)
+            continue
+        if schema_errors := validate_emit(emit, SCHEMA_VERSION):
+            archive_attempt(outcome="schema_invalid", produced=schema_errors, **common)
+            continue
+        try:
+            record = assemble(emit, markdown, document_hash=dh,
+                              normalizer_version=NORMALIZER_VERSION,
+                              observed_model=observed, at=iso(t0))
+        except AssembleError as exc:
+            archive_attempt(outcome="attribution_failed", produced=exc.errors, **common)
+            continue
+        report = verify(record, markdown)
+        findings = [
+            {"check": f.check, "path": f.path, "code": f.code,
+             "severity": f.severity, "detail": f.detail}
+            for f in report.findings
+        ]
+        if report.status == "fail":
+            errors = [f"{f.check}:{f.code} at {f.path}"
+                      for f in report.findings if f.severity == "error"]
+            archive_attempt(outcome="attribution_failed", produced=errors,
+                            findings=findings, **common)
+            continue
+        archive_attempt(outcome="ok", produced=[], findings=findings,
+                        record=record, **common)
+    return None

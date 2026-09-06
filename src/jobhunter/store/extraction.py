@@ -88,6 +88,7 @@ def upsert_state(
     profile: dict[str, Any] | None,
     flags: dict[str, Any] | None = None,
     k: int = 1,
+    agreement: dict[str, Any] | None = None,
     reviewed_by: str | None = None,
     updated_at: str,
 ) -> None:
@@ -135,13 +136,15 @@ def upsert_state(
         DO UPDATE SET status = EXCLUDED.status,
                       chosen_attempt = EXCLUDED.chosen_attempt,
                       k = EXCLUDED.k,
+                      agreement = EXCLUDED.agreement,
                       profile = EXCLUDED.profile,
                       flags = EXCLUDED.flags,
                       reviewed_by = EXCLUDED.reviewed_by,
                       updated_at = EXCLUDED.updated_at
         """,
         (
-            *key, state.status, state.chosen_attempt, k, None,
+            *key, state.status, state.chosen_attempt, k,
+            Jsonb(agreement) if agreement else None,
             Jsonb(profile) if profile else None, Jsonb(flags) if flags else None,
             reviewed_by, updated_at,
         ),
