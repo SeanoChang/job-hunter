@@ -187,6 +187,17 @@ def test_normalize_detail_real_fixture(board: Board) -> None:
     assert org_idx < ext_idx < corp_idx
 
 
+def test_normalize_detail_stub_board_without_extra_degrades_url_to_none() -> None:
+    # Ingest replay falls back to a Board with no extra when the registry
+    # snapshot is unavailable (lifecycle._board); normalization must degrade
+    # like company does, never raise. Regression: 2026-09-06 sync outage.
+    stub = Board(company="jpmc", source="oraclehcm", board="jpmc")
+    row = ListRow(uid="210642927")
+    pv = OracleHCM().normalize_detail(_fixture("oraclehcm_detail.json"), row, stub)
+    assert pv.url is None
+    assert pv.title == "Lead Software Engineering - Automation"
+
+
 def test_normalize_detail_missing_title_raises(board: Board) -> None:
     row = ListRow(uid="210642927")
     body = json.dumps({"items": [{"ExternalDescriptionStr": "<p>x</p>"}]}).encode()
