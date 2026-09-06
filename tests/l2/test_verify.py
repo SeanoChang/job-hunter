@@ -282,3 +282,34 @@ def test_nonnull_level_requires_evidence() -> None:
     claim["level_evidence"] = "preferred"  # grounded in the claim quote
     report2 = verify(rec, DOC_MD)
     assert codes(report2, "evidence_substrings") == []
+
+
+def test_possible_omission_warns_on_stated_but_unextracted_facts() -> None:
+    """Pitfall 3 (2026-09-06): completeness was unmeasured — a profile with
+    null facts over a document that plainly states them passed silently. The
+    check is a warning, never an error: the signal may be a false one (equity
+    figures, company-age years), so it measures before it gates."""
+    from jobhunter.hashing import sha256_hex
+
+    doc = DOC_MD + (
+        "\n\nSalary: $120,000 - $150,000 per year.\n\n"
+        "Application deadline: March 3, 2027."
+    )
+    rec = minimal_record()
+    rec["document"]["document_hash"] = sha256_hex(doc.encode("utf-8"))
+    rec["facts"]["experience_months"] = None  # "0-2 YOE" is in the document
+    report = verify(rec, doc)
+    assert report.status == "pass"  # warnings never fail a record
+    warned = [f.path for f in report.findings if f.code == "possible_omission"]
+    assert warned == [
+        "facts.compensation", "facts.deadline", "facts.experience_months",
+    ]
+    assert report.metrics["possible_omissions"] == 3
+
+
+def test_possible_omission_silent_when_extracted_or_absent() -> None:
+    # the canonical fixture extracts its experience fact and states no money
+    # or deadline — a fact extracted, or genuinely absent, warns nothing
+    report = verify(minimal_record(), DOC_MD)
+    assert [f for f in report.findings if f.check == "completeness"] == []
+    assert report.metrics["possible_omissions"] == 0
