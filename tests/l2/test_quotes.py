@@ -109,3 +109,25 @@ def test_describe_not_found_is_actionable_and_clipped() -> None:
     assert "then you wrote" in msg and "where the document continues" in msg
     long = describe_not_found(MIXED, "q" * 500)
     assert "q" * 80 in long and "q" * 81 not in long  # quote text clipped
+
+
+# --- invented list markers (step-2 review, 2026-09-06) ----------------------
+# Prompt v5's context example showed a quote beginning "- ", and the model
+# generalized: it prepends list markers to quotes from PROSE documents (391
+# failures in one 500-doc step, concentrated on Salesforce/Unity/Visa whose
+# postings are paragraphs, not bullets). The feedback must name the actual
+# mistake so the retry can fix it, instead of the baffling "you wrote 'D'".
+
+
+def test_describe_not_found_names_an_invented_list_marker() -> None:
+    md = "Company culture. Develop working relationships grounded in trust. More text."
+    msg = describe_not_found(md, "- Develop working relationships grounded in trust.")
+    assert "list marker" in msg
+    assert "the document has no bullet here" in msg
+
+
+def test_describe_not_found_stays_specific_when_the_marker_is_real() -> None:
+    md = "Duties:\n- Develop working relationships grounded in trust.\n- Ship."
+    # the marker IS in the document; a wrong quote elsewhere keeps old feedback
+    msg = describe_not_found(md, "- Develop working relationships grounded in rust.")
+    assert "list marker" not in msg

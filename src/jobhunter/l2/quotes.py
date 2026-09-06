@@ -82,8 +82,22 @@ def divergence(md: str, text: str, context: int = 24) -> Divergence:
     )
 
 
+_LIST_MARKERS = ("- ", "* ", "+ ")
+
+
 def describe_not_found(md: str, text: str, clip: int = 80) -> str:
     """The reprompt-facing explanation of a failed quote."""
+    # The model invents list markers on quotes from prose (step-2 review,
+    # 2026-09-06: 391 failures whose quotes matched exactly once the "- " was
+    # dropped). Name that mistake precisely — generic divergence feedback
+    # ("you wrote 'D'") burned whole retry ladders without ever fixing it.
+    for marker in _LIST_MARKERS:
+        if text.startswith(marker) and text[len(marker):] in md:
+            return (
+                f"quote not found: {text[:clip]!r} — you added the list marker "
+                f"{marker.strip()!r} but the document has no bullet here; quote the "
+                "sentence exactly as the document writes it, without the marker"
+            )
     d = divergence(md, text)
     msg = f"quote not found: {text[:clip]!r} — matches the document for {d.prefix} codepoints"
     if d.emitted is not None:
