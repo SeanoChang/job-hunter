@@ -573,3 +573,11 @@ board   = "nvidia"
 host    = "wd5"
 site    = "NVIDIAExternalCareerSite"
 country = "US"
+
+[[boards]]
+company = "JPMorgan Chase"
+source  = "oraclehcm"
+board   = "jpmc"
+base    = "https://jpmc.fa.oraclecloud.com"
+site    = "CX_1001"
+country = "US"
