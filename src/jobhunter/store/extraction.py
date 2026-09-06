@@ -6,6 +6,7 @@ surface is recomputable by replay."""
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -74,6 +75,29 @@ def record_review(
         ),
     )
     return cur.rowcount == 1
+
+
+# Compounds that read as one skill, never split ("CI/CD" is not CI and CD).
+_WHOLE_MENTIONS = frozenset({"ci/cd", "tcp/ip", "i/o", "ui/ux", "a/b", "pl/sql"})
+_TRAILING_PARENTHETICAL = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def split_mention(raw: str) -> list[str]:
+    """One emitted mention → its canonical mention(s). Models decorate freely
+    ("Python (pandas, PySpark)", "Python/C/C++", "Kubernetes and/or Docker"),
+    which fragments the aggregate; the profile keeps the verbatim quote, the
+    aggregate carries what the corpus can be queried by. A slash splits only
+    when every segment stands alone — no spaces ("A/B testing"), no bare
+    digits ("HTTP/2"), and the whole is not a known one-skill compound."""
+    text = _TRAILING_PARENTHETICAL.sub("", " ".join(raw.split())).strip(" .,;:")
+    if not text:
+        return []
+    if text.casefold() in _WHOLE_MENTIONS:
+        return [text]
+    parts = [p.strip() for p in text.replace(" and/or ", "/").split("/")]
+    if len(parts) == 1 or any(not p or p.isdigit() or " " in p for p in parts):
+        return [text]
+    return parts
 
 
 def upsert_state(
@@ -159,11 +183,13 @@ def upsert_state(
     )
     if profile is None or state.status != "validated":
         return
-    rows = [
-        (*key, mention, area["kind"], area["importance"])
-        for area in ((profile.get("demand_profile") or {}).get("areas") or [])
-        for mention in dict.fromkeys(area.get("mentions") or [])
-    ]
+    rows: list[tuple[Any, ...]] = []
+    for area in (profile.get("demand_profile") or {}).get("areas") or []:
+        seen: dict[str, str] = {}  # casefold → first spelling, one row per skill
+        for raw in area.get("mentions") or []:
+            for mention in split_mention(raw):
+                seen.setdefault(mention.casefold(), mention)
+        rows += [(*key, m, area["kind"], area["importance"]) for m in seen.values()]
     if rows:
         with conn.cursor() as cur:
             cur.executemany(
