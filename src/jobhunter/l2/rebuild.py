@@ -119,7 +119,7 @@ def rebuild_extractions(
         "TRUNCATE extraction_attempts, extraction_reviews, extractions, profile_mentions"
     )
     attempts_by_group: dict[tuple[str, str, str], list[Attempt]] = {}
-    reviews_by_group: dict[tuple[str, str, str], list[Review]] = {}
+    reviews_by_group: dict[tuple[str, str, str], list[tuple[str, Review]]] = {}
     n_attempts = n_reviews = 0
     for key in store.list(keys.X_ATTEMPTS_PREFIX):
         if keys.parse_x_attempt_key(key) is None:
