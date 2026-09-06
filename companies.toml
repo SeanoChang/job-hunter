@@ -581,3 +581,43 @@ board   = "jpmc"
 base    = "https://jpmc.fa.oraclecloud.com"
 site    = "CX_1001"
 country = "US"
+
+[[boards]]
+company = "Oracle"
+source  = "oraclehcm"
+board   = "oracle"
+base    = "https://eeho.fa.us2.oraclecloud.com"
+site    = "CX_1"
+country = "US"
+
+[[boards]]
+company = "Texas Instruments"
+source  = "oraclehcm"
+board   = "ti"
+base    = "https://edbz.fa.us2.oraclecloud.com"
+site    = "CX_1"
+country = "US"
+
+[[boards]]
+company = "Uber"
+source  = "oraclehcm"
+board   = "uber"
+base    = "https://iaziqy.fa.ocs.oraclecloud.com"
+site    = "UberCareers"
+country = "US"
+
+[[boards]]
+company = "American Express"
+source  = "oraclehcm"
+board   = "amex"
+base    = "https://egug.fa.us2.oraclecloud.com"
+site    = "CX_1"
+country = "US"
+
+[[boards]]
+company = "Akamai"
+source  = "oraclehcm"
+board   = "akamai"
+base    = "https://fa-extu-saasfaprod1.fa.ocs.oraclecloud.com"
+site    = "CX_1"
+country = "US"
