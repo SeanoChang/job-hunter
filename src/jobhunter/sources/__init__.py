@@ -1,6 +1,7 @@
 from jobhunter.sources.amazonjobs import AmazonJobs
 from jobhunter.sources.ashby import Ashby
 from jobhunter.sources.base import Source, TwoPhaseSource
+from jobhunter.sources.eightfold import Eightfold
 from jobhunter.sources.greenhouse import Greenhouse
 from jobhunter.sources.lever import Lever
 from jobhunter.sources.oraclehcm import OracleHCM
@@ -20,6 +21,7 @@ TWO_PHASE_SOURCES: dict[str, TwoPhaseSource] = {
     "oraclehcm": OracleHCM(),
     "amazonjobs": AmazonJobs(),
     "smartrecruiters": SmartRecruiters(),
+    "eightfold": Eightfold(),
 }
 
 

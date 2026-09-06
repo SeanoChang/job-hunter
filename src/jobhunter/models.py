@@ -19,6 +19,7 @@ SOURCE_PREFIX: dict[str, str] = {
     "oraclehcm": "oh",
     "amazonjobs": "az",
     "smartrecruiters": "sr",
+    "eightfold": "ef",
 }
 
 _EMPTY_EXTRA: MappingProxyType[str, str] = MappingProxyType({})
