@@ -83,6 +83,7 @@ class Settings:
     l2_model_candidates: tuple[str, ...] = ()
     l2_max_docs: int = 300
     l2_audit_mod: int = 20  # k=3 audit slot: hash mod == 0 (spec §4.5); <=1 audits every doc
+    l2_concurrency: int = 1  # parallel engine calls in the drain; DB stays single-writer
     l2_max_usd: float = 5.0
     l2_price: tuple[float, float] | None = None  # USD per 1M tokens (in, out)
     # merged verbatim into openai-compat request bodies (provider knobs like
@@ -190,6 +191,7 @@ class Settings:
         try:
             l2_max_docs = int(e.get("JOB_HUNTER_L2_MAX_DOCS", "300"))
             l2_audit_mod = int(e.get("JOB_HUNTER_L2_AUDIT_MOD", "20"))
+            l2_concurrency = int(e.get("JOB_HUNTER_L2_CONCURRENCY", "1"))
             l2_max_usd = float(e.get("JOB_HUNTER_L2_MAX_USD", "5.0"))
         except ValueError as ex:
             raise ConfigError(f"JOB_HUNTER_L2_MAX_DOCS / _MAX_USD must be numeric: {ex}") from ex
@@ -218,6 +220,7 @@ class Settings:
             l2_model_candidates=candidates,
             l2_max_docs=l2_max_docs,
             l2_audit_mod=l2_audit_mod,
+            l2_concurrency=max(1, l2_concurrency),
             l2_max_usd=l2_max_usd,
             l2_price=l2_price,
             l2_extra_body=l2_extra_body,

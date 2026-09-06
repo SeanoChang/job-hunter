@@ -984,3 +984,64 @@ def test_sampling_spend_counts_every_sample(pg: Conn, store: ArchiveStore) -> No
     summary = run(_settings(JOB_HUNTER_L2_AUDIT_MOD="1"), pg, store, engine=engine,
                   max_docs=10, max_usd=5.0)
     assert abs(summary.spend_usd - 1.5) < 1e-9
+
+
+# --- parallel engine calls (T-20260906-SVY4) --------------------------------
+# The extract lock allows one runner; each doc spends ~30s waiting on the
+# engine. Workers overlap ONLY the engine calls: a single gate serializes all
+# DB, journal, summary and breaker access, released strictly around
+# engine.complete, so the semantics stay those of the serial drain.
+
+
+class BarrierEngine:
+    """Blocks each complete() until `expected` calls are in flight at once —
+    proof the engine phase truly overlaps — then answers per document."""
+
+    name = "fake"
+
+    def __init__(self, expected: int) -> None:
+        import threading
+
+        self.barrier = threading.Barrier(expected, timeout=30)
+        self.calls: list[str] = []
+
+    def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
+        self.calls.append(model)
+        self.barrier.wait()  # raises BrokenBarrierError if overlap never happens
+        return GOOD
+
+
+def _seed_three(pg: Conn) -> list[str]:
+    hashes = []
+    for i in range(3):
+        md = DOC_MD + f"\n\n<!-- doc {i} -->"
+        dh = sha256_hex(md.encode("utf-8"))
+        _seed_doc(pg, dh=dh, markdown=md, uid=f"gh:x:{i + 10}")
+        hashes.append(dh)
+    return hashes
+
+
+def test_parallel_workers_overlap_engine_calls(pg: Conn, store: ArchiveStore) -> None:
+    _seed_three(pg)
+    engine = BarrierEngine(expected=3)
+    summary = run(
+        _settings(JOB_HUNTER_L2_CONCURRENCY="3", JOB_HUNTER_L2_AUDIT_MOD="999983"),
+        pg, store, engine=engine, max_docs=10, max_usd=5.0,
+    )
+    assert summary.validated == 3 and summary.docs_attempted == 3
+    rows = pg.execute("SELECT status, count(*) AS n FROM extractions GROUP BY status").fetchall()
+    assert rows and rows[0]["status"] == "validated" and rows[0]["n"] == 3
+
+
+def test_parallel_respects_the_docs_cap(pg: Conn, store: ArchiveStore) -> None:
+    _seed_three(pg)
+    engine = FakeEngine([GOOD, GOOD, GOOD])
+    summary = run(
+        _settings(JOB_HUNTER_L2_CONCURRENCY="3", JOB_HUNTER_L2_AUDIT_MOD="999983"),
+        pg, store, engine=engine, max_docs=2, max_usd=5.0,
+    )
+    assert summary.docs_attempted == 2 and summary.validated == 2
+
+
+def test_concurrency_default_is_serial() -> None:
+    assert _settings().l2_concurrency == 1
