@@ -14,7 +14,7 @@ import re
 from collections.abc import Callable
 from datetime import date
 
-VALIDATOR_VERSION = "5"
+VALIDATOR_VERSION = "6"
 
 _RANGE = re.compile(r"(\d+)\s*(?:-|–|—|to|and)\s*(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 _FLOOR = re.compile(
@@ -28,13 +28,15 @@ _EXACT = re.compile(r"(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 # the posting writes a code. Both sides of a range must use the same symbol.
 _SYMBOL_CURRENCY = {"£": "GBP", "€": "EUR"}
 # validator/4: decimal cents appear on Workday ("$169,100.00"); the cents are
-# matched and discarded — amounts stay whole units.
-_AMOUNT = r"(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{1,2})?\s*(k)?"
+# matched and discarded — amounts stay whole units. validator/6: European
+# dot-thousands ("71.000" is 71000; three digits after a dot are never cents).
+_AMOUNT = r"(\d{1,3}(?:,\d{3})+|\d{1,3}(?:\.\d{3})+|\d+)(?:\.\d{1,2})?\s*(k)?"
 # validator/4: an optional currency code may trail EACH amount even when a
 # symbol leads it ("$123,900 USD - $222,000 USD", step-1 review 2026-09-06).
+# validator/6: the second symbol may be omitted ("$179,500 - 269,300").
 _MONEY = re.compile(
-    r"([$£€¥])\s*" + _AMOUNT + r"(?:\s*[A-Z]{3})?\s*(?:-|–|—|to)\s*"
-    r"([$£€¥])\s*" + _AMOUNT,
+    r"([$£€¥])\s*" + _AMOUNT + r"(?:\s*[A-Z]{3})?\s*(?:--?|–|—|to)\s*"
+    r"([$£€¥]?)\s*" + _AMOUNT,
     re.IGNORECASE,
 )
 # validator/3: Workday postings write the code after the amount with no symbol
@@ -42,8 +44,14 @@ _MONEY = re.compile(
 # The trailing code names the currency; a leading one, when present, must match.
 _CODE = r"(USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|CNY|CHF|SEK|INR|TWD|KRW)"
 _MONEY_CODE = re.compile(
-    _AMOUNT + r"\s*" + _CODE + r"?\s*(?:-|–|—|to)\s*"
+    _AMOUNT + r"\s*" + _CODE + r"?\s*(?:--?|–|—|to)\s*"
     + _AMOUNT + r"\s+" + _CODE + r"\b",
+    re.IGNORECASE,
+)
+# validator/6: the code may LEAD each amount ("EUR 71.000 to EUR 95.000").
+_MONEY_CODE_LEAD = re.compile(
+    _CODE + r"\s*" + _AMOUNT + r"\s*(?:--?|–|—|to)\s*"
+    + _CODE + r"\s*" + _AMOUNT,
     re.IGNORECASE,
 )
 _HOURLY = re.compile(r"(?:/\s*(?:hr|hour)|per\s+hour)\b", re.IGNORECASE)
@@ -79,6 +87,8 @@ def parse_experience_months(text: str) -> dict[str, object] | None:
 
 
 def _amount(digits: str, k_suffix: str | None) -> int:
+    if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", digits):
+        digits = digits.replace(".", "")  # European thousands separator
     value = int(digits.replace(",", ""))
     return value * 1000 if k_suffix else value
 
@@ -87,10 +97,15 @@ def parse_compensation(text: str) -> dict[str, object] | None:
     currency: str | None
     if m := _MONEY.search(text):
         sym_lo, lo_digits, lo_k, sym_hi, hi_digits, hi_k = m.groups()
-        if sym_lo != sym_hi:
+        if sym_hi and sym_lo != sym_hi:
             return None  # "£100,000 - €120,000" is not a range
         code = _CURRENCY.search(text)
         currency = code.group(1).upper() if code else _SYMBOL_CURRENCY.get(sym_lo)
+    elif m := _MONEY_CODE_LEAD.search(text):
+        code_lo, lo_digits, lo_k, code_hi, hi_digits, hi_k = m.groups()
+        if code_lo.upper() != code_hi.upper():
+            return None
+        currency = code_hi.upper()
     elif m := _MONEY_CODE.search(text):
         lo_digits, lo_k, code_lo, hi_digits, hi_k, code_hi = m.groups()
         if code_lo and code_lo.upper() != code_hi.upper():

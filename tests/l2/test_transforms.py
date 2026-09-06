@@ -10,7 +10,7 @@ from jobhunter.l2.transforms import (
 
 
 def test_registry_shape() -> None:
-    assert VALIDATOR_VERSION == "5"
+    assert VALIDATOR_VERSION == "6"
     assert set(TRANSFORMS[VALIDATOR_VERSION]) == {
         "experience_months", "compensation", "deadline",
     }
@@ -150,7 +150,7 @@ def test_compensation_code_suffixed(text: str, expected: dict[str, object] | Non
 
 
 def test_validator_version_bumped_for_the_grammar_change() -> None:
-    assert VALIDATOR_VERSION == "5"
+    assert VALIDATOR_VERSION == "6"
 
 
 # --- Workday phrasing (validator/4) -----------------------------------------
@@ -199,3 +199,23 @@ def test_experience_or_more(text: str, expected: dict[str, object] | None) -> No
 )
 def test_deadline_numeric(text: str, expected: dict[str, object] | None) -> None:
     assert parse_deadline(text) == expected
+
+
+# --- validator/6: step-4 leftovers (2026-09-06) ------------------------------
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # double-hyphen separator (~64 hits in step 4)
+        ("$139,000 -- $257,000",
+         {"min": 139000, "max": 257000, "currency": None, "period": None}),
+        # symbol on the first amount only (step-2 tail)
+        ("$179,500 - 269,300",
+         {"min": 179500, "max": 269300, "currency": None, "period": None}),
+        # European decimal-thousands with a code (step-2 tail)
+        ("EUR 71.000 to EUR 95.000 annually",
+         {"min": 71000, "max": 95000, "currency": "EUR", "period": "year"}),
+    ],
+)
+def test_compensation_validator6(text: str, expected: dict[str, object] | None) -> None:
+    assert parse_compensation(text) == expected

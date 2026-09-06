@@ -43,7 +43,7 @@ def test_openai_compat_happy_path() -> None:
     assert seen["auth"] == "Bearer sk-test"
     body = seen["body"]
     assert body["model"] == "z-ai/glm-5.2:free"
-    assert body["max_tokens"] == 16384
+    assert body["max_tokens"] == 24576
     assert body["response_format"]["json_schema"]["strict"] is True
     # strict mode (the default) sends the strict-compatible variant
     from jobhunter.l2.schemas import strict_schema
