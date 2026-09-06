@@ -316,6 +316,15 @@ def _fetch_list(
             total = page.total
         offset += len(page.rows)
         if not page.rows or offset >= total:
+            # Coverage verdict (review P0-3): a walk that ended early, or one
+            # whose pages overlapped (distinct < declared), is NOT a snapshot —
+            # reconciling against it would close every posting it never
+            # reached. The declared total is upstream's moving figure, so a 5%
+            # shortfall is accepted as churn; more is a coverage failure.
+            if len(phase.rows) < 0.95 * total:
+                phase.error = (
+                    f"incomplete: listed {len(phase.rows)} distinct of {total} declared"
+                )
             return phase
     # Truncated coverage must never read as a complete snapshot.
     phase.error = (
