@@ -1,3 +1,4 @@
+from jobhunter.l2.agreement import cohort_hook
 from jobhunter.l2.state import DerivedState, Review, derive_state
 from tests.l2.test_attempts import _attempt
 
@@ -131,3 +132,68 @@ def test_later_ok_never_overrides_human_or_machine_settled_states() -> None:
                           observed_model=None)
     still_quarantined = derive_state([quarantine, later_ok], [], GLOBS)
     assert still_quarantined.status == "quarantined"  # only a human retry clears it
+
+
+# --- cohort integrity (architecture review 2026-09-06, P0-2) ----------------
+# A document the audit selected must not certify on an incomplete cohort: the
+# gate re-evaluates on EVERY attempt once a second slot exists, and a human
+# (or refuter) ruling is final against later automated samples.
+
+
+
+def _slot(slot: int, no: int, **over: object):
+    key = f"extractions/attempts/2026/08/27T06120{no}Z-abcdefabcdef-s{slot}a{no}.json.gz"
+    record = {"facts": {}, "demand_profile": {"areas": [{"id": "a", "claims": [
+        {"id": "c", "importance": "required", "negated": False,
+         "quote": {"span": [0, 50], "text": "x" * 50}}]}]}}
+    base: dict[str, object] = {
+        "attempt_key": key, "sample_slot": slot, "attempt_no": no,
+        "started_at": f"2026-08-27T06:12:0{no}Z", "record": record,
+    }
+    base.update(over)
+    return _attempt(**base)
+
+
+HOOK = cohort_hook(lambda a: a.record)
+
+
+def test_incomplete_cohort_never_certifies() -> None:
+    events = [
+        _slot(1, 1),
+        _slot(2, 2, outcome="schema_invalid", record=None),
+        _slot(3, 3, outcome="schema_invalid", record=None),
+    ]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert state.status == "needs_review"
+    assert state.k == 3
+    assert state.agreement and "sample_failed" in state.agreement["failures"]
+
+
+def test_complete_agreeing_cohort_validates() -> None:
+    events = [_slot(1, 1), _slot(2, 2), _slot(3, 3)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert state.status == "validated" and state.k == 3
+    assert state.agreement and state.agreement["failures"] == []
+
+
+def test_human_accept_is_final_against_later_samples() -> None:
+    events = [
+        _slot(1, 1),
+        _slot(2, 2, outcome="schema_invalid", record=None),  # gate demotes here
+    ]
+    reviews = [Review(verb="accept", at="2026-08-27T06:12:08Z", key="r1")]
+    late_sample = _slot(3, 9, started_at="2026-08-27T06:12:09Z")
+    state = derive_state([*events, late_sample], reviews, GLOBS, HOOK)
+    assert state.status == "validated"  # the human ruling stands
+
+
+def test_retry_starts_a_fresh_cohort() -> None:
+    events = [
+        _slot(1, 1),
+        _slot(2, 2, outcome="schema_invalid", record=None),
+    ]
+    reviews = [Review(verb="retry", at="2026-08-27T06:12:08Z", key="r1")]
+    fresh = _slot(1, 9, started_at="2026-08-27T06:12:09Z")
+    state = derive_state([*events, fresh], reviews, GLOBS, HOOK)
+    assert state.status == "validated"
+    assert state.agreement is None  # no stale cohort report survives the retry

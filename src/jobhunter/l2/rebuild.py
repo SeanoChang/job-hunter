@@ -17,6 +17,7 @@ from typing import Any
 from jobhunter.archive import keys
 from jobhunter.archive.base import ArchiveStore
 from jobhunter.l2 import verify
+from jobhunter.l2.agreement import cohort_hook
 from jobhunter.l2.assemble import AssembleError, assemble
 from jobhunter.l2.attempts import Attempt, derived_error_detail, from_bytes
 from jobhunter.l2.prompt import PROMPT_VERSION
@@ -79,7 +80,15 @@ def _fold_and_upsert(
     globs: tuple[str, ...],
     updated_at: str,
 ) -> None:
-    state = derive_state(events, reviews, globs)
+    # THE SAME gate as live settlement (review P0-1): replay must derive the
+    # identical verdict, k and agreement, or rebuild silently promotes what
+    # the live path demoted. Records here are the in-memory re-judged ones.
+    def _record(a: Attempt) -> dict[str, Any] | None:
+        if a.record is None:
+            return None
+        return {"facts": a.record["facts"], "demand_profile": a.record["demand_profile"]}
+
+    state = derive_state(events, reviews, globs, cohort_hook(_record))
     by_key = {a.attempt_key: a for a in events}
     chosen = by_key.get(state.chosen_attempt or "")
     model_col = (
@@ -95,6 +104,7 @@ def _fold_and_upsert(
     extraction.upsert_state(
         conn, document_hash=dh, model=model_col, prompt_version=pv,
         schema_version=sv, validator_version=vv, state=state, profile=profile,
+        k=state.k, agreement=state.agreement,
         reviewed_by=reviews[-1].actor if reviews else None, updated_at=updated_at,
     )
 
@@ -125,15 +135,16 @@ def rebuild_extractions(
         n_reviews += 1
         group = (event["document_hash"], event["prompt_version"], event["schema_version"])
         reviews_by_group.setdefault(group, []).append(
-            Review(verb=event["verb"], at=event["at"], actor=event["actor"],
-                   key=event["review_key"])
+            (event.get("validator_version", ""),
+             Review(verb=event["verb"], at=event["at"], actor=event["actor"],
+                    key=event["review_key"]))
         )
 
     now = iso(utcnow())
     for group in sorted(set(attempts_by_group) | set(reviews_by_group)):
         dh, pv, sv = group
         attempts = attempts_by_group.get(group, [])
-        reviews = reviews_by_group.get(group, [])
+        tagged_reviews = reviews_by_group.get(group, [])
         markdown = (
             extraction.markdown_for(conn, dh, attempts[0].normalizer_version)
             if attempts else None
@@ -145,7 +156,11 @@ def rebuild_extractions(
                 else replace(a, validator_version=VALIDATOR_VERSION, record=None)
                 for a in attempts
             ]
-            _fold_and_upsert(conn, dh, pv, sv, VALIDATOR_VERSION, events, reviews,
+            # a review speaks only for the validator version it addressed
+            # (review P0-1): re-judging under today's validator folds only the
+            # reviews given under it
+            scoped = [r for rvv, r in tagged_reviews if rvv == VALIDATOR_VERSION]
+            _fold_and_upsert(conn, dh, pv, sv, VALIDATOR_VERSION, events, scoped,
                              accepted_globs, now)
         else:
             # historical config, or document no longer materialized: fold the
@@ -154,6 +169,7 @@ def rebuild_extractions(
             for a in attempts:
                 by_vv.setdefault(a.validator_version, []).append(a)
             for vv, group_attempts in by_vv.items():
-                _fold_and_upsert(conn, dh, pv, sv, vv, group_attempts, reviews,
+                scoped = [r for rvv, r in tagged_reviews if rvv == vv]
+                _fold_and_upsert(conn, dh, pv, sv, vv, group_attempts, scoped,
                                  accepted_globs, now)
     return n_attempts, n_reviews

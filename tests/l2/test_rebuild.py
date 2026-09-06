@@ -125,3 +125,36 @@ def test_rebuild_rejudges_raw_responses_under_current_validators(
     assert row["profile"]["demand_profile"]["areas"][0]["id"] == "a1"
     prov = pg.execute("SELECT outcome FROM extraction_attempts").fetchone()
     assert prov and prov["outcome"] == "attribution_failed"  # provenance untouched
+
+
+def test_rebuild_preserves_the_cohort_verdict(
+    pg: psycopg.Connection[dict[str, Any]], store: ArchiveStore  # noqa: F811
+) -> None:
+    """Review P0-1 acceptance: the disagreeing three-sample case stays
+    needs_review after replay, with the same k, agreement and chosen record —
+    rebuild must never promote what the live gate demoted."""
+    import copy
+
+    from jobhunter.l2.engines import EngineResult
+
+    _seed_doc(pg)
+    divergent = copy.deepcopy(EMIT)
+    del divergent["demand_profile"]["areas"][0]["claims"][1]
+    divergent["demand_profile"]["areas"][0]["structure"] = None
+    div = EngineResult(json.dumps(divergent), "z-ai/glm-5.2:free", 40, 9, 0.0)
+    run(_settings(JOB_HUNTER_L2_AUDIT_MOD="1"), pg, store,
+        engine=FakeEngine([GOOD, div, div]), max_docs=10, max_usd=5.0)
+    live = pg.execute("SELECT * FROM extractions").fetchone()
+    assert live and live["status"] == "needs_review" and live["k"] == 3
+    assert live["agreement"] and live["agreement"]["failures"]
+
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+    replayed = pg.execute("SELECT * FROM extractions").fetchone()
+    assert replayed is not None
+    assert replayed["status"] == "needs_review"
+    assert replayed["k"] == 3
+    assert replayed["agreement"] and replayed["agreement"]["failures"] == \
+        live["agreement"]["failures"]
+    assert replayed["chosen_attempt"] == live["chosen_attempt"]
+    assert replayed["profile"] == live["profile"]
