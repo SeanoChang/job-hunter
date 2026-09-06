@@ -14,10 +14,12 @@ import re
 from collections.abc import Callable
 from datetime import date
 
-VALIDATOR_VERSION = "3"
+VALIDATOR_VERSION = "4"
 
 _RANGE = re.compile(r"(\d+)\s*(?:-|–|—|to|and)\s*(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
-_FLOOR = re.compile(r"(\d+)\s*\+\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
+_FLOOR = re.compile(
+    r"(\d+)\s*(?:\+|or\s+more)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE
+)  # validator/4: Workday writes "5 or more years" (step-1 review, 2026-09-06)
 _EXACT = re.compile(r"(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 
 # validator/2: currency is retained as written, never converted. A symbol
@@ -25,9 +27,13 @@ _EXACT = re.compile(r"(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 # CAD, AUD, SGD, HKD, NZD) and ¥ (JPY, CNY) do not, so those stay null unless
 # the posting writes a code. Both sides of a range must use the same symbol.
 _SYMBOL_CURRENCY = {"£": "GBP", "€": "EUR"}
-_AMOUNT = r"(\d{1,3}(?:,\d{3})*|\d+)\s*(k)?"
+# validator/4: decimal cents appear on Workday ("$169,100.00"); the cents are
+# matched and discarded — amounts stay whole units.
+_AMOUNT = r"(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{1,2})?\s*(k)?"
+# validator/4: an optional currency code may trail EACH amount even when a
+# symbol leads it ("$123,900 USD - $222,000 USD", step-1 review 2026-09-06).
 _MONEY = re.compile(
-    r"([$£€¥])\s*" + _AMOUNT + r"\s*(?:-|–|—|to)\s*"
+    r"([$£€¥])\s*" + _AMOUNT + r"(?:\s*[A-Z]{3})?\s*(?:-|–|—|to)\s*"
     r"([$£€¥])\s*" + _AMOUNT,
     re.IGNORECASE,
 )
@@ -53,6 +59,8 @@ _MONTH_NAMES = [
 _MONTHS = {name: i + 1 for i, name in enumerate(_MONTH_NAMES)}
 _MONTHS.update({name[:3]: i + 1 for i, name in enumerate(_MONTH_NAMES)})
 _DATE = re.compile(r"([A-Za-z]+)\.?\s+(\d{1,2}),\s*(\d{4})")
+# validator/4: Workday deadlines also come numeric ("09/11/26", "12/01/2026")
+_DATE_NUMERIC = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2}(?:\d{2})?)\b")
 
 
 def parse_experience_months(text: str) -> dict[str, object] | None:
@@ -108,6 +116,14 @@ def parse_deadline(text: str) -> dict[str, object] | None:
             continue
         try:
             parsed = date(int(m.group(3)), month, int(m.group(2)))
+        except ValueError:
+            return None  # impossible calendar date in the anchor
+        found.append(parsed.isoformat())
+    for m in _DATE_NUMERIC.finditer(text):
+        mm, dd, yy = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        year = yy + 2000 if yy < 100 else yy  # postings never cite the 1900s
+        try:
+            parsed = date(year, mm, dd)
         except ValueError:
             return None  # impossible calendar date in the anchor
         found.append(parsed.isoformat())

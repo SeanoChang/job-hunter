@@ -16,6 +16,9 @@ on:
       max_usd:
         description: "USD cap for this run"
         default: "5"
+      mode:
+        description: "run = drain the queue; rebuild = $0 archive replay (validator migration)"
+        default: "run"
   schedule:
     - cron: "37 */6 * * *"
 concurrency:
@@ -56,12 +59,19 @@ jobs:
           JOB_HUNTER_L2_SCHEMA_STRICT: ${{ vars.JOB_HUNTER_L2_SCHEMA_STRICT }}
           MAX_DOCS: ${{ github.event.inputs.max_docs }}
           MAX_USD: ${{ github.event.inputs.max_usd }}
+          MODE: ${{ github.event.inputs.mode }}
         run: |
           if [ -z "${JOB_HUNTER_L2_API_KEY}" ]; then
             echo "no JOB_HUNTER_L2_OPENAI_API_KEY secret set; nothing to do"
             exit 0
           fi
           # Cron fires with empty inputs; dispatch may override them.
+          if [ "${MODE:-run}" = "rebuild" ]; then
+            # validator-bump migration: replay every archived attempt through
+            # the current fold, no LLM (harness spec §4.3)
+            uv run job-hunter extract rebuild
+            exit $?
+          fi
           code=0
           uv run job-hunter extract run \
             --max-docs "${MAX_DOCS:-400}" --max-usd "${MAX_USD:-5}" \
