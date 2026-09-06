@@ -14,7 +14,8 @@ import re
 from collections.abc import Callable
 from datetime import date
 
-VALIDATOR_VERSION = "6"
+# validator/7: the possible_omission completeness warning (verify._check_omissions)
+VALIDATOR_VERSION = "7"
 
 _RANGE = re.compile(r"(\d+)\s*(?:-|–|—|to|and)\s*(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 _FLOOR = re.compile(

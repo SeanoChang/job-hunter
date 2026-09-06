@@ -6,6 +6,7 @@ three call sites, one implementation (harness spec §3.3). Zero I/O; no LLM.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Iterator
 from typing import Any
@@ -14,7 +15,13 @@ from jobhunter.hashing import sha256_hex
 from jobhunter.l2.quotes import describe_not_found, longest_matching_prefix, occurrence_index
 from jobhunter.l2.report import Report
 from jobhunter.l2.schemas import validate_record
-from jobhunter.l2.transforms import TRANSFORMS, VALIDATOR_VERSION
+from jobhunter.l2.transforms import (
+    TRANSFORMS,
+    VALIDATOR_VERSION,
+    parse_compensation,
+    parse_deadline,
+    parse_experience_months,
+)
 from jobhunter.markdown import block_intervals
 
 
@@ -337,6 +344,44 @@ def _compute_coverage(extraction: dict[str, Any], md: str, report: Report) -> No
     )
 
 
+_DEADLINE_HINT = re.compile(
+    r"(?i)\b(?:deadline|apply by|applications?\s+close|closing date)\b"
+)
+
+
+def _check_omissions(extraction: dict[str, Any], md: str, report: Report) -> None:
+    """Completeness, measured (validator/7): a fact the profile left null while
+    the document parses one under this validator's own grammars is a WARNING —
+    the signal can be false (equity figures, company-age years, a posted-on
+    date), so it flags for audit and never fails the record. Deadline demands
+    a deadline word on the line; a bare date is any date."""
+    facts = extraction["facts"]
+    lines = md.splitlines()
+    omissions = 0
+
+    def warn(path: str, line: str) -> None:
+        nonlocal omissions
+        omissions += 1
+        report.warn("completeness", path, "possible_omission", excerpt=line.strip()[:80])
+
+    if not facts.get("compensation"):
+        for line in lines:
+            if parse_compensation(line) is not None:
+                warn("facts.compensation", line)
+                break
+    if facts.get("deadline") is None:
+        for line in lines:
+            if _DEADLINE_HINT.search(line) and parse_deadline(line) is not None:
+                warn("facts.deadline", line)
+                break
+    if facts.get("experience_months") is None:
+        for line in lines:
+            if parse_experience_months(line) is not None:
+                warn("facts.experience_months", line)
+                break
+    report.metrics["possible_omissions"] = omissions
+
+
 def verify(extraction: dict[str, Any], markdown: str) -> Report:
     report = Report(validator_version=VALIDATOR_VERSION)
     stored = extraction.get("document", {}).get("document_hash")
@@ -360,5 +405,6 @@ def verify(extraction: dict[str, Any], markdown: str) -> Report:
     _check_overlap(extraction, report)
     _check_quote_shape(extraction, report)
     _check_descriptions(extraction, report)
+    _check_omissions(extraction, markdown, report)
     _compute_coverage(extraction, markdown, report)
     return report
