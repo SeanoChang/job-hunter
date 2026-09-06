@@ -621,3 +621,99 @@ board   = "akamai"
 base    = "https://fa-extu-saasfaprod1.fa.ocs.oraclecloud.com"
 site    = "CX_1"
 country = "US"
+
+[[boards]]
+company = "Micron"
+source  = "workday"
+board   = "micron"
+host    = "wd1"
+site    = "External"
+country = "US"
+
+[[boards]]
+company = "Capital One"
+source  = "workday"
+board   = "capitalone"
+host    = "wd12"
+site    = "Capital_One"
+country = "US"
+
+[[boards]]
+company = "Palo Alto Networks"
+source  = "workday"
+board   = "paloaltonetworks"
+host    = "wd5"
+site    = "panwexternalcareers"
+country = "US"
+
+[[boards]]
+company = "Salesforce"
+source  = "workday"
+board   = "salesforce"
+host    = "wd12"
+site    = "External_Career_Site"
+country = "US"
+
+[[boards]]
+company = "Morgan Stanley"
+source  = "workday"
+board   = "ms"
+host    = "wd5"
+site    = "External"
+country = "US"
+
+[[boards]]
+company = "HPE"
+source  = "workday"
+board   = "hpe"
+host    = "wd5"
+site    = "Jobsathpe"
+country = "US"
+
+[[boards]]
+company = "Mastercard"
+source  = "workday"
+board   = "mastercard"
+host    = "wd1"
+site    = "CorporateCareers"
+country = "US"
+
+[[boards]]
+company = "Analog Devices"
+source  = "workday"
+board   = "analogdevices"
+host    = "wd1"
+site    = "External"
+country = "US"
+
+[[boards]]
+company = "Visa"
+source  = "workday"
+board   = "visa"
+host    = "wd5"
+site    = "Visa"
+country = "US"
+
+[[boards]]
+company = "Adobe"
+source  = "workday"
+board   = "adobe"
+host    = "wd5"
+site    = "external_experienced"
+country = "US"
+
+[[boards]]
+company = "Rakuten"
+source  = "workday"
+board   = "rakuten"
+host    = "wd1"
+site    = "RakutenInc"
+country = "JP"
+
+[[boards]]
+company = "Intel"
+source  = "workday"
+board   = "intel"
+host    = "wd1"
+site    = "External"
+country = "US"
