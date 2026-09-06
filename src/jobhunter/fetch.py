@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import gzip
 import secrets
+import threading
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -417,6 +418,40 @@ def fetch_board_two_phase(
     return BoardOutcome(board=board, manifest=manifest, blob_new=blob_new)
 
 
+class _Heartbeat:
+    """Keeps the writer connection audibly alive through the fetch phase.
+
+    Neon reaps quiet connections (compute autosuspend, idle timeouts): three
+    straight sync runs died with AdminShutdown on 2026-09-06 after the fetch
+    phase left the writer connection silent for ~8 minutes. Between start()
+    and stop() the heartbeat owns the connection exclusively — run() must not
+    touch it — and stop() joins before ingest resumes, so nothing ever shares
+    it. A ping failure ends the thread quietly; the dead connection is then
+    discovered, and reported, by the ingest path.
+    """
+
+    def __init__(self, conn: _db.Conn, interval_seconds: float = 60.0) -> None:
+        self._conn = conn
+        self._interval = interval_seconds
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._beat, daemon=True)
+
+    def _beat(self) -> None:
+        while not self._stop.wait(self._interval):
+            try:
+                self._conn.execute("SELECT 1")
+                self._conn.commit()
+            except Exception:
+                return
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join()
+
+
 def run(
     settings: Settings,
     *,
@@ -494,10 +529,15 @@ def run(
             run_id=run_id, registry_revision=registry.revision, now=now, dry_run=dry_run,
         )
 
+    heartbeat = _Heartbeat(conn) if conn is not None else None
+    if heartbeat is not None:
+        heartbeat.start()
     try:
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             outcomes = list(pool.map(one, boards))
     finally:
+        if heartbeat is not None:
+            heartbeat.stop()
         if own_fetcher:
             fetcher.close()
 
