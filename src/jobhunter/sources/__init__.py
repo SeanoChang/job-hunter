@@ -1,3 +1,4 @@
+from jobhunter.sources.amazonjobs import AmazonJobs
 from jobhunter.sources.ashby import Ashby
 from jobhunter.sources.base import Source, TwoPhaseSource
 from jobhunter.sources.greenhouse import Greenhouse
@@ -16,6 +17,7 @@ SOURCES: dict[str, Source] = {
 TWO_PHASE_SOURCES: dict[str, TwoPhaseSource] = {
     "workday": Workday(),
     "oraclehcm": OracleHCM(),
+    "amazonjobs": AmazonJobs(),
 }
 
 

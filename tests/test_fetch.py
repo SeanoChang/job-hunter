@@ -336,6 +336,7 @@ class FakeTwoPhase:
 
     name = "workday"
     adapter_version = "fake/1"
+    embedded = False
 
     def __init__(self, page_size: int = 2) -> None:
         self.page_size = page_size
@@ -366,6 +367,27 @@ class FakeTwoPhase:
             department=None, team=None, employment_type=None, compensation=None,
             url=None, apply_url=None, source_created_at=None, source_updated_at=None,
             description_html=d["description"],
+        )
+
+
+class FakeEmbedded(FakeTwoPhase):
+    """An embedded TwoPhaseSource: full content in list rows, no detail surface."""
+
+    embedded = True
+
+    def detail_url(self, board: Board, row: ListRow) -> RequestSpec:
+        raise AssertionError("the driver must never ask an embedded source for a detail url")
+
+    def normalize_detail(self, body: bytes, row: ListRow, board: Board) -> PostingVersion:
+        raise AssertionError("the driver must never normalize a detail for an embedded source")
+
+    def normalize_row(self, row: ListRow, board: Board) -> PostingVersion:
+        return PostingVersion(
+            source=self.name, board=board.board, source_id=row.uid, title=row.title or "",
+            company=board.company, locations=(), workplace_type=None, is_remote=None,
+            department=None, team=None, employment_type=None, compensation=None,
+            url=None, apply_url=None, source_created_at=None, source_updated_at=None,
+            description_html=f"<p>{row.uid} embedded</p>",
         )
 
 
@@ -663,3 +685,53 @@ def test_heartbeat_swallows_a_dead_connection() -> None:
     hb = _Heartbeat(_DeadConn(), interval_seconds=0.01)  # type: ignore[arg-type]
     hb.start()
     hb.stop()  # joins; the thread must have exited on its own without raising
+
+
+# --- embedded two-phase sources (T-20260906-7PTV) ---------------------------
+# amazon.jobs carries full content in its list rows and has no detail
+# endpoint; the driver must page the list and never enter the detail phase.
+
+
+@pytest.fixture
+def embedded(monkeypatch: pytest.MonkeyPatch) -> FakeEmbedded:
+    src = FakeEmbedded()
+    monkeypatch.setitem(sources_mod.TWO_PHASE_SOURCES, "workday", src)
+    return src
+
+
+def test_embedded_board_fetches_no_details(
+    tmp_path: Path, embedded: FakeEmbedded
+) -> None:
+    calls: list[str] = []
+    t = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    s = run(_wd_settings(tmp_path), fetcher=_fetcher(_wd_handler(total=5, calls=calls)),
+            now=lambda: t, ingest=False)
+    m = s.outcomes[0].manifest
+    assert m.error is None and m.record_count == 5
+    assert m.details == ()  # two-phase manifest, but nothing detail-shaped in it
+    assert m.page_blobs and len(m.page_blobs) == 3  # 5 rows at page_size 2
+    assert all(path.endswith("/jobs") for _, path in (c.split(" ") for c in calls))
+
+
+def test_embedded_board_ingests_versions_from_rows(
+    tmp_path: Path, embedded: FakeEmbedded, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    settings = replace(_wd_settings(tmp_path), database_url=TEST_DSN)
+    row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert row is not None
+    t = datetime(2026, 9, 4, 6, 0, 0, tzinfo=UTC)
+    s = run(settings, fetcher=_fetcher(_wd_handler(total=5)), now=lambda: t,
+            schema=str(row["s"]))
+    assert s.db_error is None and s.ingested == 1
+    n = pg.execute(
+        "SELECT count(*) AS n FROM postings WHERE current_version_hash IS NOT NULL"
+    ).fetchone()
+    assert n is not None and n["n"] == 5  # every listed row versioned, none pending
+    pend = pg.execute(
+        "SELECT count(*) AS n FROM presence WHERE parse_status = 'pending_detail'"
+    ).fetchone()
+    assert pend is not None and pend["n"] == 0
+    doc = pg.execute(
+        "SELECT count(*) AS n FROM documents"
+    ).fetchone()
+    assert doc is not None and doc["n"] >= 1
