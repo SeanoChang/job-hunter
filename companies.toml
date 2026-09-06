@@ -717,3 +717,115 @@ board   = "intel"
 host    = "wd1"
 site    = "External"
 country = "US"
+
+[[boards]]
+company = "Cisco"
+source  = "workday"
+board   = "cisco"
+host    = "wd5"
+site    = "Cisco_Careers"
+country = "US"
+
+[[boards]]
+company = "General Motors"
+source  = "workday"
+board   = "generalmotors"
+host    = "wd5"
+site    = "Careers_GM"
+country = "US"
+
+[[boards]]
+company = "CrowdStrike"
+source  = "workday"
+board   = "crowdstrike"
+host    = "wd5"
+site    = "crowdstrikecareers"
+country = "US"
+
+[[boards]]
+company = "Workday"
+source  = "workday"
+board   = "workday"
+host    = "wd5"
+site    = "Workday"
+country = "US"
+
+[[boards]]
+company = "Broadcom"
+source  = "workday"
+board   = "broadcom"
+host    = "wd1"
+site    = "External_Career"
+country = "US"
+
+[[boards]]
+company = "eBay"
+source  = "workday"
+board   = "ebay"
+host    = "wd5"
+site    = "apply"
+country = "US"
+
+[[boards]]
+company = "Expedia"
+source  = "workday"
+board   = "expedia"
+host    = "wd108"
+site    = "search"
+country = "US"
+
+[[boards]]
+company = "Unity"
+source  = "workday"
+board   = "unitytech"
+host    = "wd1"
+site    = "Unity"
+country = "US"
+
+[[boards]]
+company = "Zillow"
+source  = "workday"
+board   = "zillow"
+host    = "wd5"
+site    = "Zillow_Group_External"
+country = "US"
+
+[[boards]]
+company = "PayPal"
+source  = "workday"
+board   = "paypal"
+host    = "wd1"
+site    = "jobs"
+country = "US"
+
+[[boards]]
+company = "Zendesk"
+source  = "workday"
+board   = "zendesk"
+host    = "wd1"
+site    = "zendesk"
+country = "US"
+
+[[boards]]
+company = "Zoom"
+source  = "workday"
+board   = "zoom"
+host    = "wd5"
+site    = "Zoom"
+country = "US"
+
+[[boards]]
+company = "Etsy"
+source  = "workday"
+board   = "etsy"
+host    = "wd5"
+site    = "Etsy_Careers"
+country = "US"
+
+[[boards]]
+company = "Booking Holdings"
+source  = "workday"
+board   = "priceline"
+host    = "wd1"
+site    = "BookingHoldings"
+country = "US"
