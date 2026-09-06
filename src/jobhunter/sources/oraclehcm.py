@@ -99,6 +99,18 @@ class OracleHCM:
             raise EnvelopeError("oraclehcm: expected {items: [{...}]}")
         title = req_str(rec, "Title")
         description_html = _description(rec)
+        # The payload carries no link field, but the CE site URL is deterministic:
+        # {base}/hcmUI/CandidateExperience/en/sites/{site}/job/{id} (probe-verified
+        # live on jpmc, 2026-09-06). Ingest replay may hand us a stub Board with no
+        # extra (lifecycle._board's snapshot-missing fallback) — degrade to None
+        # like company degrades, never raise.
+        base = board.extra.get("base")
+        site = board.extra.get("site")
+        url = (
+            f"{base}/hcmUI/CandidateExperience/en/sites/{site}/job/{row.uid}"
+            if base and site
+            else None
+        )
         locations = norm_locations(
             [rec.get("PrimaryLocation"), *_work_locations(rec.get("workLocation"))]
         )
@@ -116,13 +128,7 @@ class OracleHCM:
             employment_type=None,
             # no structured compensation field observed; ranges (if any) live in the description
             compensation=None,
-            # The payload carries no link field, but the CE site URL is
-            # deterministic: {base}/hcmUI/CandidateExperience/en/sites/{site}/job/{id}
-            # (probe-verified live on jpmc, 2026-09-06).
-            url=(
-                f"{board.extra['base']}/hcmUI/CandidateExperience/en/sites/"
-                f"{board.extra['site']}/job/{row.uid}"
-            ),
+            url=url,
             apply_url=None,
             source_created_at=_dt(rec.get("ExternalPostedStartDate")),
             source_updated_at=None,
