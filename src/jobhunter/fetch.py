@@ -384,7 +384,10 @@ def fetch_board_two_phase(
     error = listing.error
     payload_bytes = listing.bytes_read
     blob_new = listing.new_blob
-    if not listing.blocked and listing.rows:
+    # An embedded source carries full content in its list rows (spec §4.3 /
+    # T-20260906-7PTV): no detail phase, no budget spent, versions come from
+    # normalize_row at ingest.
+    if not listing.blocked and listing.rows and not source.embedded:
         history = detail_history(store, source.name, board.board)
         picks = pick_details(listing.rows, history, now=started, budget=budget)
         details, read, detail_new = _fetch_details(

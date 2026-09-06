@@ -73,13 +73,22 @@ class ListPage:
 
 
 class TwoPhaseSource(Protocol):
+    """List+detail source, or — when `embedded` — a paginated list whose rows
+    carry the full content. Every adapter implements the whole surface; the
+    side that does not apply raises NormalizeError (an embedded source's
+    detail_url/normalize_detail, a list+detail source's normalize_row) and the
+    driver never calls it: embedded boards skip the detail phase entirely and
+    versions come from normalize_row at ingest (T-20260906-7PTV)."""
+
     name: str
     adapter_version: str
+    embedded: bool
 
     def list_url(self, board: Board, offset: int) -> RequestSpec: ...
     def parse_list(self, body: bytes) -> ListPage: ...
     def detail_url(self, board: Board, row: ListRow) -> RequestSpec: ...
     def normalize_detail(self, body: bytes, row: ListRow, board: Board) -> PostingVersion: ...
+    def normalize_row(self, row: ListRow, board: Board) -> PostingVersion: ...
 
 
 def load_json(body: bytes) -> Any:

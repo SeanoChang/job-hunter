@@ -40,6 +40,7 @@ class OracleHCM:
 
     name = "oraclehcm"
     adapter_version = "oraclehcm/1"
+    embedded = False
 
     def list_url(self, board: Board, offset: int) -> RequestSpec:
         base = board.extra["base"]
@@ -134,6 +135,10 @@ class OracleHCM:
             source_updated_at=None,
             description_html=description_html,
         )
+
+
+    def normalize_row(self, row: ListRow, board: Board) -> PostingVersion:
+        raise NormalizeError("oraclehcm is list+detail; versions come from normalize_detail")
 
 
 def _first_item(obj: Any) -> dict[str, Any] | None:

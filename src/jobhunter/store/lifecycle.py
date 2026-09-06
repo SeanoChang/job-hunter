@@ -353,6 +353,20 @@ class Ingestor:
                 res.unidentifiable_count += 1
                 continue
             uid = f"{_prefix(m.source)}:{m.board}:{row.uid}"
+            if source.embedded:
+                # Full content rides the list row (T-20260906-7PTV): every listed
+                # uid gets its version this attempt; pending_detail never applies.
+                try:
+                    pv = source.normalize_row(row, board)
+                except (EnvelopeError, NormalizeError):
+                    seen[row.uid] = _Seen(uid, row.uid, None, "failed", None, None)
+                    res.failed_count += 1
+                    continue
+                seen[row.uid] = _Seen(
+                    pv.uid, row.uid, version_hash(pv), "ok", pv, pv.source_updated_at
+                )
+                res.parsed_count += 1
+                continue
             sha = blobs.get(row.uid)
             if sha is None:  # detail not fetched this run, or its fetch failed
                 seen[row.uid] = _Seen(uid, row.uid, None, PENDING_DETAIL, None, None, pending=True)

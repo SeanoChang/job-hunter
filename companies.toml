@@ -829,3 +829,9 @@ board   = "priceline"
 host    = "wd1"
 site    = "BookingHoldings"
 country = "US"
+
+[[boards]]
+company = "Amazon"
+source  = "amazonjobs"
+board   = "amazon"
+country = "US"

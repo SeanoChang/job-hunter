@@ -123,6 +123,7 @@ class FakeTwoPhase:
     """
 
     name = "workday"
+    embedded = False
     adapter_version = "fake/1"
 
     def list_url(self, board: Board, offset: int) -> RequestSpec:

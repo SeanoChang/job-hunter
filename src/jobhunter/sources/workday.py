@@ -37,6 +37,7 @@ class Workday:
 
     name = "workday"
     adapter_version = "workday/1"
+    embedded = False
 
     def list_url(self, board: Board, offset: int) -> RequestSpec:
         return RequestSpec(
@@ -111,6 +112,10 @@ class Workday:
             source_updated_at=None,
             description_html=desc,
         )
+
+
+    def normalize_row(self, row: ListRow, board: Board) -> PostingVersion:
+        raise NormalizeError("workday is list+detail; versions come from normalize_detail")
 
 
 def _cxs_base(board: Board) -> str:

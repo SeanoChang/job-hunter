@@ -12,7 +12,9 @@ from typing import Any
 from jobhunter.hashing import canonical_json, sha256_hex
 from jobhunter.models import Board
 
-VALID_SOURCES = frozenset({"greenhouse", "lever", "ashby", "workday", "oraclehcm", "eightfold"})
+VALID_SOURCES = frozenset(
+    {"greenhouse", "lever", "ashby", "workday", "oraclehcm", "eightfold", "amazonjobs"}
+)
 _BOARD_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 # Per-source required extra keys (spec §3.5). Sources absent from this map

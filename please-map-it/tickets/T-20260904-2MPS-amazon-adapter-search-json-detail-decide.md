@@ -47,9 +47,18 @@ None known — checked the web.
 
 ## Interfaces
 
-- Consumes: `TwoPhaseSource` from [[T-20260904-8J7V]].
-- Produces: `sources/amazonjobs.py` in `get_source("amazonjobs")`; single fixed board `amazonjobs:amazon`.
-- decided-by-fixture: pending
+- Consumes: `TwoPhaseSource` from [[T-20260904-8J7V]] plus the embedded-detail
+  driver mode from [[T-20260906-7PTV]].
+- Produces: `sources/amazonjobs.py` in `get_two_phase("amazonjobs")` (embedded
+  mode; the one-shot `get_source` guess couldn't survive the 100-row
+  result_limit cap); single fixed board `amazonjobs:amazon`.
+- decided-by-fixture: embedded — search.json rows carry `description`,
+  `basic_qualifications`, `preferred_qualifications` in full (probe
+  2026-09-06, id_icims 10530730); the per-job `.json` path serves HTML, so no
+  detail endpoint exists. Pagination: offset/result_limit, max 100/page,
+  `hits` capped at 10,000.
+
+depends-on:: [[T-20260906-7PTV]] (prerequisite) — versions must come from list rows; without the embedded driver mode every row would sit pending_detail forever
 
 ## Touch paths
 
