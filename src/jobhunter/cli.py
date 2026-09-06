@@ -1219,6 +1219,44 @@ def extract_run(
         raise typer.Exit(int(Exit.SYSTEMIC))
 
 
+@extract_app.command("refute")
+def extract_refute(
+    doc: str = typer.Argument(..., help="document_hash or hex prefix of a VALIDATED row"),
+    output: str | None = output_option(),
+) -> None:
+    """Demote-only refuter pass over one validated extraction (spec §4.4)."""
+    from jobhunter.l2.refuter import NotValidated, refute_doc
+
+    settings = _settings(output)
+    try:
+        settings.require_l2()
+    except ConfigError as e:
+        fail("config", f"config error: {e}", code=Exit.CONFIG, output=output)
+    store = _store(settings, output)
+    conn = _conn(settings, schema=_schema, output=output)
+    try:
+        if not _db.try_lock(conn, _db.EXTRACT_LOCK_KEY):
+            fail("systemic", "extract lock held (a run or another review is active)",
+                 code=Exit.SYSTEMIC, output=output, hint="try again in a moment")
+        resolved = _resolve_doc(conn, doc, output)
+        try:
+            out = refute_doc(settings, conn, store, _make_engine(settings), resolved)
+        except NotValidated as e:
+            fail("usage", str(e), code=Exit.USAGE, output=output,
+                 hint="the refuter only audits validated rows")
+        conn.commit()
+    finally:
+        with contextlib.suppress(Exception):
+            _db.unlock(conn, _db.EXTRACT_LOCK_KEY)
+        conn.close()
+    emit(
+        {"document_hash": out.document_hash, "verdict": out.verdict,
+         "reasons": list(out.reasons), "status": out.status},
+        human=f"{out.document_hash[:12]} {out.verdict} -> {out.status or 'pending'}",
+        output=output,
+    )
+
+
 @extract_app.command("rebuild")
 def extract_rebuild(output: str | None = output_option()) -> None:
     """Truncate the extraction surface and replay it from the archive. No LLM."""
