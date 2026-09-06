@@ -256,7 +256,8 @@ def test_fabricated_quote_repaired_on_retry(pg: Conn, store: ArchiveStore) -> No
     emit_bad = copy.deepcopy(EMIT)
     emit_bad["demand_profile"]["areas"][0]["claims"][0]["quote"] = {"text": "Rust experience"}
     bad = EngineResult(json.dumps(emit_bad), "z-ai/glm-5.2:free", 1, 1, 0.0)
-    summary = run(_settings(), pg, store, engine=FakeEngine([bad, GOOD]),
+    # the reprompt escalates to k=3 (spec §4.5): two extra samples follow
+    summary = run(_settings(), pg, store, engine=FakeEngine([bad, GOOD, GOOD, GOOD]),
                   max_docs=10, max_usd=5.0)
     assert summary.validated == 1
     attempts = [from_bytes(store.get(k)) for k in sorted(store.list(keys.X_ATTEMPTS_PREFIX))]
@@ -710,8 +711,9 @@ def test_attempts_before_a_mid_document_kill_stay_in_the_ledger(
             self.calls.append(model)
             if len(self.calls) == 1:
                 return bad  # attempt 1: archived and recorded, not yet committed
-            _terminate(pg, int(pid_row["p"]))  # attempt 1's row dies with the backend
-            return GOOD
+            if len(self.calls) == 2:
+                _terminate(pg, int(pid_row["p"]))  # attempt 1's row dies with the backend
+            return GOOD  # the reprompt escalates to k=3: calls 3 and 4 are samples
 
     summary = run(_settings(), victim, store, engine=KillBetweenAttempts(), max_docs=10,
                   max_usd=5.0, connect=lambda: db.connect(TEST_DSN, schema=schema))
@@ -720,7 +722,7 @@ def test_attempts_before_a_mid_document_kill_stay_in_the_ledger(
         "SELECT attempt_key FROM extraction_attempts ORDER BY attempt_key"
     ).fetchall()
     assert [r["attempt_key"] for r in rows] == sorted(store.list(keys.X_ATTEMPTS_PREFIX))
-    assert len(rows) == 2  # both attempts of the document, not just the survivor
+    assert len(rows) == 4  # both ladder attempts AND both samples, not just survivors
     # and nothing is left for a later catch-up to find, so no `extract rebuild`
     later = run(_settings(), pg, store, engine=FakeEngine([]), max_docs=10, max_usd=5.0)
     assert later.replayed == 0
@@ -881,3 +883,104 @@ def test_session_reconnects_on_idle_timeout_only_when_the_connection_is_dead(
     with pytest.raises(psycopg.errors.IdleInTransactionSessionTimeout):
         session2.do(_op_on_live)
     assert live_calls["n"] == 1  # propagated, never retried
+
+
+# --- k-sampling and the agreement gate (M3, spec §4.5) ----------------------
+# Audit slot: int(document_hash[:8], 16) % JOB_HUNTER_L2_AUDIT_MOD == 0. The
+# test document's value is 3743166876: mod 1 always audits, mod 5 misses.
+
+
+def _divergent() -> EngineResult:
+    emit = copy.deepcopy(EMIT)
+    del emit["demand_profile"]["areas"][0]["claims"][1]  # drop c2 -> pairwise F1 2/3
+    emit["demand_profile"]["areas"][0]["structure"] = None
+    return EngineResult(
+        raw_text=json.dumps(emit), observed_model="z-ai/glm-5.2:free",
+        input_tokens=40, output_tokens=9, cost_usd=0.0,
+    )
+
+
+def test_sampling_audit_slot_runs_k3(pg: Conn, store: ArchiveStore) -> None:
+    _seed_doc(pg)
+    engine = FakeEngine([GOOD, GOOD, GOOD])
+    summary = run(_settings(JOB_HUNTER_L2_AUDIT_MOD="1"), pg, store, engine=engine,
+                  max_docs=10, max_usd=5.0)
+    assert summary.validated == 1
+    archived = [from_bytes(store.get(k)) for k in store.list(keys.X_ATTEMPTS_PREFIX)]
+    assert sorted(a.sample_slot for a in archived) == [1, 2, 3]
+    row = _state_row(pg)
+    assert row and row["status"] == "validated" and row["k"] == 3
+    assert row["agreement"] and row["agreement"]["mean_f1"] == 1.0
+    assert row["chosen_attempt"] in {a.attempt_key for a in archived}
+
+
+def test_sampling_non_audit_doc_runs_k1(pg: Conn, store: ArchiveStore) -> None:
+    _seed_doc(pg)
+    engine = FakeEngine([GOOD])
+    summary = run(_settings(JOB_HUNTER_L2_AUDIT_MOD="5"), pg, store, engine=engine,
+                  max_docs=10, max_usd=5.0)
+    assert summary.validated == 1
+    assert len(list(store.list(keys.X_ATTEMPTS_PREFIX))) == 1
+    row = _state_row(pg)
+    assert row and row["k"] == 1 and row["agreement"] is None
+
+
+def test_sampling_reprompt_escalates_to_k3(pg: Conn, store: ArchiveStore) -> None:
+    # slot-1 needs a reprompt (schema_invalid then ok): the cheapest predictor
+    # of a hard document escalates to k=3 even off the audit slot.
+    _seed_doc(pg)
+    bad = EngineResult(raw_text="not json", observed_model="z-ai/glm-5.2:free",
+                       input_tokens=4, output_tokens=1, cost_usd=0.0)
+    engine = FakeEngine([bad, GOOD, GOOD, GOOD])
+    summary = run(_settings(JOB_HUNTER_L2_AUDIT_MOD="5"), pg, store, engine=engine,
+                  max_docs=10, max_usd=5.0)
+    assert summary.validated == 1
+    archived = [from_bytes(store.get(k)) for k in store.list(keys.X_ATTEMPTS_PREFIX)]
+    assert sorted(a.sample_slot for a in archived) == [1, 1, 2, 3]
+    row = _state_row(pg)
+    assert row and row["status"] == "validated" and row["k"] == 3
+
+
+def test_sampling_agreement_failure_demotes_to_needs_review(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    _seed_doc(pg)
+    engine = FakeEngine([GOOD, _divergent(), _divergent()])
+    summary = run(_settings(JOB_HUNTER_L2_AUDIT_MOD="1"), pg, store, engine=engine,
+                  max_docs=10, max_usd=5.0)
+    assert summary.validated == 0
+    row = _state_row(pg)
+    assert row and row["status"] == "needs_review" and row["k"] == 3
+    assert "f1" in row["agreement"]["failures"]
+    # the medoid is the majority shape: one of the divergent samples
+    archived = {from_bytes(store.get(k)).attempt_key: from_bytes(store.get(k))
+                for k in store.list(keys.X_ATTEMPTS_PREFIX)}
+    chosen = archived[row["chosen_attempt"]]
+    assert chosen.sample_slot in (2, 3)
+
+
+def test_sampling_failed_sample_demotes_to_needs_review(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    # A sample that cannot produce a valid record is itself a disagreement
+    # about a document the audit chose: escalate, never validate silently.
+    _seed_doc(pg)
+    bad = EngineResult(raw_text="not json", observed_model="z-ai/glm-5.2:free",
+                       input_tokens=4, output_tokens=1, cost_usd=0.0)
+    engine = FakeEngine([GOOD, bad, GOOD])
+    summary = run(_settings(JOB_HUNTER_L2_AUDIT_MOD="1"), pg, store, engine=engine,
+                  max_docs=10, max_usd=5.0)
+    row = _state_row(pg)
+    assert row and row["status"] == "needs_review" and row["k"] == 3
+    assert "sample_failed" in row["agreement"]["failures"]
+    assert summary.validated == 0
+
+
+def test_sampling_spend_counts_every_sample(pg: Conn, store: ArchiveStore) -> None:
+    _seed_doc(pg)
+    costly = EngineResult(raw_text=json.dumps(EMIT), observed_model="z-ai/glm-5.2:free",
+                          input_tokens=40, output_tokens=9, cost_usd=0.5)
+    engine = FakeEngine([costly, costly, costly])
+    summary = run(_settings(JOB_HUNTER_L2_AUDIT_MOD="1"), pg, store, engine=engine,
+                  max_docs=10, max_usd=5.0)
+    assert abs(summary.spend_usd - 1.5) < 1e-9
