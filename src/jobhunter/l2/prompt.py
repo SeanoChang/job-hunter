@@ -27,13 +27,28 @@ document mixes both forms and neither spelling is the canonical one. v4 says
 that, and pairs it with a reprompt that names the offending character
 (`quotes.describe_not_found`), because v3 spent three attempts rejecting a
 one-character difference without ever saying which character.
+
+v5 (2026-09-06) — the NVIDIA canary put bullet-heavy Workday postings through
+the harness and 33 of 42 quarantined (SEA-186). Three drivers, tallied across
+105 attempts:
+  * 151 errors: context[] entries emitted as bare markdown-bullet strings
+    where the schema wants quote objects — v4 said context "holds verbatim
+    responsibility bullets" without saying each is a quote OBJECT.
+  * 86 errors: NVIDIA states pay as "136,000 USD - 218,500 USD for Level 3",
+    several ranges per posting. The parser side is validator/3 (code-suffixed
+    amounts); the prompt now says one entry per stated range, with the
+    qualifier in "condition".
+  * 66 errors: on retry the model nested area-shaped objects inside claims and
+    moved interview_evaluated into an area. The retry block now restates the
+    top-level shape, and the interview_evaluated sentence is rewritten (v4's
+    "rather than matched in interview_evaluated" parsed as gibberish).
 """
 
 from __future__ import annotations
 
 from jobhunter.hashing import sha256_hex
 
-PROMPT_VERSION = "demand-profile/v4"
+PROMPT_VERSION = "demand-profile/v5"
 
 TEMPLATE = """\
 You are extracting a demand profile from ONE job posting document.
@@ -74,19 +89,26 @@ Return ONLY JSON conforming to the provided schema. Rules:
   rather than approximating it.
 - areas group related claims under a short name and kind (technical |
   capability | trait | credential | constraint); context[] holds verbatim
-  responsibility bullets that give the area meaning; structure is AND/OR over
-  claim ids and is required exactly when an area has more than one claim.
+  responsibility bullets that give the area meaning. EVERY context entry is a
+  quote object like any other quote — {{"text": "- Building new tools."}} —
+  never a bare string; a bullet line goes into the object's "text" verbatim.
+  structure is AND/OR over claim ids and is required exactly when an area has
+  more than one claim.
 - facts: include a fact ONLY when the posting states an actual value, and
   anchor it on the exact phrase carrying that value ("0-2 YOE", "$130,000 -
-  $150,000", "July 17, 2026"). Code derives the numbers from your anchor; do
-  not restate them. When the posting states an ABSENCE, that fact is null:
+  $150,000", "136,000 USD - 218,500 USD", "July 17, 2026"). Code derives the
+  numbers from your anchor; do not restate them. A posting stating several pay
+  ranges (per level, per location) gets one compensation entry per range, each
+  anchored on its own range phrase, with the qualifier in "condition" ("Level
+  3", "Bay Area"). When the posting states an ABSENCE, that fact is null:
   "Deadline to apply: None", "reviewed on a rolling basis", "salary not
   disclosed". Do not anchor on the sentence that denies the value — an anchor
   whose text carries no value is an error, not a fact.
 - boilerplate_spans: quote EEO statements, benefits boilerplate and legal
   text so they are excluded from demand coverage.
-- List ids of trait/values areas evaluated at interview rather than matched
-  in interview_evaluated.
+- interview_evaluated is a top-level array of area ids, beside "areas": list
+  there the trait/values areas an interview would judge rather than the
+  posting text evidencing. Never place it inside an area.
 
 DOCUMENT (canonical markdown):
 <<<
@@ -105,7 +127,10 @@ def render(markdown: str, prior_errors: list[str]) -> str:
         block = (
             "\nYour previous answer failed validation:\n"
             f"{lines}\n"
-            "Fix ONLY these issues and return the full corrected JSON.\n"
+            "Fix ONLY these issues and return the full corrected JSON, in the\n"
+            "SAME top-level shape as before: facts and demand_profile at the\n"
+            "top, areas[] inside demand_profile, claims holding only claim\n"
+            "fields (never nested areas), interview_evaluated beside areas.\n"
         )
     else:
         block = ""
