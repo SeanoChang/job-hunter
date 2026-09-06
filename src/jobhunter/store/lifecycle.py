@@ -258,6 +258,11 @@ class Ingestor:
 
     # ---- public
     def ingest(self, m: AttemptManifest) -> AttemptResult | None:
+        # The guard and registry application commit on their own; the attempt's
+        # derived writes commit atomically inside _finish/_error_attempt, AFTER
+        # the archive-put phase — a transaction held open through minutes of R2
+        # latency is exactly what a managed Postgres kills (the first Amazon
+        # cycle archived ~10k version blobs mid-transaction; run 34038848125).
         with self.conn.transaction():
             if self.conn.execute(
                 "SELECT 1 FROM fetch_attempts WHERE attempt_id = %s", (m.attempt_id,)
@@ -269,11 +274,7 @@ class Ingestor:
                     f"{m.attempt_id} is older than last ingested {last_at}; run rebuild"
                 )
             self._apply_registry_if_changed(m)
-            result = self._ingest_inner(m)
-            self._upsert_run(m.run_id)
-            db.set_meta(self.conn, "last_ingested_attempt", m.attempt_id)
-            db.set_meta(self.conn, "last_ingested_at", iso(m.started_at))
-            return result
+        return self._ingest_inner(m)
 
     # ---- steps
     def _ingest_inner(self, m: AttemptManifest) -> AttemptResult:
@@ -284,8 +285,15 @@ class Ingestor:
     def _error_attempt(self, m: AttemptManifest, error: str | None) -> AttemptResult:
         """An attempt we cannot read as an observation: provenance only, nothing derived."""
         res = AttemptResult(m.attempt_id, "error")
-        self._insert_attempt(m, "error", res, None, error)
+        with self.conn.transaction():
+            self._insert_attempt(m, "error", res, None, error)
+            self._mark_ingested(m)
         return res
+
+    def _mark_ingested(self, m: AttemptManifest) -> None:
+        self._upsert_run(m.run_id)
+        db.set_meta(self.conn, "last_ingested_attempt", m.attempt_id)
+        db.set_meta(self.conn, "last_ingested_at", iso(m.started_at))
 
     def _ingest_single_phase(self, m: AttemptManifest) -> AttemptResult:
         if m.transport != "ok" or not m.blob_sha256:
@@ -418,20 +426,34 @@ class Ingestor:
         if prev_count is not None and res.observed_count < self.drop_ratio * prev_count:
             res.health = "suspect_drop"
 
-        # phase 2: prefetch the state this attempt depends on, classify, then write in batches
-        self._insert_attempt(m, res.health, res, prev_count, None)
+        # phase 2: prefetch the state this attempt depends on, classify
         w = self._plan(seen, m, prev_any_id)
         res.new_versions = len(w.versions)
         res.new_documents = len(w.documents)
         res.opened = len(w.postings_new)
         res.changed = len(w.postings_changed)
         res.reopened = len(w.postings_reopened)
-        # Before the writes and inside the transaction: an attempt that later fails leaves only
-        # content-addressed objects behind, and Neon's transaction never waits on R2 latency.
-        self._archive_versions(w.puts)
-        self._write(w, m)
-        if res.health == "ok":
-            self._reconcile(m, res)
+        # phase 3: archive the version blobs OUTSIDE any transaction. An attempt
+        # that later fails leaves only harmless content-addressed objects behind,
+        # and the write transaction never waits on R2 latency (~10k puts on a big
+        # embedded board is minutes; a transaction held open that long is what a
+        # managed Postgres kills — run 34038848125). The heartbeat keeps the
+        # commit-idle connection audibly alive through the put phase.
+        self.conn.commit()  # end the planning reads' transaction
+        if w.puts:
+            heartbeat = db.Heartbeat(self.conn)
+            heartbeat.start()
+            try:
+                self._archive_versions(w.puts)
+            finally:
+                heartbeat.stop()
+        # phase 4: one atomic transaction for everything derived
+        with self.conn.transaction():
+            self._insert_attempt(m, res.health, res, prev_count, None)
+            self._write(w, m)
+            if res.health == "ok":
+                self._reconcile(m, res)
+            self._mark_ingested(m)
         return res
 
     # ---- planning: one read per fact, then pure Python classification
