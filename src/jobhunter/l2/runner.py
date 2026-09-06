@@ -47,7 +47,7 @@ from jobhunter.l2.engines import (
     EngineTransportError,
 )
 from jobhunter.l2.prompt import PROMPT_VERSION, TEMPLATE, prompt_sha, render
-from jobhunter.l2.schemas import emit_schema, validate_emit
+from jobhunter.l2.schemas import emit_schema, normalize_emit, validate_emit
 from jobhunter.l2.state import DerivedState, derive_state, globs_to_regex, model_matches
 from jobhunter.l2.transforms import VALIDATOR_VERSION
 from jobhunter.markdown import NORMALIZER_VERSION
@@ -671,6 +671,7 @@ def _extract_doc_inner(
                 emit = json.loads(result.raw_text)
                 if not isinstance(emit, dict):
                     raise ValueError("top level is not an object")
+                emit = normalize_emit(emit, SCHEMA_VERSION)
             except ValueError as exc:
                 errors = [f"response is not valid JSON: {exc}"]
                 archive_attempt(requested_model=model, observed_model=observed,
@@ -810,6 +811,7 @@ def _take_samples(
             emit = json.loads(result.raw_text)
             if not isinstance(emit, dict):
                 raise ValueError("top level is not an object")
+            emit = normalize_emit(emit, SCHEMA_VERSION)
         except ValueError as exc:
             archive_attempt(outcome="schema_invalid",
                             produced=[f"response is not valid JSON: {exc}"], **common)

@@ -10,7 +10,7 @@ from jobhunter.l2.transforms import (
 
 
 def test_registry_shape() -> None:
-    assert VALIDATOR_VERSION == "4"
+    assert VALIDATOR_VERSION == "5"
     assert set(TRANSFORMS[VALIDATOR_VERSION]) == {
         "experience_months", "compensation", "deadline",
     }
@@ -150,7 +150,7 @@ def test_compensation_code_suffixed(text: str, expected: dict[str, object] | Non
 
 
 def test_validator_version_bumped_for_the_grammar_change() -> None:
-    assert VALIDATOR_VERSION == "4"
+    assert VALIDATOR_VERSION == "5"
 
 
 # --- Workday phrasing (validator/4) -----------------------------------------
