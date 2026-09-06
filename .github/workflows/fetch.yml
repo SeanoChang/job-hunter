@@ -105,6 +105,22 @@ jobs:
             code=0
           fi
           exit "$code"
+      # Weekly consolidation rides the hourly schedule instead of its own cron
+      # (a second scheduler is a second thing that dies silently): the verb
+      # no-ops while the newest artifact is under a week old, so at most one
+      # run a week actually emits. Never fails the job that guards collection.
+      - name: consolidate
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
+          AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
+        run: uv run job-hunter extract consolidate
       - name: status
         if: always()
         env:
