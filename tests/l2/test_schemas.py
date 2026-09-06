@@ -151,3 +151,39 @@ def test_normalize_emit_strips_nulls_on_optional_keys_only() -> None:
     from jobhunter.l2.schemas import validate_emit
 
     assert validate_emit(out, "1") == []
+
+
+def test_strict_schema_bridges_free_form_objects_as_strings() -> None:
+    # strict mode cannot express "any object" (probe 34061138858: HTTP 400 on
+    # claim.threshold); the strict variant carries it as a JSON string and
+    # normalize_emit parses it back
+    s = strict_schema(emit_schema("1"))
+    th = s["$defs"]["claim"]["properties"]["threshold"]
+    assert th == {"anyOf": [{"type": "string"}, {"type": "null"}],
+                  "description": "JSON object, serialized as a string"}
+
+
+def test_normalize_emit_parses_the_threshold_string_bridge() -> None:
+    emit = {
+        "facts": {"compensation": [], "boilerplate_spans": []},
+        "demand_profile": {
+            "areas": [{
+                "id": "a1", "name": "X", "kind": "technical",
+                "importance": "required", "level": None,
+                "claims": [
+                    {"id": "c1", "quote": {"text": "t"}, "importance": "required",
+                     "level": None, "negated": False, "threshold": '{"years": 5}'},
+                    {"id": "c2", "quote": {"text": "u"}, "importance": "required",
+                     "level": None, "negated": False, "threshold": "not json"},
+                ],
+            }],
+            "interview_evaluated": [],
+        },
+    }
+    out = normalize_emit(emit, "1")
+    claims = out["demand_profile"]["areas"][0]["claims"]
+    assert claims[0]["threshold"] == {"years": 5}
+    assert claims[1]["threshold"] is None  # unparseable: null over guess
+    from jobhunter.l2.schemas import validate_emit
+
+    assert validate_emit(out, "1") == []

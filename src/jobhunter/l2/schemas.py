@@ -89,11 +89,22 @@ def _nullable(node: dict[str, Any]) -> dict[str, Any]:
     return {"anyOf": [node, {"type": "null"}]}
 
 
+def _is_objectish(node: dict[str, Any]) -> bool:
+    t = node.get("type")
+    return t == "object" or (isinstance(t, list) and "object" in t)
+
+
 def _strictify(node: Any) -> Any:
     if isinstance(node, list):
         return [_strictify(v) for v in node]
     if not isinstance(node, dict):
         return node
+    if _is_objectish(node) and "properties" not in node:
+        # strict mode cannot express "any object" (probe 34061138858, HTTP 400
+        # on claim.threshold): bridge it as a JSON string; normalize_emit
+        # parses it back per the ORIGINAL schema
+        return {"anyOf": [{"type": "string"}, {"type": "null"}],
+                "description": "JSON object, serialized as a string"}
     out = {k: _strictify(v) for k, v in node.items()}
     if out.get("type") == "object" and "properties" in out:
         required = set(out.get("required", []))
@@ -132,6 +143,20 @@ def _normalize(value: Any, node: dict[str, Any], root: dict[str, Any]) -> Any:
             child = node["properties"].get(k)
             if v is None and k not in required and child is not None:
                 continue  # a strict-mode forced null on an optional key
+            if (
+                isinstance(v, str)
+                and isinstance(child, dict)
+                and _is_objectish(child)
+                and "properties" not in child
+            ):
+                # the free-form-object string bridge, parsed back (or null
+                # over guess when the string is not a JSON object)
+                try:
+                    parsed = json.loads(v)
+                except ValueError:
+                    parsed = None
+                out[k] = parsed if isinstance(parsed, dict) else None
+                continue
             out[k] = _normalize(v, child, root) if isinstance(child, dict) else v
         return out
     if isinstance(value, list) and isinstance(node.get("items"), dict):
