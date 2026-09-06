@@ -188,6 +188,27 @@ def test_profile_mentions_are_a_validated_only_aggregate(pg: Conn) -> None:
     assert _mentions(pg) == []
 
 
+def test_profile_mentions_are_normalized_at_write_time(pg: Conn) -> None:
+    """The live corpus fragments the aggregate (5,083 distinct mentions over
+    8,315 rows): compounds split, trailing parentheticals drop, protected
+    compounds (CI/CD, TCP/IP…) stay whole, and casings dedupe within a doc."""
+    dh = "d" * 63 + "2"
+    profile = _fixture_profile()
+    profile["demand_profile"]["areas"][0]["mentions"] = [
+        "Python/C/C++", "python", "CI/CD", "HTTP/2", "A/B testing",
+        "Python (pandas, PySpark)", "Kubernetes and/or Docker", "TCP/IP",
+    ]
+    extraction.upsert_state(
+        pg, document_hash=dh, model="z-ai/glm-5.2:free", **CONFIG,
+        state=DerivedState("validated", None), profile=profile,
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    assert {m for m, _, _ in _mentions(pg)} == {
+        "Python", "C", "C++", "CI/CD", "HTTP/2", "A/B testing",
+        "Kubernetes", "Docker", "TCP/IP",
+    }
+
+
 def test_profile_mentions_follow_the_extraction_row(pg: Conn) -> None:
     dh = "d" * 63 + "1"
     for model in ("z-ai/glm-5.2:free", "z-ai/glm-5.2"):
