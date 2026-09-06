@@ -608,3 +608,58 @@ def test_two_phase_dry_run_writes_nothing(tmp_path: Path, two_phase: FakeTwoPhas
             dry_run=True)
     assert s.outcomes[0].manifest.record_count == 3
     assert list(iter_manifests(LocalFS(tmp_path / "archive"))) == []
+
+
+# --- writer-connection heartbeat -------------------------------------------
+# Neon reaps quiet connections (compute autosuspend / idle timeouts, both
+# observed 2026-09-06: three straight sync runs died with AdminShutdown after
+# the ~8-minute fetch phase left the writer connection silent). The heartbeat
+# keeps it audibly alive between the pre-fetch replay and the post-fetch
+# ingest; it must stop before ingest resumes so nothing shares the connection.
+
+
+class _PingConn:
+    def __init__(self) -> None:
+        import threading
+
+        self.pings = 0
+        self.commits = 0
+        self.first_ping = threading.Event()
+
+    def execute(self, sql: str) -> None:
+        assert sql == "SELECT 1"
+        self.pings += 1
+        self.first_ping.set()
+
+    def commit(self) -> None:
+        self.commits += 1
+
+
+def test_heartbeat_pings_until_stopped() -> None:
+    import time
+
+    from jobhunter.fetch import _Heartbeat
+
+    conn = _PingConn()
+    hb = _Heartbeat(conn, interval_seconds=0.01)  # type: ignore[arg-type]
+    hb.start()
+    assert conn.first_ping.wait(2.0)
+    hb.stop()
+    settled = conn.pings
+    time.sleep(0.1)
+    assert conn.pings == settled  # silent after stop: the connection is ingest's again
+
+
+def test_heartbeat_swallows_a_dead_connection() -> None:
+    from jobhunter.fetch import _Heartbeat
+
+    class _DeadConn:
+        def execute(self, sql: str) -> None:
+            raise RuntimeError("terminating connection")
+
+        def commit(self) -> None:
+            raise AssertionError("commit after a failed ping")
+
+    hb = _Heartbeat(_DeadConn(), interval_seconds=0.01)  # type: ignore[arg-type]
+    hb.start()
+    hb.stop()  # joins; the thread must have exited on its own without raising
