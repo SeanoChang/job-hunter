@@ -10,7 +10,7 @@ from jobhunter.l2.transforms import (
 
 
 def test_registry_shape() -> None:
-    assert VALIDATOR_VERSION == "3"
+    assert VALIDATOR_VERSION == "4"
     assert set(TRANSFORMS[VALIDATOR_VERSION]) == {
         "experience_months", "compensation", "deadline",
     }
@@ -150,4 +150,52 @@ def test_compensation_code_suffixed(text: str, expected: dict[str, object] | Non
 
 
 def test_validator_version_bumped_for_the_grammar_change() -> None:
-    assert VALIDATOR_VERSION == "3"
+    assert VALIDATOR_VERSION == "4"
+
+
+# --- Workday phrasing (validator/4) -----------------------------------------
+# Step-1 of the supervised drain (2026-09-06) tallied 693 compensation, ~140
+# experience and 29 deadline anchors the grammars missed — all real Workday
+# phrasings, all correctly anchored by the model and rejected by us.
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # symbol AND trailing code on each side
+        ("$123,900 USD - $222,000 USD",
+         {"min": 123900, "max": 222000, "currency": "USD", "period": None}),
+        ("€78,600 EUR - €118,000 EUR",
+         {"min": 78600, "max": 118000, "currency": "EUR", "period": None}),
+        # decimal cents, spaced symbol, "to" separator, trailing code + period
+        ("$169,100.00 to $ 270,800.00 USD per year",
+         {"min": 169100, "max": 270800, "currency": "USD", "period": "year"}),
+        ("$18.50 - $24.25 per hour",
+         {"min": 18, "max": 24, "currency": None, "period": "hour"}),
+    ],
+)
+def test_compensation_validator4(text: str, expected: dict[str, object] | None) -> None:
+    assert parse_compensation(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("5 or more years of relevant experience", {"min": 60, "max": None}),
+        ("2 or more years of work experience", {"min": 24, "max": None}),
+    ],
+)
+def test_experience_or_more(text: str, expected: dict[str, object] | None) -> None:
+    assert parse_experience_months(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("09/11/26", {"date": "2026-09-11"}),
+        ("Apply by 12/01/2026", {"date": "2026-12-01"}),
+        ("02/30/26", None),  # impossible calendar date
+        ("posted 09/01/26; apply by 09/14/26", None),  # two dates: ambiguous
+    ],
+)
+def test_deadline_numeric(text: str, expected: dict[str, object] | None) -> None:
+    assert parse_deadline(text) == expected
