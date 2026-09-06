@@ -22,7 +22,10 @@ defaults:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Runs already reach ~70 min with NVIDIA+JPMC listing under per-host
+    # spacing; the W2 wave (~15k more postings) needs the headroom. The
+    # `fetch` concurrency group keeps overlapping runs queued, not parallel.
+    timeout-minutes: 110
     steps:
       # Third-party actions are pinned to commit SHAs (supply-chain). Tag shown for humans.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
