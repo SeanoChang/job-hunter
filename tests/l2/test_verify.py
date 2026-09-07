@@ -313,3 +313,27 @@ def test_possible_omission_silent_when_extracted_or_absent() -> None:
     report = verify(minimal_record(), DOC_MD)
     assert [f for f in report.findings if f.check == "completeness"] == []
     assert report.metrics["possible_omissions"] == 0
+
+
+def test_possible_omission_skips_boilerplate_lines() -> None:
+    """The v7 corpus scan's false positives were company-history lines the
+    model had already marked boilerplate — those lines don't vote (v8)."""
+    from jobhunter.hashing import sha256_hex
+    from jobhunter.l2.quotes import resolve_quote
+
+    boiler_line = "Historic grants of $100,000 - $150,000 were made in our first year."
+    doc = DOC_MD + "\n\n" + boiler_line
+    rec = minimal_record()
+    rec["document"]["document_hash"] = sha256_hex(doc.encode("utf-8"))
+    report = verify(rec, doc)  # money line NOT marked boilerplate: it votes
+    assert [f.path for f in report.findings if f.code == "possible_omission"] == [
+        "facts.compensation"
+    ]
+
+    q = resolve_quote(doc, boiler_line)
+    rec["facts"]["boilerplate_spans"].append(
+        {"text": q.text, "span": list(q.span), "occurrence": q.occurrence}
+    )
+    report2 = verify(rec, doc)
+    assert [f for f in report2.findings if f.code == "possible_omission"] == []
+    assert report2.metrics["possible_omissions"] == 0

@@ -10,7 +10,7 @@ from jobhunter.l2.transforms import (
 
 
 def test_registry_shape() -> None:
-    assert VALIDATOR_VERSION == "7"
+    assert VALIDATOR_VERSION == "8"
     assert set(TRANSFORMS[VALIDATOR_VERSION]) == {
         "experience_months", "compensation", "deadline",
     }
@@ -150,7 +150,7 @@ def test_compensation_code_suffixed(text: str, expected: dict[str, object] | Non
 
 
 def test_validator_version_bumped_for_the_grammar_change() -> None:
-    assert VALIDATOR_VERSION == "7"
+    assert VALIDATOR_VERSION == "8"
 
 
 # --- Workday phrasing (validator/4) -----------------------------------------
@@ -219,3 +219,17 @@ def test_deadline_numeric(text: str, expected: dict[str, object] | None) -> None
 )
 def test_compensation_validator6(text: str, expected: dict[str, object] | None) -> None:
     assert parse_compensation(text) == expected
+
+
+def test_experience_at_least_is_a_floor() -> None:
+    """v8: 'At least 5 years' read as exact {60, 60} under v7 — it is a floor,
+    same as '5+ years' (2026-09-06 omission-sample review)."""
+    from jobhunter.l2.transforms import parse_experience_months
+
+    assert parse_experience_months("At least 5 years of relevant experience") == {
+        "min": 60, "max": None,
+    }
+    assert parse_experience_months("at least 3 yrs") == {"min": 36, "max": None}
+    # untouched neighbours
+    assert parse_experience_months("5+ years") == {"min": 60, "max": None}
+    assert parse_experience_months("5 years of Python") == {"min": 60, "max": 60}
