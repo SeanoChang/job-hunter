@@ -1097,6 +1097,7 @@ def _make_engine(settings: Settings) -> Any:
         return CodexCli(
             reasoning_effort=settings.l2_reasoning_effort,
             trust_requested_model=settings.l2_trust_requested_model,
+            strict=settings.l2_schema_strict,
         )
     assert settings.l2_base_url is not None  # require_l2 ran
     return OpenAICompat(
