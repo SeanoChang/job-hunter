@@ -354,9 +354,18 @@ def _check_omissions(extraction: dict[str, Any], md: str, report: Report) -> Non
     the document parses one under this validator's own grammars is a WARNING —
     the signal can be false (equity figures, company-age years, a posted-on
     date), so it flags for audit and never fails the record. Deadline demands
-    a deadline word on the line; a bare date is any date."""
+    a deadline word on the line; a bare date is any date. Lines the model
+    already marked boilerplate don't vote (validator/8): the v7 corpus scan's
+    false positives were company-history lines inside marked boilerplate."""
     facts = extraction["facts"]
-    lines = md.splitlines()
+    boiler = _merge_intervals(_clamped_spans(facts.get("boilerplate_spans") or [], len(md)))
+    lines: list[str] = []
+    pos = 0
+    for line in md.splitlines():
+        end = pos + len(line)
+        if not any(bs < end and pos < be for bs, be in boiler):
+            lines.append(line)
+        pos = end + 1
     omissions = 0
 
     def warn(path: str, line: str) -> None:

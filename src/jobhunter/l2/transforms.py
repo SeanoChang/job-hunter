@@ -15,12 +15,14 @@ from collections.abc import Callable
 from datetime import date
 
 # validator/7: the possible_omission completeness warning (verify._check_omissions)
-VALIDATOR_VERSION = "7"
+# validator/8: "at least N years" is a floor; omission scan skips boilerplate lines
+VALIDATOR_VERSION = "8"
 
 _RANGE = re.compile(r"(\d+)\s*(?:-|–|—|to|and)\s*(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 _FLOOR = re.compile(
-    r"(\d+)\s*(?:\+|or\s+more)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE
+    r"(?:(\d+)\s*(?:\+|or\s+more)|at\s+least\s+(\d+))\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE
 )  # validator/4: Workday writes "5 or more years" (step-1 review, 2026-09-06)
+# validator/8: "at least 5 years" is a floor, not an exact (omission-sample review)
 _EXACT = re.compile(r"(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 
 # validator/2: currency is retained as written, never converted. A symbol
@@ -79,7 +81,7 @@ def parse_experience_months(text: str) -> dict[str, object] | None:
             return None  # descending range: ambiguous
         return {"min": lo, "max": hi}
     if m := _FLOOR.search(text):
-        return {"min": int(m.group(1)) * 12, "max": None}
+        return {"min": int(m.group(1) or m.group(2)) * 12, "max": None}
     exacts = _EXACT.findall(text)
     if len(exacts) == 1:
         months = int(exacts[0]) * 12
