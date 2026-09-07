@@ -309,6 +309,30 @@ def observed_from_events(stdout: str) -> tuple[str | None, int | None, int | Non
     return model, tokens_in, tokens_out
 
 
+def error_from_events(stdout: str) -> str | None:
+    """The failure reason `codex exec --json` reports on stdout, which stderr
+    ("Reading additional input from stdin...") does not carry. Scans for the
+    last `type:"error"` / `turn.failed` event and returns its message so a
+    non-zero exit is diagnosable; None when the stream names no error."""
+    reason: str | None = None
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "error" and isinstance(event.get("message"), str):
+            reason = event["message"]
+        err = event.get("error")
+        if isinstance(err, dict) and isinstance(err.get("message"), str):
+            reason = err["message"]
+    return reason
+
+
 class CodexCli:
     """OpenAI Codex via `codex exec`, locked down to a pure completion.
 
@@ -343,6 +367,7 @@ class CodexCli:
         reasoning_effort: str = "low",
         trust_requested_model: bool = False,
         timeout: float = 300.0,
+        strict: bool = True,
         run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
         which: Callable[[str], str | None] = shutil.which,
         sleep: Callable[[float], None] = time.sleep,
@@ -350,6 +375,7 @@ class CodexCli:
         self._reasoning_effort = reasoning_effort
         self._trust_requested_model = trust_requested_model
         self._timeout = timeout
+        self._strict = strict
         self._run = run
         self._which = which
         self._sleep = sleep
@@ -357,7 +383,11 @@ class CodexCli:
     def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
         with tempfile.TemporaryDirectory(prefix="jh-codex-") as work:
             schema_path = Path(work) / "schema.json"
-            schema_path.write_text(json.dumps(engine_schema(schema)), encoding="utf-8")
+            # codex on a ChatGPT account enforces OpenAI strict structured
+            # outputs (required must list every key). Send the strict variant;
+            # the runner's normalize_emit strips the forced nulls before verify.
+            emit = strict_schema(engine_schema(schema)) if self._strict else engine_schema(schema)
+            schema_path.write_text(json.dumps(emit), encoding="utf-8")
             out_path = Path(work) / "last-message.txt"
             args = [
                 "exec",
@@ -395,10 +425,12 @@ class CodexCli:
 
             stderr = (proc.stderr or "")[:400]
             if proc.returncode != 0:
-                lowered = stderr.lower()
+                reason = error_from_events(proc.stdout or "")
+                lowered = f"{stderr}\n{reason or ''}".lower()
                 if any(s in lowered for s in ("not logged in", "codex login", "unauthorized")):
-                    raise EngineFatalError(f"codex auth failed: {stderr}")
-                raise EngineTransportError(f"codex exited {proc.returncode}: {stderr}")
+                    raise EngineFatalError(f"codex auth failed: {reason or stderr}")
+                detail = reason or stderr or "(no error event on stdout)"
+                raise EngineTransportError(f"codex exited {proc.returncode}: {detail}")
             try:
                 raw_text = out_path.read_text(encoding="utf-8").strip()
             except OSError as exc:

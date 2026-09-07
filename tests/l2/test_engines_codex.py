@@ -82,8 +82,16 @@ def test_schema_is_written_for_the_cli() -> None:
             )
             return super().__call__(argv, **kwargs)
 
+    from jobhunter.l2.schemas import strict_schema
+
     run = SchemaCapturingRun('{"ok": true}')
     _engine(run).complete("p", SCHEMA, "m")
+    # strict is the default: codex on a ChatGPT account enforces OpenAI strict
+    # structured outputs (required must list every key)
+    assert captured["schema"] == strict_schema(SCHEMA)
+
+    run_loose = SchemaCapturingRun('{"ok": true}')
+    _engine(run_loose, strict=False).complete("p", SCHEMA, "m")
     assert captured["schema"] == SCHEMA
 
 
@@ -109,6 +117,28 @@ def test_nonzero_exit_is_transport() -> None:
     run = FakeRun(None, returncode=1)
     with pytest.raises(EngineTransportError):
         _engine(run).complete("p", SCHEMA, "m")
+
+
+def test_nonzero_exit_surfaces_the_json_error_not_only_stderr() -> None:
+    # codex prints "Reading additional input from stdin..." on stderr as startup
+    # noise; the real reason rides the --json stream as a turn.failed/error event.
+    # The engine must include that message so a failing drain is diagnosable.
+    stream = (
+        '{"type":"turn.started"}\n'
+        '{"type":"error","message":"{\\"status\\":429,\\"error\\":'
+        '{\\"message\\":\\"rate limit exceeded\\"}}"}\n'
+        '{"type":"turn.failed","error":{"message":"rate limit exceeded"}}\n'
+    )
+
+    class StreamErrRun(FakeRun):
+        def __call__(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=argv, returncode=1, stdout=stream,
+                stderr="Reading additional input from stdin...\n",
+            )
+
+    with pytest.raises(EngineTransportError, match="rate limit exceeded"):
+        _engine(StreamErrRun(None)).complete("p", SCHEMA, "m")
 
 
 def test_auth_failure_is_fatal() -> None:
@@ -248,6 +278,7 @@ def test_codex_strips_schema_meta_ref() -> None:
             )
             return super().__call__(argv, **kwargs)
 
-    _engine(Capture('{"ok": true}')).complete("p", REAL_SCHEMA, "m")
+    # strict=False isolates meta-ref stripping from the strict nullability rewrite
+    _engine(Capture('{"ok": true}'), strict=False).complete("p", REAL_SCHEMA, "m")
     assert "$schema" not in seen["schema"]
     assert seen["schema"]["properties"] == {"ok": {"type": "boolean"}}  # structure intact
