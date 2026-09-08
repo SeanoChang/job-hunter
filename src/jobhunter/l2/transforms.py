@@ -16,12 +16,20 @@ from datetime import date
 
 # validator/7: the possible_omission completeness warning (verify._check_omissions)
 # validator/8: "at least N years" is a floor; omission scan skips boilerplate lines
-VALIDATOR_VERSION = "8"
+# validator/9: "minimum (of) N", "more than N", "over N" are floors (audit 2026-09-06
+# defect 1, C01: 72 validated rows held a false exact interval). The v1 record
+# cannot express a strict floor, so "more than N" maps to the inclusive
+# {"min": N*12, "max": null} — conservative, no invented upper bound; v2's
+# comparison operators represent gt exactly.
+VALIDATOR_VERSION = "9"
 
 _RANGE = re.compile(r"(\d+)\s*(?:-|–|—|to|and)\s*(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 _FLOOR = re.compile(
-    r"(?:(\d+)\s*(?:\+|or\s+more)|at\s+least\s+(\d+))\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE
-)  # validator/4: Workday writes "5 or more years" (step-1 review, 2026-09-06)
+    r"(?:(\d+)\s*(?:\+|or\s+more)"
+    r"|\b(?:at\s+least|a\s+minimum\s+of|minimum\s+of|minimum|more\s+than|over)\s+(\d+))"
+    r"\s*(?:years?|yrs?|yoe)\b",
+    re.IGNORECASE,
+)  # the leading \b keeps "turnover 5 years" from matching the "over" branch
 # validator/8: "at least 5 years" is a floor, not an exact (omission-sample review)
 _EXACT = re.compile(r"(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 
