@@ -21,13 +21,13 @@ from jobhunter.hashing import sha256_hex
 from jobhunter.l2.quotes import occurrence_index
 from jobhunter.l2.report import Report
 from jobhunter.l2.schemas import validate_record
-
-# assembly's own derivation, imported rather than re-implemented: one grammar and
-# one state mapping, so "what assembly wrote" and "what verification recomputes"
-# cannot drift into disagreeing about the same evidence.
-from jobhunter.l2.v2.assemble import _derive as _rederive
 from jobhunter.l2.v2.assemble import normalize_key
-from jobhunter.l2.v2.facts import VALIDATOR_VERSION
+from jobhunter.l2.v2.facts import (
+    VALIDATOR_VERSION,
+    derive_date,
+    derive_money,
+    derive_quantity,
+)
 from jobhunter.l2.v2.source import ANNOTATION_VERSION, annotate, blocks_by_id
 from jobhunter.l2.v2.types import IMPORTANCE_KINDS, Block
 
@@ -45,14 +45,53 @@ _DISPOSITIONS_NEEDING_REFS = frozenset({"statements", "facts"})
 # footers from every downstream check, so nothing could report the omission. A
 # warning, not an error: EEO text legitimately says "must", and the auditor, not
 # this module, decides whether a real requirement was thrown away.
+#
+# `requir\w*`, not `required?`: the audit's own footer reads "This position
+# *requires* the incumbent to have a sufficient knowledge of English", carrying
+# no other word in this vocabulary. A pattern that knew only "require"/"required"
+# would pass in silence exactly the case it was written for.
 _REQUIREMENT_LANGUAGE = re.compile(
-    r"(?i)\b(must|required?|minimum|at least|only candidates|need to|proficien\w*|fluen\w*)\b"
+    r"(?i)\b(must|requir\w*|minimum|at least|only candidates|need to|proficien\w*|fluen\w*)\b"
 )
 
 # presence family key (record) for each fact-entry family
 _PRESENCE_KEY = {"experience": "experience", "compensation": "compensation",
                  "quantity": "quantities", "date": "dates"}
 _PRESENCE_NEEDING_EVIDENCE = frozenset({"explicitly_absent", "unresolved"})
+
+
+def _cited(refs: list[dict[str, Any]] | None) -> str | None:
+    """One aspect's cited text: the bound refs joined by a space, in source order."""
+    if refs is None:
+        return None
+    ordered = sorted(refs, key=lambda ref: (ref["span"][0], ref["span"][1]))
+    return " ".join(str(ref["text"]) for ref in ordered)
+
+
+def _rederive(family: str, evidence: dict[str, Any]) -> dict[str, Any]:
+    """Recompute a fact entry's `derived` from the spans the record cites.
+
+    A second call site of the `facts` grammar rather than a call into assembly's
+    own helper: re-running the writer's code would agree with the writer by
+    construction, and a wrong family→grammar or state mapping there could never
+    turn `fact_mismatch` red. The two mappings are frozen together under
+    VALIDATOR_VERSION, and a test asserts they agree family by family.
+    """
+    value = _cited(evidence["value"]) or ""
+    if family in ("experience", "quantity"):
+        quantity = derive_quantity(value, _cited(evidence["comparison"]))
+        return {"state": "parsed" if quantity else "present_unparsed",
+                "quantity": quantity, "money": None, "date": None}
+    if family == "compensation":
+        money = derive_money(value, _cited(evidence["comparison"]),
+                             _cited(evidence["currency"]), _cited(evidence["unit"]))
+        return {"state": "parsed" if money else "present_unparsed",
+                "quantity": None, "money": money, "date": None}
+    date = derive_date(value)
+    state = (
+        "present_unparsed" if date is None else "ambiguous" if date["date"] is None else "parsed"
+    )
+    return {"state": state, "quantity": None, "money": None, "date": date}
 
 
 def iter_bound_refs(record: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]]:
@@ -194,6 +233,9 @@ def _check_group_nesting(record: dict[str, Any], report: Report) -> None:
     """
     groups = {g["id"]: g for g in record["relations"]["groups"]}
     children = {gid: [m for m in g["members"] if m in groups] for gid, g in groups.items()}
+    index_of: dict[str, int] = {}
+    for i, group in enumerate(record["relations"]["groups"]):
+        index_of.setdefault(group["id"], i)  # a duplicate id is its own finding
     white, grey, black = 0, 1, 2
     color = dict.fromkeys(groups, white)
     cyclic: set[str] = set()
@@ -212,12 +254,17 @@ def _check_group_nesting(record: dict[str, Any], report: Report) -> None:
             stack[-1] = (node, i + 1)
             child = kids[i]
             if color[child] == grey:
-                cyclic.update({node, child})
+                # every group between the back edge's target and here is on the
+                # loop; naming only the two endpoints sends a reader looking for
+                # an edge that doesn't exist in a cycle longer than two
+                at = next(k for k, (on_path, _) in enumerate(stack) if on_path == child)
+                cyclic.update(on_path for on_path, _ in stack[at:])
             elif color[child] == white:
                 color[child] = grey
                 stack.append((child, 0))
     for gid in sorted(cyclic):
-        report.error("references", f"relations.groups[{gid}]", "reference_cycle", group_id=gid)
+        report.error("references", f"relations.groups[{index_of[gid]}]", "reference_cycle",
+                     group_id=gid)
 
     depth: dict[str, int] = {}
     for root in groups:
@@ -236,8 +283,8 @@ def _check_group_nesting(record: dict[str, Any], report: Report) -> None:
             pending.append((node, True))
             pending.extend((c, False) for c in children[node] if c not in depth)
     for gid in sorted(g for g, value in depth.items() if value > MAX_GROUP_DEPTH):
-        report.error("references", f"relations.groups[{gid}]", "depth_exceeded",
-                     depth=depth[gid], max_depth=MAX_GROUP_DEPTH)
+        report.error("references", f"relations.groups[{index_of[gid]}]", "depth_exceeded",
+                     group_id=gid, depth=depth[gid], max_depth=MAX_GROUP_DEPTH)
 
 
 def _check_relations(record: dict[str, Any], report: Report) -> None:

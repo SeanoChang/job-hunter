@@ -170,3 +170,63 @@ def make_record() -> dict[str, Any]:
 def v2_record() -> dict[str, Any]:
     """A clean assembled record over MD: every verification check passes."""
     return make_record()
+
+
+# --- the C02/C07 English-footer shape --------------------------------------
+
+FOOTER_MD = (
+    "Responsibilities\n"
+    "Own the quarterly close.\n"
+    "This position requires the incumbent to have a sufficient knowledge of English "
+    "to have professional verbal and written exchanges.\n"
+)
+FOOTER_DOC_HASH = sha256_hex(FOOTER_MD.encode("utf-8"))
+
+
+def _footer_emit() -> dict[str, Any]:
+    """b000001 "Responsibilities" / b000002 "Own the quarterly close." /
+    b000003 the English-proficiency footer, thrown away as EEO boilerplate."""
+    whole_b2 = {"block_id": "b000002", "text": None, "occurrence": None}
+    return {
+        "source_assessment": {"usability": "usable", "evidence": None, "note": None},
+        "statements": [{
+            "id": "s1", "kind": "responsibility", "subject": "candidate",
+            "topic": "Quarterly close", "evidence": [whole_b2],
+            "importance": None, "importance_evidence": None,
+            "polarity": "positive", "polarity_evidence": None,
+            "proficiency": None, "proficiency_evidence": None,
+            "condition_ids": [], "fact_ids": [], "unresolved": [],
+        }],
+        "relations": {"groups": [], "conditions": [], "example_sets": []},
+        "facts": {
+            "presence": {
+                "experience": {"state": "none_found", "evidence": None},
+                "compensation": {"state": "none_found", "evidence": None},
+                "quantities": {"state": "none_found", "evidence": None},
+                "dates": {"state": "none_found", "evidence": None},
+            },
+            "entries": [],
+        },
+        "mentions": [],
+        "areas": [],
+        "block_accounting": [
+            {"block_id": "b000001", "disposition": "context", "ref_ids": [],
+             "exclusion_reason": None, "evidence": None},
+            {"block_id": "b000002", "disposition": "statements", "ref_ids": ["s1"],
+             "exclusion_reason": None, "evidence": None},
+            {"block_id": "b000003", "disposition": "excluded", "ref_ids": [],
+             "exclusion_reason": "eeo", "evidence": None},
+        ],
+    }
+
+
+@pytest.fixture
+def v2_footer_record() -> dict[str, Any]:
+    """The audit's C02/C07 record: a real English requirement excluded as EEO.
+
+    The footer line carries exactly one word from the tripwire's vocabulary —
+    "requires" — which is why this fixture, not a hand-written string, is what
+    keeps the warning honest about the class it was written for.
+    """
+    return assemble(_footer_emit(), FOOTER_MD, document_hash=FOOTER_DOC_HASH,
+                    observed_model="gpt-5.6-luna", at=AT)
