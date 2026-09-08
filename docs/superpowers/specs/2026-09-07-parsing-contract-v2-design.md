@@ -2,7 +2,7 @@
 title: Parsing contract v2 — preserve meaning from source to search
 date: 2026-09-07
 type: design
-status: draft
+status: approved
 ---
 
 # Parsing contract v2
@@ -16,8 +16,12 @@ neither demonstrates that an interpretation is complete or correct.
 
 This design formalizes the direction approved in chat on 2026-09-07. Sean's
 approval was: “seems nice. let's continue with this plan”. That approved the
-proposed contract as the basis for this written spec; the detailed contract
-below is pending review. It is not implemented or a deployment authorization.
+proposed contract as the basis for this written spec. The written contract was
+then independently verified against the code and the audit snapshot (56/59
+audit claims confirmed by adversarially checked re-derivation) and approved
+for implementation planning on 2026-09-07 (“let's create new plan on how to
+refactor the current parsing”), with the four amendments marked [A1]–[A4]
+below. It is not a deployment authorization; nothing in it is implemented.
 
 The [production-data audit](../../2026-09-06-l2-data-quality-audit.md) supplies
 twelve regression cases. Its snapshot is fixed at 2026-09-06 22:57:14 UTC; its
@@ -41,8 +45,15 @@ meaning.
   `timeutil.py`; all environment access through `config.py`.
 - The archive is truth. Attempts, audits, repairs, and human decisions are
   immutable and written before their derived state. Replay makes no model calls.
-- Existing extraction single-writer ownership applies. No model or archive
-  network call is made while holding an open database transaction.
+- Existing extraction single-writer ownership applies. No model call is made
+  while holding an open database transaction (already true at `d1f6775`:
+  `runner.py` commits immediately before both `engine.complete` sites). [A1]
+  V2 extends the same rule to archive network calls — a requirement, not a
+  description of current behavior: today `settle()` and the catch-up scan
+  issue archive GET/LIST calls inside an open transaction (`runner.py`
+  lines 269/284 and 313–332, via `session.do`), and increment 2 must
+  restructure those paths to load archive objects outside the transaction
+  before applying database writes.
 - No automatic candidate exclusion, application submission, or profile matching
   implementation is included. A profile never claims to certify a candidate.
 - Production migrations, resets, replay/backfill, and default-version cutover
@@ -107,8 +118,15 @@ Proposed new modules under `src/jobhunter/l2/v2/`:
 - `quality.py`: pure assessment and search-eligibility policy over the chosen
   candidate, checks, audit result, sample completion, and human decisions.
 
-The existing schema loader serves `schemas_data/2/`; the runner selects a
-version bundle rather than importing one global prompt/assembler for all work.
+The existing schema loader is already version-parameterized and will serve
+`schemas_data/2/` the moment the directory exists (`schemas.py::_versions`
+enumerates subdirectories; it is `@cache`d, so a bundle switch requires a
+process restart, which packaged deploys satisfy). [A2] Runner-side bundle
+selection does not exist today — `runner.py` pins `SCHEMA_VERSION = "1"` and
+imports `PROMPT_VERSION`/`VALIDATOR_VERSION` as module constants; the only
+version-parameterized entry point (`settle()`'s optional kwargs) serves
+replay/rebuild of stored rows, never new-extraction selection. Increment 2
+builds bundle selection rather than assuming it exists.
 Archive serialization, settlement, CLI, and MCP remain shared infrastructure,
 with explicit version dispatch at their boundaries. Do not fork an entire second
 runner or duplicate database connection/recovery code.
@@ -326,10 +344,11 @@ requirements in footers. Accounting coverage is never called semantic recall.
 ## 4. Prompt contracts
 
 Extraction uses `demand-profile/v6`, record and emit schema `2`, and rules
-`parsing-rules/2`. The initial v2 validator identifier is `9` at the inspected
-baseline; if another change claims it first, allocate a new identifier before
-implementation and update the bundle together. Never reuse an identifier for
-different bytes. Schema version and prompt names likewise require collision
+`parsing-rules/2` (a new versioned artifact — no `parsing-rules/1` exists; it
+starts at 2 to match the schema numbering). [A3] The v1 floor-grammar repair
+(“minimum”, “more than”, “over” — audit defect 1) ships first and claims
+validator `9`, so the initial v2 validator identifier is `10`. Never reuse an
+identifier for different bytes. Schema version and prompt names likewise require collision
 checks.
 
 ### Extractor
@@ -634,6 +653,9 @@ through excerpting.
   with no requirements. Error provenance does not assert an unobserved cause.
 - C11, Workday: grammar failure and invalid quotation remain distinct. Fixing
   one may not silently accept the other or remove the supporting source value.
+  [A4] Historical note: C11's salary anchors failed a validator/3-era grammar;
+  the current grammar parses them. The contract asserts the distinctness of
+  the two failure classes, not a present-day grammar gap.
 - C12, NVIDIA: preferred framework examples retain preferred/example semantics
   through indexing and retain their parent statement context.
 

@@ -23,8 +23,27 @@ per-requirement verdicts carry evidence and distinguish `not_demonstrated` from
 dispositions of the 2026-08-17 external review:
 `2026-08-17-parsing-direction.md`.
 
+## Architecture reviews
+
+- `2026-09-06-l2-data-quality-audit.md` — **current analysis, advisory**:
+  read-only audit of all stored L2 states, live MCP source/profile comparisons,
+  demonstrated semantic and completeness defects, and prioritized quality gates.
+  Raw snapshot data stays local under `data/l2-audit-2026-09-06/`.
+- `2026-09-06-architecture-review.md` — **current analysis, advisory**: reframes
+  the user problem, evaluates implementation at `72f1a1b`, reproduces evidence
+  and recovery failures, and prioritizes improvements. Includes runnable
+  probes in `review-evidence/architecture-probes.py`; does not supersede the
+  normative designs below.
+
 ## Design documents
 
+- `superpowers/specs/2026-09-07-parsing-contract-v2-design.md` — **approved,
+  normative for schema-v2 semantics** (amended [A1]–[A4] after independent
+  verification, 2026-09-07): typed statements, scoped facts, claim-linked
+  mentions, source completeness, audit/repair prompts, v1 coexistence, and
+  twelve regression contracts. Implemented via
+  `superpowers/plans/2026-09-07-parsing-v2-offline-contract.md` (increment 1);
+  no production cutover.
 - `superpowers/specs/2026-09-02-hosted-mcp-design.md` — **current, normative
   for the hosted read surface**: the MCP wrapper over `views.py`, static-bearer
   auth, server-side pulse cursors (schema v4 `mcp_cursors`), Cloud Run deploy
