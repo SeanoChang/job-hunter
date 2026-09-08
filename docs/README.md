@@ -155,9 +155,18 @@ All still current as research; none define the design.
   assembly extracted to `views.py`, schema v4 `mcp_cursors` + `store/mcp_state.py`,
   the FastMCP app with bearer auth and eight tools, packaging, and the Terraform
   config in `infra/`.
+- `superpowers/plans/2026-09-07-parsing-v2-offline-contract.md` — parsing v2
+  increment 1 (shipped, offline only): the `l2/v2/` pure modules — source
+  block annotation (`blocks/1`), typed derivation grammars (`validator/10`),
+  emit→record assembly, the `(record, markdown)` verifier, quality
+  dimensions, mention/statement projection — schema `2`, plus the v1
+  floor-grammar repair (`validator/9`) and the twelve case contracts with
+  seven synthetic minimal pairs. Frozen identifiers: `blocks/1`, schema `2`,
+  `validator/9`/`validator/10`, `parsing-rules/2`, `aliases/1`. Zero model
+  calls, zero database/archive I/O; the runner, CLI, and MCP are untouched.
 
-Not built yet: the M3 quality loop (k-sampling, refuter, consolidate,
-alerts), the concept linker (L3), and the workspace/tracker faces.
+Not built yet: M3 alerting (attention digests via generic webhook), the
+concept linker (L3), and the workspace/tracker faces.
 
 ## Prototype code
 
