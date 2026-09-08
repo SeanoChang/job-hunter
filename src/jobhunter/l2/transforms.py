@@ -28,7 +28,7 @@ _RANGE = re.compile(r"(\d+)\s*(?:-|–|—|to|and)\s*(\d+)\s*(?:years?|yrs?|yoe)
 _FLOOR = re.compile(
     r"(?:(\d+)\s*(?:\+|or\s+more)"
     r"|\b(?:at\s+least|a\s+minimum\s+of|minimum\s+of|minimum"
-    r"|(?<!no\s)(?<!not\s)more\s+than|(?<!no\s)(?<!not\s)over)\s+(\d+))"
+    r"|(?<!\bno\s)(?<!\bnot\s)more\s+than|(?<!\bno\s)(?<!\bnot\s)over)\s+(\d+))"
     r"\s*(?:years?|yrs?|yoe)\b",
     re.IGNORECASE,
 )  # the leading \b keeps "turnover 5 years" from matching the "over" branch
