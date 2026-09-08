@@ -59,16 +59,32 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
   read queries.
 - `l2/` — the demand-profile layer (increments 1–2 of
   `docs/2026-08-26-l2-extraction-harness.md`): quote/span resolution
-  (`quotes.py`), versioned fact transforms (`transforms.py`), JSON schemas v1
-  (`schemas_data/`), the pure `verify()` suite (`verify.py`) — all no-I/O,
-  no-LLM; plus the harness: prompt `demand-profile/v5` (`prompt.py`), engine
-  backends (`engines.py`: openai-compat, claude-cli, codex-cli; observed
-  model only),
-  emit→record assembly (`assemble.py`), immutable attempt objects
-  (`attempts.py`), pure state derivation (`state.py`), the serial drain loop
-  (`runner.py`: ladder, breaker, caps, catch-up scan), archive replay
-  (`rebuild.py`). `VALIDATOR_VERSION` (see `transforms.py`) is frozen per
-  version — any check or threshold change bumps it, never edits in place.
+  (`quotes.py`), versioned fact transforms (`transforms.py`, `validator/9` —
+  floor grammar for "at least/minimum/over N years", omission scan skips
+  boilerplate), JSON schemas v1 (`schemas_data/1/`), the pure `verify()` suite
+  (`verify.py`) — all no-I/O, no-LLM; plus the harness: prompt
+  `demand-profile/v5` (`prompt.py`), engine backends (`engines.py`:
+  openai-compat, claude-cli, codex-cli; observed model only), emit→record
+  assembly (`assemble.py`), immutable attempt objects (`attempts.py`), pure
+  state derivation (`state.py`), the serial drain loop (`runner.py`: ladder,
+  breaker, caps, catch-up scan), archive replay (`rebuild.py`).
+  `VALIDATOR_VERSION` (see `transforms.py`) is frozen per version — any check
+  or threshold change bumps it, never edits in place.
+  - `l2/v2/` — the offline v2 semantic contract (increment 1 of
+    `docs/superpowers/specs/2026-09-07-parsing-contract-v2-design.md`; not
+    wired into the runner, CLI, or MCP yet): source block annotation and
+    exact reference binding (`source.py`, `blocks/1`), closed enums and typed
+    derivation results (`types.py`), versioned derivation grammars
+    (`facts.py`, `validator/10` — quantity comparisons, money/date
+    derivation), emit→record assembly with collected binding errors
+    (`assemble.py`), the pure verifier over `(record, markdown)` — references,
+    facts, accounting, usability (`verify.py`), the seven quality dimensions
+    and `search_eligible` policy (`quality.py`), pure mention/statement row
+    projection (`project.py`). Schemas v2 live at
+    `schemas_data/2/{emit,record}.schema.json`, served by the same
+    version-parameterized loader as v1. `parsing-rules/2` and `aliases/1` are
+    the other identifiers frozen with this increment. Zero model calls, zero
+    database/archive I/O.
 
 ## Conventions
 

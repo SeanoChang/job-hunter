@@ -15,6 +15,17 @@ the root `pyproject.toml`, `-q` by default).
 - `tests/store/` — lifecycle, panel, queries, db. Needs Postgres;
   `JOB_HUNTER_TEST_DATABASE_URL` points at it (CI runs a postgres:17 service).
   `helpers.py` holds shared store-test setup.
+- `tests/l2/` — the demand-profile layer: quotes, transforms (`validator/9`),
+  schemas v1, verify, the harness (engines, prompt, assemble, attempts,
+  state, runner, rebuild, consolidate, agreement, refuter). No Postgres, no
+  network; recorded fixtures only.
+  - `tests/l2/v2/` — the offline v2 contract (`validator/10`): source
+    annotation, types, facts, assemble, verify, quality, project, schemas v2,
+    plus `test_cases.py`, which runs the twelve audit case contracts
+    (`C01`-`C12`) and five synthetic minimal pairs. Eleven cases load a
+    `.source.md`/`.emit.json` fixture pair from `tests/l2/v2/cases/`; C10
+    (truncated engine output) and the minimal pairs are inline-coded. Fully
+    offline and deterministic — zero model calls.
 - `test_ci_workflow.py` — the scheduled `fetch` workflow: its `sync` step body is
   extracted from the YAML and run under `bash -eo pipefail` against a stub `uv`
   (which exit codes fail the hourly job is a decision made in shell, not Python).
