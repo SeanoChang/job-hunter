@@ -1910,7 +1910,9 @@ git add src/jobhunter/l2/v2/quality.py src/jobhunter/l2/v2/project.py \
 git commit -m "feat(l2/v2): quality gate policy and claim-level mention projection"
 ```
 
----### Task 10: The twelve case contracts
+---
+
+### Task 10: The twelve case contracts
 
 Encode spec §9's mandatory contracts as regression tests. Fixtures are checked
 in as minimal source excerpts + hand-authored v2 emits under
