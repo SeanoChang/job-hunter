@@ -11,7 +11,7 @@ read from the emit.
 from __future__ import annotations
 
 import copy
-from typing import Any
+from typing import Any, cast
 
 from jobhunter.hashing import canonical_json, sha256_hex
 from jobhunter.l2.v2.facts import (
@@ -20,6 +20,7 @@ from jobhunter.l2.v2.facts import (
     derive_money,
     derive_quantity,
 )
+from jobhunter.l2.v2.quality import assess
 from jobhunter.l2.v2.source import (
     ANNOTATION_VERSION,
     RefBindError,
@@ -264,23 +265,6 @@ def _accounting(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, 
     }
 
 
-def _initial_quality(usability: Any, evidence: str = "pass") -> dict[str, Any]:
-    """Quality at assembly time: source usability plus the checks not yet run.
-
-    A stub owned here so assembly stays independently testable; `quality.assess`
-    replaces the call once the policy module lands.
-    """
-    return {
-        "source": usability,
-        "evidence": evidence,
-        "semantics": "not_checked",
-        "completeness": "not_checked",
-        "sampling": "not_requested",
-        "human_review": "none",
-        "search_eligible": False,
-    }
-
-
 def assemble(
     emit: dict[str, Any],
     markdown: str,
@@ -347,7 +331,9 @@ def assemble(
             "candidate_hash": "",
             "parent_candidate_hash": parent_candidate_hash,
         },
-        "quality": _initial_quality(assessment.get("usability")),
+        # usability is raw model output at this point — cast, not asserted; an
+        # invalid value still fails record schema validation downstream.
+        "quality": assess(source=cast(str, assessment.get("usability")), evidence="pass"),
     }
     if binder.errors:
         raise AssembleError(binder.errors)
