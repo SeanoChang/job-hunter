@@ -28,13 +28,22 @@ _UNIT = re.compile(
     r"|(?:times?\s+per\s+(?P<per>week|month|day))",
     re.IGNORECASE,
 )
+_HAS_ALPHA = re.compile(r"[A-Za-z]")
 
 
 def _comparison(comparison_text: str | None) -> str | None:
     if comparison_text is None:
         return None
+    text = comparison_text.strip()
     for pattern, op in _CMP_PHRASES:
-        if re.search(r"(?i)\b(?:" + pattern + r")\b", comparison_text):
+        # fullmatch, not search: a phrase must consume the whole cited span.
+        # "no more than" is one of the lte alternatives below and fullmatches
+        # it outright; "not more than" or "greater than or equal to" merely
+        # *contain* a gt/lt alternative as a substring and must NOT match it
+        # (null-over-guess: unknown comparison grammar is unparsed, never a
+        # guessed operator borrowed from an unrelated phrase it happens to
+        # embed).
+        if re.fullmatch(pattern, text, re.IGNORECASE):
             return op
     return "?"  # comparison evidence present but not in the grammar: unparsed
 
@@ -52,6 +61,8 @@ def derive_quantity(value_text: str, comparison_text: str | None) -> dict[str, A
         dimension, unit, scale = "percentage", "percent", 1.0
     elif unit_m and unit_m.group("per"):
         dimension, unit, scale = "frequency", f"per_{unit_m.group('per').lower()}", 1.0
+    elif _HAS_ALPHA.search(value_text):
+        return None  # unit word outside the known grammar: a gap, never a guessed count
     else:
         dimension, unit, scale = "count", None, 1.0
 

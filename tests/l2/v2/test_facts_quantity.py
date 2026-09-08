@@ -31,6 +31,9 @@ def test_validator_version_is_10() -> None:
         ("2-3 times per week", None, q("frequency", "range", 2, 3, True, True, "per_week")),
         ("6 months", None, q("duration", "unstated", 6, 6, None, None, "month")),
         ("3", "at least", q("count", "gte", 3, None, True, None, None)),
+        # negated ceiling: "no more than" is an explicit lte phrase (plan Task 5
+        # grammar), never the "more than" gt floor it contains as a substring
+        ("8 years", "no more than", q("duration", "lte", None, 96, None, True, "month")),
     ],
 )
 def test_derivations(value, comparison, expected) -> None:
@@ -44,6 +47,17 @@ def test_derivations(value, comparison, expected) -> None:
         ("8 years and 3 years", None),    # two tokens, no range syntax
         ("7-5 years", None),              # descending range
         ("acht Jahre", "mindestens"),     # unknown language: unparsed, not guessed
+        # comparison phrases outside the enumerated grammar must never be
+        # guessed from a substring of a phrase that IS in the grammar
+        ("8 years", "not more than"),               # not the same phrase as "no more than"
+        ("8 years", "greater than or equal to"),    # contains "greater than" but isn't it
+        ("8 years", "less than or equal to"),       # contains "less than" but isn't it
+        ("8 years", "over the course of"),          # contains "over" but isn't a comparison
+        # a unit word outside the known grammar (years/months/%/times-per-*)
+        # is a grammar gap, not a bare integer: never silently becomes "count"
+        ("10 hours per week", None),
+        ("3 days", None),
+        ("2-3 times a week", None),   # "times a week", not the grammar's "times per week"
     ],
 )
 def test_unparseable_is_none(value, comparison) -> None:
