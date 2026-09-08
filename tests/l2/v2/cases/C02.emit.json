@@ -1,0 +1,205 @@
+{
+  "case": "C02",
+  "company": "Unity",
+  "source_url": "https://unitytech.wd1.myworkdayjobs.com/Unity/job/Mountain-View-CA-USA/Senior-Software-Engineer_JOBREQ-2616278",
+  "original_document_hash": "088ae444ed700bb59dabea81858af2068391002cf83d0c9fbae1c99336ba32c4",
+  "excerpt_lines": [
+    34,
+    36,
+    50,
+    52
+  ],
+  "note": "Audit defect 2: the annual period was dropped from the pay range and the English obligation was thrown away as EEO boilerplate. Here the English footer is a statement and only the real EEO paragraph is excluded.",
+  "emit": {
+    "source_assessment": {
+      "usability": "usable",
+      "evidence": null,
+      "note": null
+    },
+    "statements": [
+      {
+        "id": "s_pay",
+        "kind": "compensation_statement",
+        "subject": "role",
+        "topic": "Annual gross pay range",
+        "evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": null,
+        "importance_evidence": null,
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [
+          "f_pay"
+        ],
+        "unresolved": []
+      },
+      {
+        "id": "s_english",
+        "kind": "hiring_policy",
+        "subject": "candidate",
+        "topic": "Sufficient knowledge of English for professional exchanges",
+        "evidence": [
+          {
+            "block_id": "b000004",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "required",
+        "importance_evidence": [
+          {
+            "block_id": "b000004",
+            "text": "requires",
+            "occurrence": 0
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [],
+        "unresolved": []
+      }
+    ],
+    "relations": {
+      "groups": [],
+      "conditions": [],
+      "example_sets": []
+    },
+    "facts": {
+      "presence": {
+        "experience": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "compensation": {
+          "state": "stated",
+          "evidence": [
+            {
+              "block_id": "b000001",
+              "text": "$210,300 - $273,400",
+              "occurrence": 0
+            }
+          ]
+        },
+        "quantities": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "dates": {
+          "state": "none_found",
+          "evidence": null
+        }
+      },
+      "entries": [
+        {
+          "id": "f_pay",
+          "family": "compensation",
+          "statement_ids": [
+            "s_pay"
+          ],
+          "condition_ids": [],
+          "scope": null,
+          "date_kind": null,
+          "component": "base",
+          "evidence": {
+            "value": [
+              {
+                "block_id": "b000001",
+                "text": "$210,300 - $273,400",
+                "occurrence": 0
+              }
+            ],
+            "comparison": null,
+            "unit": [
+              {
+                "block_id": "b000001",
+                "text": "annually",
+                "occurrence": 0
+              }
+            ],
+            "currency": null,
+            "component": [
+              {
+                "block_id": "b000002",
+                "text": "base salary",
+                "occurrence": 0
+              }
+            ],
+            "applicability": null
+          }
+        }
+      ]
+    },
+    "mentions": [],
+    "areas": [
+      {
+        "id": "a_pay",
+        "name": "Compensation",
+        "kind": "constraint",
+        "statement_ids": [
+          "s_pay"
+        ],
+        "evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ]
+      }
+    ],
+    "block_accounting": [
+      {
+        "block_id": "b000001",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_pay"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000001",
+        "disposition": "facts",
+        "ref_ids": [
+          "f_pay"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000002",
+        "disposition": "context",
+        "ref_ids": [],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000003",
+        "disposition": "excluded",
+        "ref_ids": [],
+        "exclusion_reason": "eeo",
+        "evidence": null
+      },
+      {
+        "block_id": "b000004",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_english"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      }
+    ]
+  }
+}

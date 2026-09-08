@@ -1,0 +1,312 @@
+{
+  "case": "C05",
+  "company": "Adobe",
+  "source_url": "https://adobe.wd5.myworkdayjobs.com/external_experienced/job/Bangalore/Software-Development-Engineer-2_R169518",
+  "original_document_hash": "f10bd9f16185ca971f1efea364ecd710ec751b55e99d73342a0017f1d8a09e98",
+  "excerpt_lines": [
+    13,
+    14,
+    15,
+    18
+  ],
+  "note": "Audit defect 5: the technical claims existed but no searchable mention did. Every named technology carries a mention bound to its own statement.",
+  "emit": {
+    "source_assessment": {
+      "usability": "usable",
+      "evidence": null,
+      "note": null
+    },
+    "statements": [
+      {
+        "id": "s_java",
+        "kind": "qualification",
+        "subject": "candidate",
+        "topic": "Java microservices development experience",
+        "evidence": [
+          {
+            "block_id": "b000002",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "required",
+        "importance_evidence": [
+          {
+            "block_id": "b000001",
+            "text": "Required",
+            "occurrence": 0
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [
+          "f_java_years"
+        ],
+        "unresolved": []
+      },
+      {
+        "id": "s_spring_boot",
+        "kind": "qualification",
+        "subject": "candidate",
+        "topic": "Spring Boot",
+        "evidence": [
+          {
+            "block_id": "b000003",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "required",
+        "importance_evidence": [
+          {
+            "block_id": "b000001",
+            "text": "Required",
+            "occurrence": 0
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": "proficient",
+        "proficiency_evidence": [
+          {
+            "block_id": "b000003",
+            "text": "Strong proficiency",
+            "occurrence": 0
+          }
+        ],
+        "condition_ids": [],
+        "fact_ids": [],
+        "unresolved": []
+      },
+      {
+        "id": "s_containers",
+        "kind": "qualification",
+        "subject": "candidate",
+        "topic": "Docker and Kubernetes for containerization",
+        "evidence": [
+          {
+            "block_id": "b000004",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "required",
+        "importance_evidence": [
+          {
+            "block_id": "b000001",
+            "text": "Required",
+            "occurrence": 0
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [],
+        "unresolved": []
+      }
+    ],
+    "relations": {
+      "groups": [],
+      "conditions": [],
+      "example_sets": []
+    },
+    "facts": {
+      "presence": {
+        "experience": {
+          "state": "stated",
+          "evidence": [
+            {
+              "block_id": "b000002",
+              "text": "6-8 years",
+              "occurrence": 0
+            }
+          ]
+        },
+        "compensation": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "quantities": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "dates": {
+          "state": "none_found",
+          "evidence": null
+        }
+      },
+      "entries": [
+        {
+          "id": "f_java_years",
+          "family": "experience",
+          "statement_ids": [
+            "s_java"
+          ],
+          "condition_ids": [],
+          "scope": {
+            "kind": "domain",
+            "evidence": [
+              {
+                "block_id": "b000002",
+                "text": "as a Java Developer",
+                "occurrence": 0
+              }
+            ]
+          },
+          "date_kind": null,
+          "component": null,
+          "evidence": {
+            "value": [
+              {
+                "block_id": "b000002",
+                "text": "6-8 years",
+                "occurrence": 0
+              }
+            ],
+            "comparison": null,
+            "unit": null,
+            "currency": null,
+            "component": null,
+            "applicability": null
+          }
+        }
+      ]
+    },
+    "mentions": [
+      {
+        "id": "m_java",
+        "surface": "Java",
+        "evidence": {
+          "block_id": "b000002",
+          "text": "Java",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_java"
+        ],
+        "role": "direct"
+      },
+      {
+        "id": "m_microservices",
+        "surface": "microservices",
+        "evidence": {
+          "block_id": "b000002",
+          "text": "microservices",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_java"
+        ],
+        "role": "direct"
+      },
+      {
+        "id": "m_spring_boot",
+        "surface": "Spring Boot",
+        "evidence": {
+          "block_id": "b000003",
+          "text": "Spring Boot",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_spring_boot"
+        ],
+        "role": "direct"
+      },
+      {
+        "id": "m_docker",
+        "surface": "Docker",
+        "evidence": {
+          "block_id": "b000004",
+          "text": "Docker",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_containers"
+        ],
+        "role": "direct"
+      },
+      {
+        "id": "m_kubernetes",
+        "surface": "Kubernetes",
+        "evidence": {
+          "block_id": "b000004",
+          "text": "Kubernetes",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_containers"
+        ],
+        "role": "direct"
+      }
+    ],
+    "areas": [
+      {
+        "id": "a_required",
+        "name": "Required Qualifications",
+        "kind": "technical",
+        "statement_ids": [
+          "s_java",
+          "s_spring_boot",
+          "s_containers"
+        ],
+        "evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ]
+      }
+    ],
+    "block_accounting": [
+      {
+        "block_id": "b000001",
+        "disposition": "context",
+        "ref_ids": [],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000002",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_java"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000002",
+        "disposition": "facts",
+        "ref_ids": [
+          "f_java_years"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000003",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_spring_boot"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000004",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_containers"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      }
+    ]
+  }
+}

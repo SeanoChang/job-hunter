@@ -1,0 +1,222 @@
+{
+  "case": "C12",
+  "company": "NVIDIA",
+  "source_url": "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/job/Germany-Munich/Senior-Solutions-Architect--Higher-Education-and-Research--AI-and-HP_JR2024876",
+  "original_document_hash": "04f0907f2287a58f1568469de5b78111d83907c1cf3f1bcd9170fd7314b2e923",
+  "excerpt_lines": [
+    17,
+    20
+  ],
+  "note": "Audit defect 12: preferred NVIDIA framework examples inherited required importance. The examples stay preferred and keep their example role and parent statement.",
+  "emit": {
+    "source_assessment": {
+      "usability": "usable",
+      "evidence": null,
+      "note": null
+    },
+    "statements": [
+      {
+        "id": "s_nvidia_stack",
+        "kind": "qualification",
+        "subject": "candidate",
+        "topic": "NVIDIA accelerated computing stack for science",
+        "evidence": [
+          {
+            "block_id": "b000002",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "preferred",
+        "importance_evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [],
+        "unresolved": []
+      }
+    ],
+    "relations": {
+      "groups": [],
+      "conditions": [],
+      "example_sets": [
+        {
+          "id": "e_frameworks",
+          "parent_statement_id": "s_nvidia_stack",
+          "mention_ids": [
+            "m_physicsnemo",
+            "m_warp",
+            "m_cuequivariance",
+            "m_alchemi",
+            "m_omniverse"
+          ],
+          "exhaustive": false,
+          "evidence": [
+            {
+              "block_id": "b000002",
+              "text": "e.g.",
+              "occurrence": 0
+            }
+          ]
+        }
+      ]
+    },
+    "facts": {
+      "presence": {
+        "experience": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "compensation": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "quantities": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "dates": {
+          "state": "none_found",
+          "evidence": null
+        }
+      },
+      "entries": []
+    },
+    "mentions": [
+      {
+        "id": "m_cuda",
+        "surface": "CUDA",
+        "evidence": {
+          "block_id": "b000002",
+          "text": "CUDA",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_nvidia_stack"
+        ],
+        "role": "direct"
+      },
+      {
+        "id": "m_cuda_x",
+        "surface": "CUDA-X",
+        "evidence": {
+          "block_id": "b000002",
+          "text": "CUDA-X",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_nvidia_stack"
+        ],
+        "role": "direct"
+      },
+      {
+        "id": "m_physicsnemo",
+        "surface": "PhysicsNeMo",
+        "evidence": {
+          "block_id": "b000002",
+          "text": "PhysicsNeMo",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_nvidia_stack"
+        ],
+        "role": "example"
+      },
+      {
+        "id": "m_warp",
+        "surface": "Warp",
+        "evidence": {
+          "block_id": "b000002",
+          "text": "Warp",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_nvidia_stack"
+        ],
+        "role": "example"
+      },
+      {
+        "id": "m_cuequivariance",
+        "surface": "cuEquivariance",
+        "evidence": {
+          "block_id": "b000002",
+          "text": "cuEquivariance",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_nvidia_stack"
+        ],
+        "role": "example"
+      },
+      {
+        "id": "m_alchemi",
+        "surface": "ALCHEMI",
+        "evidence": {
+          "block_id": "b000002",
+          "text": "ALCHEMI",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_nvidia_stack"
+        ],
+        "role": "example"
+      },
+      {
+        "id": "m_omniverse",
+        "surface": "Omniverse",
+        "evidence": {
+          "block_id": "b000002",
+          "text": "Omniverse",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_nvidia_stack"
+        ],
+        "role": "example"
+      }
+    ],
+    "areas": [
+      {
+        "id": "a_standout",
+        "name": "Ways to stand out from the crowd",
+        "kind": "technical",
+        "statement_ids": [
+          "s_nvidia_stack"
+        ],
+        "evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ]
+      }
+    ],
+    "block_accounting": [
+      {
+        "block_id": "b000001",
+        "disposition": "context",
+        "ref_ids": [],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000002",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_nvidia_stack"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      }
+    ]
+  }
+}

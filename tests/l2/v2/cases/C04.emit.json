@@ -1,0 +1,281 @@
+{
+  "case": "C04",
+  "company": "Palantir",
+  "source_url": "https://jobs.lever.co/palantir/14dbdeb9-1537-4ccf-83ac-608287efa00f",
+  "original_document_hash": "07160a6911e1190388a61f2a2a8e1c7c05b7cf1aaa23e764e839142b27b8b9cb",
+  "excerpt_lines": [
+    20,
+    23,
+    24,
+    26,
+    27
+  ],
+  "note": "Audit defect 4: a preferred certification inherited the required importance of the area it was presented in. The area deliberately mixes the preferred CPA statement with a required one; importance lives on the statement.",
+  "emit": {
+    "source_assessment": {
+      "usability": "usable",
+      "evidence": null,
+      "note": null
+    },
+    "statements": [
+      {
+        "id": "s_netsuite",
+        "kind": "qualification",
+        "subject": "candidate",
+        "topic": "NetSuite or other revenue recognition systems",
+        "evidence": [
+          {
+            "block_id": "b000002",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "preferred",
+        "importance_evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [],
+        "unresolved": []
+      },
+      {
+        "id": "s_cpa",
+        "kind": "qualification",
+        "subject": "candidate",
+        "topic": "CPA or ACCA/ACA certification",
+        "evidence": [
+          {
+            "block_id": "b000003",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "preferred",
+        "importance_evidence": [
+          {
+            "block_id": "b000003",
+            "text": "preferred",
+            "occurrence": 0
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [],
+        "unresolved": []
+      },
+      {
+        "id": "s_asc606",
+        "kind": "qualification",
+        "subject": "candidate",
+        "topic": "ASC 606 application experience",
+        "evidence": [
+          {
+            "block_id": "b000005",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "required",
+        "importance_evidence": [
+          {
+            "block_id": "b000004",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [
+          "f_asc606_experience"
+        ],
+        "unresolved": []
+      }
+    ],
+    "relations": {
+      "groups": [],
+      "conditions": [],
+      "example_sets": []
+    },
+    "facts": {
+      "presence": {
+        "experience": {
+          "state": "stated",
+          "evidence": [
+            {
+              "block_id": "b000005",
+              "text": "Extensive experience",
+              "occurrence": 0
+            }
+          ]
+        },
+        "compensation": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "quantities": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "dates": {
+          "state": "none_found",
+          "evidence": null
+        }
+      },
+      "entries": [
+        {
+          "id": "f_asc606_experience",
+          "family": "experience",
+          "statement_ids": [
+            "s_asc606"
+          ],
+          "condition_ids": [],
+          "scope": {
+            "kind": "domain",
+            "evidence": [
+              {
+                "block_id": "b000005",
+                "text": "in the application of ASC 606",
+                "occurrence": 0
+              }
+            ]
+          },
+          "date_kind": null,
+          "component": null,
+          "evidence": {
+            "value": [
+              {
+                "block_id": "b000005",
+                "text": "Extensive experience",
+                "occurrence": 0
+              }
+            ],
+            "comparison": null,
+            "unit": null,
+            "currency": null,
+            "component": null,
+            "applicability": null
+          }
+        }
+      ]
+    },
+    "mentions": [
+      {
+        "id": "m_cpa",
+        "surface": "CPA",
+        "evidence": {
+          "block_id": "b000003",
+          "text": "CPA",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_cpa"
+        ],
+        "role": "direct"
+      },
+      {
+        "id": "m_acca",
+        "surface": "ACCA",
+        "evidence": {
+          "block_id": "b000003",
+          "text": "ACCA",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_cpa"
+        ],
+        "role": "direct"
+      },
+      {
+        "id": "m_aca",
+        "surface": "ACA",
+        "evidence": {
+          "block_id": "b000003",
+          "text": "ACA",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_cpa"
+        ],
+        "role": "direct"
+      }
+    ],
+    "areas": [
+      {
+        "id": "a_accounting",
+        "name": "Accounting qualifications",
+        "kind": "credential",
+        "statement_ids": [
+          "s_cpa",
+          "s_asc606"
+        ],
+        "evidence": null
+      }
+    ],
+    "block_accounting": [
+      {
+        "block_id": "b000001",
+        "disposition": "context",
+        "ref_ids": [],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000002",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_netsuite"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000003",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_cpa"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000004",
+        "disposition": "context",
+        "ref_ids": [],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000005",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_asc606"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000005",
+        "disposition": "facts",
+        "ref_ids": [
+          "f_asc606_experience"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      }
+    ]
+  }
+}

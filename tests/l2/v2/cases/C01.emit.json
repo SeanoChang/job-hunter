@@ -1,0 +1,168 @@
+{
+  "case": "C01",
+  "company": "Zendesk",
+  "source_url": "https://zendesk.wd1.myworkdayjobs.com/zendesk/job/London-United-Kingdom/Senior-Enterprise-Account-Executive--UKI_R35318",
+  "original_document_hash": "0628bcc118e711ddad0901f8ef2a3da82f47dd8daa121cc421ee57b93d4a2b27",
+  "excerpt_lines": [
+    20,
+    22
+  ],
+  "note": "Audit defect 1: 'a minimum of 8 years' became an exact 96-month range in v1. The emit cites the value and the comparison phrase separately; code derives the floor.",
+  "emit": {
+    "source_assessment": {
+      "usability": "usable",
+      "evidence": null,
+      "note": null
+    },
+    "statements": [
+      {
+        "id": "s_sales_experience",
+        "kind": "qualification",
+        "subject": "candidate",
+        "topic": "Cloud/software B2B sales or solution engineering experience",
+        "evidence": [
+          {
+            "block_id": "b000002",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "required",
+        "importance_evidence": [
+          {
+            "block_id": "b000002",
+            "text": "a minimum of",
+            "occurrence": 0
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [
+          "f_sales_years"
+        ],
+        "unresolved": []
+      }
+    ],
+    "relations": {
+      "groups": [],
+      "conditions": [],
+      "example_sets": []
+    },
+    "facts": {
+      "presence": {
+        "experience": {
+          "state": "stated",
+          "evidence": [
+            {
+              "block_id": "b000002",
+              "text": "8 years",
+              "occurrence": 0
+            }
+          ]
+        },
+        "compensation": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "quantities": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "dates": {
+          "state": "none_found",
+          "evidence": null
+        }
+      },
+      "entries": [
+        {
+          "id": "f_sales_years",
+          "family": "experience",
+          "statement_ids": [
+            "s_sales_experience"
+          ],
+          "condition_ids": [],
+          "scope": {
+            "kind": "domain",
+            "evidence": [
+              {
+                "block_id": "b000002",
+                "text": "cloud/software B2B sales or solution engineering",
+                "occurrence": 0
+              }
+            ]
+          },
+          "date_kind": null,
+          "component": null,
+          "evidence": {
+            "value": [
+              {
+                "block_id": "b000002",
+                "text": "8 years",
+                "occurrence": 0
+              }
+            ],
+            "comparison": [
+              {
+                "block_id": "b000002",
+                "text": "a minimum of",
+                "occurrence": 0
+              }
+            ],
+            "unit": null,
+            "currency": null,
+            "component": null,
+            "applicability": null
+          }
+        }
+      ]
+    },
+    "mentions": [],
+    "areas": [
+      {
+        "id": "a_role_fit",
+        "name": "What You Bring to the Role",
+        "kind": "capability",
+        "statement_ids": [
+          "s_sales_experience"
+        ],
+        "evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ]
+      }
+    ],
+    "block_accounting": [
+      {
+        "block_id": "b000001",
+        "disposition": "context",
+        "ref_ids": [],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000002",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_sales_experience"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000002",
+        "disposition": "facts",
+        "ref_ids": [
+          "f_sales_years"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      }
+    ]
+  }
+}
