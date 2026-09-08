@@ -22,10 +22,13 @@ the root `pyproject.toml`, `-q` by default).
   - `tests/l2/v2/` — the offline v2 contract (`validator/10`): source
     annotation, types, facts, assemble, verify, quality, project, schemas v2,
     plus `test_cases.py`, which runs the twelve audit case contracts
-    (`C01`-`C12`) and five synthetic minimal pairs. Eleven cases load a
-    `.source.md`/`.emit.json` fixture pair from `tests/l2/v2/cases/`; C10
-    (truncated engine output) and the minimal pairs are inline-coded. Fully
-    offline and deterministic — zero model calls.
+    (`C01`-`C12`) and seven synthetic minimal pairs (at-least vs more-than,
+    and/or connective evidence, same-number different units, not-required vs
+    prohibited, CJK source lines, duplicate text occurrences, prompt
+    injection). Eleven cases load a `.source.md`/`.emit.json` fixture pair
+    from `tests/l2/v2/cases/`; C10 (truncated engine output) and most minimal
+    pairs are inline-coded — the and/or pair instead reuses the C09 fixture.
+    Fully offline and deterministic — zero model calls.
 - `test_ci_workflow.py` — the scheduled `fetch` workflow: its `sync` step body is
   extracted from the YAML and run under `bash -eo pipefail` against a stub `uv`
   (which exit codes fail the hourly job is a decision made in shell, not Python).

@@ -62,14 +62,17 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
   (`quotes.py`), versioned fact transforms (`transforms.py`, `validator/9` —
   floor grammar for "at least/minimum/over N years", omission scan skips
   boilerplate), JSON schemas v1 (`schemas_data/1/`), the pure `verify()` suite
-  (`verify.py`) — all no-I/O, no-LLM; plus the harness: prompt
-  `demand-profile/v5` (`prompt.py`), engine backends (`engines.py`:
-  openai-compat, claude-cli, codex-cli; observed model only), emit→record
-  assembly (`assemble.py`), immutable attempt objects (`attempts.py`), pure
-  state derivation (`state.py`), the serial drain loop (`runner.py`: ladder,
-  breaker, caps, catch-up scan), archive replay (`rebuild.py`).
-  `VALIDATOR_VERSION` (see `transforms.py`) is frozen per version — any check
-  or threshold change bumps it, never edits in place.
+  (`verify.py`), findings types (`report.py`) — all no-I/O, no-LLM; plus the
+  harness: prompt `demand-profile/v5` (`prompt.py`), engine backends
+  (`engines.py`: openai-compat, claude-cli, codex-cli; observed model only),
+  emit→record assembly (`assemble.py`), immutable attempt objects
+  (`attempts.py`), pure state derivation (`state.py`), the serial drain loop
+  (`runner.py`: ladder, breaker, caps, catch-up scan, k-sampling), archive
+  replay (`rebuild.py`); the M3 quality loop: cross-sample agreement
+  (`agreement.py`), the demote-only refuter (`refuter.py`), and weekly
+  consolidation — drift report, human audit queue, refuter summary
+  (`consolidate.py`). `VALIDATOR_VERSION` (see `transforms.py`) is frozen per
+  version — any check or threshold change bumps it, never edits in place.
   - `l2/v2/` — the offline v2 semantic contract (increment 1 of
     `docs/superpowers/specs/2026-09-07-parsing-contract-v2-design.md`; not
     wired into the runner, CLI, or MCP yet): source block annotation and
@@ -78,9 +81,10 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
     (`facts.py`, `validator/10` — quantity comparisons, money/date
     derivation), emit→record assembly with collected binding errors
     (`assemble.py`), the pure verifier over `(record, markdown)` — references,
-    facts, accounting, usability (`verify.py`), the seven quality dimensions
-    and `search_eligible` policy (`quality.py`), pure mention/statement row
-    projection (`project.py`). Schemas v2 live at
+    facts, accounting, usability (`verify.py`), the six quality dimensions
+    (`source`, `evidence`, `semantics`, `completeness`, `sampling`,
+    `human_review`) plus the `search_eligible` policy (`quality.py`), pure
+    mention/statement row projection (`project.py`). Schemas v2 live at
     `schemas_data/2/{emit,record}.schema.json`, served by the same
     version-parameterized loader as v1. `parsing-rules/2` and `aliases/1` are
     the other identifiers frozen with this increment. Zero model calls, zero
@@ -91,7 +95,7 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
 - Strict typing (`mypy --strict`), ruff line length 100, import sorting on.
 - Identity/hashing only via `hashing.py`; time only via `timeutil.py`;
   environment only via `config.py`.
-- Not built yet (design docs): M3 quality loop (k-sampling, refuter,
-  consolidate, alerts), concept linker (L3), workspace/tracker, TUI.
+- Not built yet (design docs): M3 alerting (attention digests via generic
+  webhook), concept linker (L3), workspace/tracker, TUI.
 
 Parent: [../../CLAUDE.md](../../CLAUDE.md)
