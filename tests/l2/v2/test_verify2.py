@@ -10,8 +10,9 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from jobhunter.l2.v2.verify import iter_bound_refs, verify
-from tests.l2.v2.conftest import MD, bound_ref
+from jobhunter.l2.v2.assemble import _derive as _assembly_derive
+from jobhunter.l2.v2.verify import _rederive, iter_bound_refs, verify
+from tests.l2.v2.conftest import FOOTER_MD, MD, bound_ref
 
 
 def _codes(record: dict[str, Any], markdown: str = MD) -> set[str]:
@@ -114,6 +115,21 @@ def test_reference_cycle(v2_record: dict[str, Any]) -> None:
     ]
     assert "reference_cycle" in _codes(bad)
 
+    # every group on the loop is named, not just the back edge's two ends: a
+    # reader handed "g1 and g3" would go looking for a cycle that isn't there
+    longer = copy.deepcopy(v2_record)
+    longer["relations"]["groups"] = [
+        {"id": "g1", "operator": "unresolved", "members": ["g2", "s1"], "evidence": None},
+        {"id": "g2", "operator": "unresolved", "members": ["g3", "s1"], "evidence": None},
+        {"id": "g3", "operator": "unresolved", "members": ["g1", "s1"], "evidence": None},
+    ]
+    cycle = [f for f in verify(longer, MD).findings if f.code == "reference_cycle"]
+    assert sorted(str(f.detail["group_id"]) for f in cycle) == ["g1", "g2", "g3"]
+    # paths index the array the way every other path in the report does
+    assert sorted(f.path for f in cycle) == [
+        "relations.groups[0]", "relations.groups[1]", "relations.groups[2]",
+    ]
+
 
 def test_depth_exceeded(v2_record: dict[str, Any]) -> None:
     bad = copy.deepcopy(v2_record)
@@ -178,6 +194,36 @@ def test_fact_mismatch(v2_record: dict[str, Any]) -> None:
     report = verify(bad, MD)
     assert any(f.code == "fact_mismatch" for f in report.findings)
     assert report.status == "fail"
+
+
+def test_rederivation_matches_assembly() -> None:
+    """The verifier parses the cited spans itself — a second call site of the
+    same `facts` grammar, not a re-run of assembly's private helper, so a wrong
+    family→grammar or state mapping in assembly can still turn `fact_mismatch`
+    red. This test is the other half of that choice: the two must agree.
+    """
+
+    def aspect(text: str | None) -> list[dict[str, Any]] | None:
+        return None if text is None else [{"text": text, "span": [0, len(text)]}]
+
+    def evidence(value: str, comparison: str | None = None, unit: str | None = None,
+                 currency: str | None = None) -> dict[str, Any]:
+        return {"value": aspect(value), "comparison": aspect(comparison),
+                "unit": aspect(unit), "currency": aspect(currency),
+                "component": None, "applicability": None}
+
+    cases = [
+        ("experience", evidence("8 years", "A minimum of")),
+        ("experience", evidence("a while")),  # grammar miss ⇒ present_unparsed
+        ("quantity", evidence("3 projects")),
+        ("compensation", evidence("$120,000", unit="per year", currency="USD")),
+        ("compensation", evidence("competitive pay")),
+        ("date", evidence("March 1, 2026")),
+        ("date", evidence("03/04/2026")),  # ambiguous locale, still a fact
+        ("date", evidence("soon")),
+    ]
+    for family, ev in cases:
+        assert _rederive(family, ev) == _assembly_derive(family, ev), family
 
 
 def test_fact_family_shape(v2_record: dict[str, Any]) -> None:
@@ -266,11 +312,38 @@ def test_exclusion_requirement_language_warns(v2_record: dict[str, Any]) -> None
     assert codes.get("exclusion_requirement_language") == "warning"
     assert report.status == "pass"  # a warning never fails the record
 
-    quiet = copy.deepcopy(v2_record)
+    heading = copy.deepcopy(v2_record)
+    heading["block_accounting"][0] = {"block_id": "b000001", "disposition": "excluded",
+                                      "ref_ids": [], "exclusion_reason": "navigation",
+                                      "evidence": None}
+    # a block that literally reads "Requirements", thrown away as navigation, is
+    # the auditor's business too — the noun counts, not only the verb
+    assert "exclusion_requirement_language" in _codes(heading)
+
+
+def test_exclusion_requirement_language_catches_the_english_footer(
+    v2_footer_record: dict[str, Any],
+) -> None:
+    """Audit defect 3, the case the tripwire exists for.
+
+    C02/C07's footer says "requires" and nothing else in the vocabulary — no
+    must, no minimum, no proficiency word. A verb-blind pattern passes exactly
+    the class of omission this warning was written to expose.
+    """
+    report = verify(v2_footer_record, FOOTER_MD)
+    warnings = [f for f in report.findings if f.code == "exclusion_requirement_language"]
+    assert [f.severity for f in warnings] == ["warning"]
+    assert warnings[0].detail["block_id"] == "b000003"
+    assert report.status == "pass"
+
+    quiet = copy.deepcopy(v2_footer_record)
     quiet["block_accounting"][0] = {"block_id": "b000001", "disposition": "excluded",
                                     "ref_ids": [], "exclusion_reason": "navigation",
                                     "evidence": None}
-    assert "exclusion_requirement_language" not in _codes(quiet)  # "Requirements" is a heading
+    # a heading with no obligation word in it stays quiet: still one warning
+    still = [f for f in verify(quiet, FOOTER_MD).findings
+             if f.code == "exclusion_requirement_language"]
+    assert [f.detail["block_id"] for f in still] == ["b000003"]
 
 
 # --- usability -------------------------------------------------------------
