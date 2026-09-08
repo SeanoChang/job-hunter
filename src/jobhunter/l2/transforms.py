@@ -20,13 +20,15 @@ from datetime import date
 # defect 1, C01: 72 validated rows held a false exact interval). The v1 record
 # cannot express a strict floor, so "more than N" maps to the inclusive
 # {"min": N*12, "max": null} — conservative, no invented upper bound; v2's
-# comparison operators represent gt exactly.
+# comparison operators represent gt exactly. Negated phrases ("no more than",
+# "not more than") are ceilings, not floors, and keep the exact fallback.
 VALIDATOR_VERSION = "9"
 
 _RANGE = re.compile(r"(\d+)\s*(?:-|–|—|to|and)\s*(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 _FLOOR = re.compile(
     r"(?:(\d+)\s*(?:\+|or\s+more)"
-    r"|\b(?:at\s+least|a\s+minimum\s+of|minimum\s+of|minimum|more\s+than|over)\s+(\d+))"
+    r"|\b(?:at\s+least|a\s+minimum\s+of|minimum\s+of|minimum"
+    r"|(?<!no\s)(?<!not\s)more\s+than|(?<!no\s)(?<!not\s)over)\s+(\d+))"
     r"\s*(?:years?|yrs?|yoe)\b",
     re.IGNORECASE,
 )  # the leading \b keeps "turnover 5 years" from matching the "over" branch

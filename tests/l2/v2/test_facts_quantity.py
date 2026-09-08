@@ -62,3 +62,22 @@ def test_derivations(value, comparison, expected) -> None:
 )
 def test_unparseable_is_none(value, comparison) -> None:
     assert derive_quantity(value, comparison) is None
+
+
+def test_unit_words_require_word_boundaries() -> None:
+    # Release-review finding: an unbounded `mos?` matched the "mo" prefix of
+    # ordinary words, so leftmost search read "more than 5 years" as 5 months.
+    assert derive_quantity("more than 5 years", None) == {
+        "dimension": "duration",
+        "comparison": "unstated",
+        "min_value": 60,
+        "max_value": 60,
+        "inclusive_min": None,
+        "inclusive_max": None,
+        "unit": "month",
+    }
+    assert derive_quantity("most weekends, 5 years", None)["min_value"] == 60
+    # no real unit token at all: alphabetic residue is a gap, never a guess
+    assert derive_quantity("more than 5", None) is None
+    # the genuine abbreviation still parses
+    assert derive_quantity("6 mos", None)["min_value"] == 6
