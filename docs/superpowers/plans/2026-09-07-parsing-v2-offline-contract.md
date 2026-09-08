@@ -1751,7 +1751,7 @@ Pure `verify(record, markdown) -> Report` (reuses `l2.report.Report`,
 | accounting | `unknown_block` | error | accounting entries name only annotated blocks |
 | accounting | `exclusion_reason_missing` | error | disposition `excluded` ⇒ non-null reason; other dispositions ⇒ null reason |
 | accounting | `refs_missing` | error | dispositions `statements`/`facts` ⇒ non-empty `ref_ids` |
-| accounting | `exclusion_requirement_language` | warning | excluded block text matches `(?i)\b(must|required?|minimum|at least|only candidates|need to|proficien\w*|fluen\w*)\b` — the deterministic tripwire for the C02/C07 English-footer class |
+| accounting | `exclusion_requirement_language` | warning | excluded block text matches `(?i)\b(must|requir\w*|minimum|at least|only candidates|need to|proficien\w*|fluen\w*)\b` — the deterministic tripwire for the C02/C07 English-footer class. (As-built: `requir\w*` replaced the drafted `required?`, which missed C02's own "requires"; recorded in verify.py and commit 4ac9dfc.) |
 | usability | `usability_conflict` | error | model says `empty` but annotated blocks exist; or blocks are absent and usability != `empty`; nonempty non-usable classifications (`partial`/`placeholder`/`unsupported`) require evidence |
 | usability | `empty_with_content` | error | usability `empty`/`placeholder` with statements or fact entries present — insufficiency and extraction output contradict |
 
