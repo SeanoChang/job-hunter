@@ -25,8 +25,9 @@ _RANGE = re.compile(_NUM + r"\s*(?:-|–|—|to)\s*" + _NUM)
 _PLUS = re.compile(_NUM + r"\s*\+")
 _SINGLE = re.compile(_NUM)
 _UNIT = re.compile(
-    r"(?P<years>years?|yrs?|yoe)|(?P<months>months?|mos?)|(?P<pct>%|percent)"
-    r"|(?:times?\s+per\s+(?P<per>week|month|day))",
+    # word-bounded: leftmost search must never take "mo" from "more"/"most"
+    r"\b(?P<years>years?|yrs?|yoe)\b|\b(?P<months>months?|mos?)\b|(?P<pct>%|\bpercent\b)"
+    r"|\b(?:times?\s+per\s+(?P<per>week|month|day))\b",
     re.IGNORECASE,
 )
 _HAS_ALPHA = re.compile(r"[A-Za-z]")

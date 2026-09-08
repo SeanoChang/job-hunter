@@ -264,3 +264,12 @@ def test_validator_version_is_9() -> None:
     # the grammar changed; stored validator/8 rows keep their meaning
     assert VALIDATOR_VERSION == "9"
     assert VALIDATOR_VERSION in TRANSFORMS
+
+
+def test_negated_more_than_is_not_a_floor() -> None:
+    # "no/not more than N years" states a ceiling; the validator/9 floor branch
+    # must not fire on the embedded "more than". v1 has no ceiling shape, so
+    # the exact fallback (validator/8 parity) is the conservative reading.
+    assert parse_experience_months("no more than 5 years") == {"min": 60, "max": 60}
+    assert parse_experience_months("not more than 5 years") == {"min": 60, "max": 60}
+    assert parse_experience_months("more than 5 years") == {"min": 60, "max": None}
