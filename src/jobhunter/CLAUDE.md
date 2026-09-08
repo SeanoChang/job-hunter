@@ -67,8 +67,8 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
   emit→record assembly (`assemble.py`), immutable attempt objects
   (`attempts.py`), pure state derivation (`state.py`), the serial drain loop
   (`runner.py`: ladder, breaker, caps, catch-up scan), archive replay
-  (`rebuild.py`). `VALIDATOR_VERSION = "3"` is frozen — any check or
-  threshold change bumps it.
+  (`rebuild.py`). `VALIDATOR_VERSION` (see `transforms.py`) is frozen per
+  version — any check or threshold change bumps it, never edits in place.
 
 ## Conventions
 
