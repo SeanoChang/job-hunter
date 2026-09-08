@@ -81,3 +81,7 @@ def test_unit_words_require_word_boundaries() -> None:
     assert derive_quantity("more than 5", None) is None
     # the genuine abbreviation still parses
     assert derive_quantity("6 mos", None)["min_value"] == 6
+    # letter-bounded, not \b: number-glued units keep parsing
+    assert derive_quantity("5yrs", None)["min_value"] == 60
+    assert derive_quantity("20 percentage points", None) is None
+    assert derive_quantity("3 times per weekend", None) is None

@@ -273,3 +273,6 @@ def test_negated_more_than_is_not_a_floor() -> None:
     assert parse_experience_months("no more than 5 years") == {"min": 60, "max": 60}
     assert parse_experience_months("not more than 5 years") == {"min": 60, "max": 60}
     assert parse_experience_months("more than 5 years") == {"min": 60, "max": None}
+    # only the literal words "no"/"not" suppress the floor; a word that merely
+    # ends in them ("casino", "Reno") does not
+    assert parse_experience_months("casino over 5 years") == {"min": 60, "max": None}

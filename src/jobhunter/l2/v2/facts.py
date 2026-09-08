@@ -25,9 +25,10 @@ _RANGE = re.compile(_NUM + r"\s*(?:-|–|—|to)\s*" + _NUM)
 _PLUS = re.compile(_NUM + r"\s*\+")
 _SINGLE = re.compile(_NUM)
 _UNIT = re.compile(
-    # word-bounded: leftmost search must never take "mo" from "more"/"most"
-    r"\b(?P<years>years?|yrs?|yoe)\b|\b(?P<months>months?|mos?)\b|(?P<pct>%|\bpercent\b)"
-    r"|\b(?:times?\s+per\s+(?P<per>week|month|day))\b",
+    # letter-bounded, not \b: "5yrs" must still parse (a \b fails between digit
+    # and letter), while "more"/"most"/"percentage" never donate a prefix
+    r"(?<![A-Za-z])(?:(?P<years>years?|yrs?|yoe)|(?P<months>months?|mos?)"
+    r"|(?P<pct>%|percent)|times?\s+per\s+(?P<per>week|month|day))(?![A-Za-z])",
     re.IGNORECASE,
 )
 _HAS_ALPHA = re.compile(r"[A-Za-z]")
