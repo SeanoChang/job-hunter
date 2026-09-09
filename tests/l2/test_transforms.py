@@ -10,7 +10,7 @@ from jobhunter.l2.transforms import (
 
 
 def test_registry_shape() -> None:
-    assert VALIDATOR_VERSION == "9"
+    assert VALIDATOR_VERSION == "11"
     assert set(TRANSFORMS[VALIDATOR_VERSION]) == {
         "experience_months", "compensation", "deadline",
     }
@@ -150,7 +150,7 @@ def test_compensation_code_suffixed(text: str, expected: dict[str, object] | Non
 
 
 def test_validator_version_bumped_for_the_grammar_change() -> None:
-    assert VALIDATOR_VERSION == "9"
+    assert VALIDATOR_VERSION == "11"
 
 
 # --- Workday phrasing (validator/4) -----------------------------------------
@@ -262,7 +262,7 @@ def test_experience_floor_wordings_validator9(
 
 def test_validator_version_is_9() -> None:
     # the grammar changed; stored validator/8 rows keep their meaning
-    assert VALIDATOR_VERSION == "9"
+    assert VALIDATOR_VERSION == "11"
     assert VALIDATOR_VERSION in TRANSFORMS
 
 
@@ -276,3 +276,31 @@ def test_negated_more_than_is_not_a_floor() -> None:
     # only the literal words "no"/"not" suppress the floor; a word that merely
     # ends in them ("casino", "Reno") does not
     assert parse_experience_months("casino over 5 years") == {"min": 60, "max": None}
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # validator/11: a single stated amount with a currency signal is a
+        # point value (quarantine audit 2026-09-09: 344 docs cited one figure)
+        ("$332,200.00", {"min": 332200, "max": 332200, "currency": None, "period": None}),
+        ("$58.22 / hr", {"min": 58, "max": 58, "currency": None, "period": "hour"}),
+        ("$163,800 USD per year",
+         {"min": 163800, "max": 163800, "currency": "USD", "period": "year"}),
+        ("163,800 USD", {"min": 163800, "max": 163800, "currency": "USD", "period": None}),
+        ("EUR 71.000 annually", {"min": 71000, "max": 71000, "currency": "EUR", "period": "year"}),
+        ("£95,000", {"min": 95000, "max": 95000, "currency": "GBP", "period": None}),
+        ("$130K", {"min": 130000, "max": 130000, "currency": None, "period": None}),
+        # one-sided wordings become one-sided intervals, never invented bounds
+        ("up to $180,000", {"min": None, "max": 180000, "currency": None, "period": None}),
+        ("starting at $140,000 per year",
+         {"min": 140000, "max": None, "currency": None, "period": "year"}),
+        # no currency signal: a bare number is not compensation evidence
+        ("332,200", None),
+        ("40 hours", None),
+        # two amounts without range syntax stay ambiguous
+        ("$100,000 in equity and $10,000 bonus", None),
+    ],
+)
+def test_compensation_single_amount(text: str, expected: dict[str, object] | None) -> None:
+    assert parse_compensation(text) == expected
