@@ -1,0 +1,83 @@
+# Ingest a locally produced extraction outbox: download the encrypted
+# tarball from a draft release, write its attempt objects into the archive
+# (write-once; existing keys are skipped), then run the extraction catch-up
+# (`extract run --max-docs 0`) so the runner's own replay path records and
+# settles them. Companion to scripts/local_codex_drain.py.
+name: outbox-ingest
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Draft release tag holding outbox.tgz.enc"
+        required: true
+permissions:
+  contents: write # draft-release download needs repo scope; nothing is pushed
+concurrency:
+  group: extract-backfill # same lock domain as the drains
+  cancel-in-progress: false
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen --no-dev
+      - name: download and decrypt outbox
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTBOX_KEY: ${{ secrets.OUTBOX_KEY }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          gh release download "$TAG" --pattern outbox.tgz.enc
+          printf '%s' "$OUTBOX_KEY" > /tmp/outbox.key
+          openssl enc -d -aes-256-cbc -pbkdf2 -pass file:/tmp/outbox.key \
+            -in outbox.tgz.enc -out outbox.tgz
+          rm /tmp/outbox.key
+          tar xzf outbox.tgz
+          find outbox -name '*.json.gz' | wc -l
+      - name: write attempts to the archive
+        env:
+          JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
+          AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          uv run python - <<'EOF'
+          import os
+          from pathlib import Path
+
+          from jobhunter.archive import open_store
+
+          store = open_store(os.environ["JOB_HUNTER_ARCHIVE_URL"])
+          root = Path("outbox")
+          new = skipped = 0
+          for path in sorted(root.rglob("*.json.gz")):
+              key = path.relative_to(root).as_posix()
+              if store.exists(key):
+                  skipped += 1
+                  continue
+              store.put(key, path.read_bytes())
+              new += 1
+          print(f"archived {new} attempts, {skipped} already present")
+          EOF
+      - name: catch up and settle
+        env:
+          JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
+          AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
+          JOB_HUNTER_L2_ENGINE: codex-cli
+          JOB_HUNTER_L2_MODEL_CANDIDATES: ${{ vars.JOB_HUNTER_L2_MODEL_CANDIDATES }}
+          JOB_HUNTER_L2_MODELS: ${{ vars.JOB_HUNTER_L2_MODELS }}
+          JOB_HUNTER_L2_PRICE: ${{ vars.JOB_HUNTER_L2_PRICE }}
+        run: |
+          # --max-docs 0 is the documented free-work mode: catch-up replay and
+          # settle only, zero engine calls (codex-cli here is never invoked).
+          uv run job-hunter extract run --max-docs 0 --max-usd 0 -o json
