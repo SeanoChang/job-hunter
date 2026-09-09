@@ -41,9 +41,17 @@ dispositions of the 2026-08-17 external review:
   normative for schema-v2 semantics** (amended [A1]–[A4] after independent
   verification, 2026-09-07): typed statements, scoped facts, claim-linked
   mentions, source completeness, audit/repair prompts, v1 coexistence, and
-  twelve regression contracts. Implemented via
-  `superpowers/plans/2026-09-07-parsing-v2-offline-contract.md` (increment 1);
-  no production cutover.
+  twelve regression contracts.
+  `superpowers/plans/2026-09-07-parsing-v2-offline-contract.md` increment 1
+  (offline contract) is **shipped**: `l2/v2/` pure modules, schema `2`,
+  `blocks/1` source annotation, `validator/10`, the v1 floor-grammar repair
+  (`validator/9`), and the twelve case contracts plus synthetic minimal
+  pairs — all no model calls, no database/archive I/O. Frozen identifiers:
+  `blocks/1`, schema `2`, `validator/9` (v1) / `validator/10` (v2),
+  `parsing-rules/2`, `aliases/1`; any further change to these bumps rather
+  than edits in place. Increments 2 (extraction-quality harness) and 3
+  (persistence + explicit reads) are still design only; no production
+  cutover yet — the runner, CLI, and MCP are untouched.
 - `superpowers/specs/2026-09-02-hosted-mcp-design.md` — **current, normative
   for the hosted read surface**: the MCP wrapper over `views.py`, static-bearer
   auth, server-side pulse cursors (schema v4 `mcp_cursors`), Cloud Run deploy
@@ -147,9 +155,18 @@ All still current as research; none define the design.
   assembly extracted to `views.py`, schema v4 `mcp_cursors` + `store/mcp_state.py`,
   the FastMCP app with bearer auth and eight tools, packaging, and the Terraform
   config in `infra/`.
+- `superpowers/plans/2026-09-07-parsing-v2-offline-contract.md` — parsing v2
+  increment 1 (shipped, offline only): the `l2/v2/` pure modules — source
+  block annotation (`blocks/1`), typed derivation grammars (`validator/10`),
+  emit→record assembly, the `(record, markdown)` verifier, quality
+  dimensions, mention/statement projection — schema `2`, plus the v1
+  floor-grammar repair (`validator/9`) and the twelve case contracts with
+  seven synthetic minimal pairs. Frozen identifiers: `blocks/1`, schema `2`,
+  `validator/9`/`validator/10`, `parsing-rules/2`, `aliases/1`. Zero model
+  calls, zero database/archive I/O; the runner, CLI, and MCP are untouched.
 
-Not built yet: the M3 quality loop (k-sampling, refuter, consolidate,
-alerts), the concept linker (L3), and the workspace/tracker faces.
+Not built yet: M3 alerting (attention digests via generic webhook), the
+concept linker (L3), and the workspace/tracker faces.
 
 ## Prototype code
 

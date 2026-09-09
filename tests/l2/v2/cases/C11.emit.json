@@ -1,0 +1,172 @@
+{
+  "case": "C11",
+  "company": "Workday",
+  "source_url": "https://workday.wd5.myworkdayjobs.com/Workday/job/USAVAReston/Software-Development-Engineer--US-Federal-_JR-0105420",
+  "original_document_hash": "01eb120a0751a49315aea3ca7c09d0ac1c1a588b0ce53f765963bfa1c31d1ee4",
+  "excerpt_lines": [
+    64,
+    66
+  ],
+  "note": "Audit defect 11: grammar failures and quote failures were quarantined together. The pay range parses; a bad quote in the same emit is its own, separate failure.",
+  "emit": {
+    "source_assessment": {
+      "usability": "usable",
+      "evidence": null,
+      "note": null
+    },
+    "statements": [
+      {
+        "id": "s_location",
+        "kind": "employer_context",
+        "subject": "role",
+        "topic": "Primary location",
+        "evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": null,
+        "importance_evidence": null,
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [],
+        "unresolved": []
+      },
+      {
+        "id": "s_pay",
+        "kind": "compensation_statement",
+        "subject": "role",
+        "topic": "Primary location base pay range",
+        "evidence": [
+          {
+            "block_id": "b000002",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": null,
+        "importance_evidence": null,
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [
+          "f_pay"
+        ],
+        "unresolved": []
+      }
+    ],
+    "relations": {
+      "groups": [],
+      "conditions": [],
+      "example_sets": []
+    },
+    "facts": {
+      "presence": {
+        "experience": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "compensation": {
+          "state": "stated",
+          "evidence": [
+            {
+              "block_id": "b000002",
+              "text": "$163,800 USD - $245,800 USD",
+              "occurrence": 0
+            }
+          ]
+        },
+        "quantities": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "dates": {
+          "state": "none_found",
+          "evidence": null
+        }
+      },
+      "entries": [
+        {
+          "id": "f_pay",
+          "family": "compensation",
+          "statement_ids": [
+            "s_pay"
+          ],
+          "condition_ids": [],
+          "scope": null,
+          "date_kind": null,
+          "component": "base",
+          "evidence": {
+            "value": [
+              {
+                "block_id": "b000002",
+                "text": "$163,800",
+                "occurrence": 0
+              },
+              {
+                "block_id": "b000002",
+                "text": "- $245,800",
+                "occurrence": 0
+              }
+            ],
+            "comparison": null,
+            "unit": null,
+            "currency": [
+              {
+                "block_id": "b000002",
+                "text": "USD",
+                "occurrence": 0
+              }
+            ],
+            "component": [
+              {
+                "block_id": "b000002",
+                "text": "Base Pay Range",
+                "occurrence": 0
+              }
+            ],
+            "applicability": null
+          }
+        }
+      ]
+    },
+    "mentions": [],
+    "areas": [],
+    "block_accounting": [
+      {
+        "block_id": "b000001",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_location"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000002",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_pay"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000002",
+        "disposition": "facts",
+        "ref_ids": [
+          "f_pay"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      }
+    ]
+  }
+}
