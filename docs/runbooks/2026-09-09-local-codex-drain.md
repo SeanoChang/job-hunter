@@ -34,9 +34,12 @@ mode: catch-up replay and settle, zero engine calls. Its JSON summary's
 
 ## Invariants and gotchas
 
-- **Exactly one attempt writer at a time.** While this pipeline is active, the
-  hourly fetch extraction is off (`JOB_HUNTER_L2_MAX_DOCS=0` repo variable) and
-  `extract-backfill.yml` is disabled. The catch-up scan starts one second
+- **Exactly one attempt writer at a time.** While this pipeline is active,
+  `extract-backfill.yml` stays disabled, and the hourly fetch either stays
+  disabled too or must not extract. Do NOT pause extraction by setting the
+  `JOB_HUNTER_L2_MAX_DOCS` variable to 0 — Settings validation rejects 0 and
+  the sync then fails BEFORE collecting (learned 2026-09-09, run 34412983679:
+  one lost collection hour). The catch-up scan starts one second
   before the DB watermark; a CI-produced attempt recorded after a local
   attempt's timestamp but before its upload would put the local key behind the
   scan start, and it would never be recorded.
@@ -67,6 +70,6 @@ mode: catch-up replay and settle, zero engine calls. Its JSON summary's
 Re-enable the CI writers and this pipeline stands down cleanly:
 
 ```bash
-gh variable set JOB_HUNTER_L2_MAX_DOCS --body "35"
-gh workflow enable extract-backfill.yml
+gh workflow enable fetch.yml            # hourly collection (+ its extract step)
+gh workflow enable extract-backfill.yml # the 6-hourly platform-key drain
 ```

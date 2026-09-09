@@ -1,0 +1,30 @@
+# Dump every quarantined extraction row (error detail included) as an
+# artifact, for failure-class analysis. Read-only.
+name: quarantine-dump
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: dump
+        env:
+          DSN: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
+        run: |
+          psql "$DSN" -P pager=off -t -A -c "
+            SELECT row_to_json(t) FROM (
+              SELECT document_hash, model, prompt_version, schema_version,
+                     validator_version, error_detail, updated_at
+              FROM jobhunter.extractions
+              WHERE status = 'quarantined'
+              ORDER BY updated_at DESC
+            ) t;" > quarantined.jsonl
+          wc -l quarantined.jsonl
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quarantined-${{ github.run_id }}
+          path: quarantined.jsonl
+          retention-days: 3
