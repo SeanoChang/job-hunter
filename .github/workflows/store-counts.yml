@@ -1,0 +1,28 @@
+# One-shot store health numbers for monitoring the drain: extraction states,
+# distinct parsed documents, and the remaining queue-eligible count. Read-only.
+name: store-counts
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  counts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: count
+        env:
+          DSN: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
+        run: |
+          psql "$DSN" -P pager=off -c "
+            SELECT status, count(*) AS rows, count(DISTINCT document_hash) AS docs
+            FROM jobhunter.extractions GROUP BY status ORDER BY status;"
+          psql "$DSN" -P pager=off -c "
+            SELECT count(DISTINCT d.document_hash) AS open_posting_docs,
+                   count(DISTINCT d.document_hash) FILTER (
+                     WHERE NOT EXISTS (SELECT 1 FROM jobhunter.extractions e
+                                       WHERE e.document_hash = d.document_hash)
+                   ) AS never_extracted
+            FROM jobhunter.postings p
+            JOIN jobhunter.documents d ON d.version_hash = p.current_version_hash
+            WHERE p.status = 'open';"
