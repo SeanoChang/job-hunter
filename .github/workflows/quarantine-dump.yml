@@ -16,11 +16,18 @@ jobs:
         run: |
           psql "$DSN" -P pager=off -t -A -c "
             SELECT row_to_json(t) FROM (
-              SELECT document_hash, model, prompt_version, schema_version,
-                     validator_version, error_detail, updated_at
-              FROM jobhunter.extractions
-              WHERE status = 'quarantined'
-              ORDER BY updated_at DESC
+              SELECT e.document_hash, e.model, e.prompt_version,
+                     e.validator_version, e.updated_at, a.outcome, a.error_detail
+              FROM jobhunter.extractions e
+              LEFT JOIN LATERAL (
+                SELECT outcome, error_detail
+                FROM jobhunter.extraction_attempts a
+                WHERE a.document_hash = e.document_hash
+                  AND a.error_detail IS NOT NULL
+                ORDER BY a.started_at DESC LIMIT 1
+              ) a ON true
+              WHERE e.status = 'quarantined'
+              ORDER BY e.updated_at DESC
             ) t;" > quarantined.jsonl
           wc -l quarantined.jsonl
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
