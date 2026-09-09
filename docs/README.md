@@ -61,6 +61,10 @@ dispositions of the 2026-08-17 external review:
   errors, `pulse` cursors, the `q` namespace, `sync`/`doctor`/`schema`/`skill`,
   and `profile_mentions`. Supersedes the CLI sections of the ingestion spec and
   the `q` verb table in the L2 harness doc (whose rulings it keeps).
+- `runbooks/2026-09-09-local-codex-drain.md` — **current**: the queue-dump →
+  local codex-cli drain → encrypted-outbox ingest loop that extracts on the
+  owner's machine and uploads through CI (no store credentials locally);
+  includes the single-writer and validator-replay invariants.
 - `2026-08-26-l2-extraction-harness.md` — **current, normative** for the L2
   layer: machine-verifiable evidence format + standalone verifier, extraction
   lifecycle state machine and runner, drift control + weekly consolidation
