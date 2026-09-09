@@ -22,7 +22,13 @@ from datetime import date
 # {"min": N*12, "max": null} — conservative, no invented upper bound; v2's
 # comparison operators represent gt exactly. Negated phrases ("no more than",
 # "not more than") are ceilings, not floors, and keep the exact fallback.
-VALIDATOR_VERSION = "9"
+# validator/11 (10 is v2's): a single stated amount with a currency signal
+# (symbol or code) is a point value {min == max} — the quarantine audit
+# 2026-09-09 found 344 docs whose only failure was a one-figure salary the
+# range grammar refused. "up to"/"at most" wordings become {min: null},
+# "from"/"starting at"/"at least" become {max: null}; a bare number with no
+# currency signal, or several amounts without range syntax, stays None.
+VALIDATOR_VERSION = "11"
 
 _RANGE = re.compile(r"(\d+)\s*(?:-|–|—|to|and)\s*(\d+)\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 _FLOOR = re.compile(
@@ -66,6 +72,21 @@ _MONEY_CODE_LEAD = re.compile(
     _CODE + r"\s*" + _AMOUNT + r"\s*(?:--?|–|—|to)\s*"
     + _CODE + r"\s*" + _AMOUNT,
     re.IGNORECASE,
+)
+# validator/11: single-amount forms, tried only after every range form fails.
+_MONEY_TOKEN = re.compile(
+    r"[$£€¥]\s*" + _AMOUNT + r"|" + _AMOUNT + r"\s*" + _CODE + r"\b|"
+    + _CODE + r"\s*" + _AMOUNT,
+    re.IGNORECASE,
+)
+_MONEY_ONE = re.compile(r"([$£€¥])\s*" + _AMOUNT, re.IGNORECASE)
+_MONEY_ONE_CODE = re.compile(_AMOUNT + r"\s*" + _CODE + r"\b", re.IGNORECASE)
+_MONEY_ONE_CODE_LEAD = re.compile(_CODE + r"\s*" + _AMOUNT, re.IGNORECASE)
+_CEILING_WORDS = re.compile(
+    r"\b(?:up\s+to|at\s+most|maximum\s+of|no\s+more\s+than|not\s+to\s+exceed)\b", re.IGNORECASE
+)
+_FLOOR_WORDS = re.compile(
+    r"\b(?:starting\s+(?:at|from)|from|at\s+least|minimum\s+of)\b", re.IGNORECASE
 )
 _HOURLY = re.compile(r"(?:/\s*(?:hr|hour)|per\s+hour)\b", re.IGNORECASE)
 _YEARLY = re.compile(r"(?:/\s*(?:yr|year)|per\s+(?:year|annum)|annually|annual)\b", re.IGNORECASE)
@@ -125,7 +146,7 @@ def parse_compensation(text: str) -> dict[str, object] | None:
             return None  # "100,000 USD - 120,000 EUR" is not a range
         currency = code_hi.upper()
     else:
-        return None
+        return _single_amount(text)
     lo = _amount(lo_digits, lo_k)
     hi = _amount(hi_digits, hi_k)
     if hi_k and not lo_k and lo < 1000:
@@ -133,6 +154,34 @@ def parse_compensation(text: str) -> dict[str, object] | None:
     if lo > hi:
         return None  # inverted range: ambiguous
     period = "hour" if _HOURLY.search(text) else "year" if _YEARLY.search(text) else None
+    return {"min": lo, "max": hi, "currency": currency, "period": period}
+
+
+def _single_amount(text: str) -> dict[str, object] | None:
+    """validator/11: one amount with a currency signal is a point value."""
+    if len(_MONEY_TOKEN.findall(text)) != 1:
+        return None  # zero signals, or several amounts without range syntax
+    currency: str | None
+    if m := _MONEY_ONE.search(text):
+        symbol, digits, k = m.groups()
+        code = _CURRENCY.search(text)
+        currency = code.group(1).upper() if code else _SYMBOL_CURRENCY.get(symbol)
+    elif m := _MONEY_ONE_CODE.search(text):
+        digits, k, code_txt = m.groups()
+        currency = code_txt.upper()
+    elif m := _MONEY_ONE_CODE_LEAD.search(text):
+        code_txt, digits, k = m.groups()
+        currency = code_txt.upper()
+    else:
+        return None
+    value = _amount(digits, k)
+    period = "hour" if _HOURLY.search(text) else "year" if _YEARLY.search(text) else None
+    lo: int | None = value
+    hi: int | None = value
+    if _CEILING_WORDS.search(text):
+        lo = None  # "up to $180,000": a ceiling, no invented floor
+    elif _FLOOR_WORDS.search(text):
+        hi = None  # "starting at $140,000": a floor, no invented ceiling
     return {"min": lo, "max": hi, "currency": currency, "period": period}
 
 

@@ -59,9 +59,10 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
   read queries.
 - `l2/` — the demand-profile layer (increments 1–2 of
   `docs/2026-08-26-l2-extraction-harness.md`): quote/span resolution
-  (`quotes.py`), versioned fact transforms (`transforms.py`, `validator/9` —
-  floor grammar for "at least/minimum/over N years", omission scan skips
-  boilerplate), JSON schemas v1 (`schemas_data/1/`), the pure `verify()` suite
+  (`quotes.py`), versioned fact transforms (`transforms.py`, `validator/11` —
+  floor grammar for "at least/minimum/over N years", single-amount
+  compensation with a currency signal, omission scan skips boilerplate;
+  10 is v2's), JSON schemas v1 (`schemas_data/1/`), the pure `verify()` suite
   (`verify.py`), findings types (`report.py`) — all no-I/O, no-LLM; plus the
   harness: prompt `demand-profile/v5` (`prompt.py`), engine backends
   (`engines.py`: openai-compat, claude-cli, codex-cli; observed model only),
