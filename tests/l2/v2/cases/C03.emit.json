@@ -1,0 +1,281 @@
+{
+  "case": "C03",
+  "company": "Zendesk",
+  "source_url": "https://zendesk.wd1.myworkdayjobs.com/zendesk/job/Lisbon-Portugal/Senior-Machine-Learning-Engineer_R34642",
+  "original_document_hash": "09f7afbb8f349857d554b71bf74973ebd5cf8add086dd57b2638a7ff9bc37697",
+  "excerpt_lines": [
+    32,
+    34,
+    36,
+    37,
+    39,
+    44
+  ],
+  "note": "Audit defect 3: required SQL and preferred Snowflake were merged, and the 'advanced degrees welcome but not required' line became an invented alternative to the BA/BS requirement. No group joins them here.",
+  "emit": {
+    "source_assessment": {
+      "usability": "usable",
+      "evidence": null,
+      "note": null
+    },
+    "statements": [
+      {
+        "id": "s_degree",
+        "kind": "qualification",
+        "subject": "candidate",
+        "topic": "BA/BS in a quantitative discipline",
+        "evidence": [
+          {
+            "block_id": "b000003",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "required",
+        "importance_evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [],
+        "unresolved": []
+      },
+      {
+        "id": "s_advanced_degree",
+        "kind": "qualification",
+        "subject": "candidate",
+        "topic": "Advanced degree",
+        "evidence": [
+          {
+            "block_id": "b000004",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "not_required",
+        "importance_evidence": [
+          {
+            "block_id": "b000004",
+            "text": "welcome but not required",
+            "occurrence": 0
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [],
+        "unresolved": []
+      },
+      {
+        "id": "s_sql",
+        "kind": "qualification",
+        "subject": "candidate",
+        "topic": "SQL skills",
+        "evidence": [
+          {
+            "block_id": "b000006",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "required",
+        "importance_evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": "proficient",
+        "proficiency_evidence": [
+          {
+            "block_id": "b000006",
+            "text": "Strong SQL skills",
+            "occurrence": 0
+          }
+        ],
+        "condition_ids": [],
+        "fact_ids": [],
+        "unresolved": []
+      },
+      {
+        "id": "s_snowflake",
+        "kind": "qualification",
+        "subject": "candidate",
+        "topic": "Snowflake cloud data warehouse",
+        "evidence": [
+          {
+            "block_id": "b000006",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "preferred",
+        "importance_evidence": [
+          {
+            "block_id": "b000006",
+            "text": "Snowflake preferred",
+            "occurrence": 0
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [],
+        "unresolved": []
+      }
+    ],
+    "relations": {
+      "groups": [],
+      "conditions": [],
+      "example_sets": []
+    },
+    "facts": {
+      "presence": {
+        "experience": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "compensation": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "quantities": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "dates": {
+          "state": "none_found",
+          "evidence": null
+        }
+      },
+      "entries": []
+    },
+    "mentions": [
+      {
+        "id": "m_sql",
+        "surface": "SQL",
+        "evidence": {
+          "block_id": "b000006",
+          "text": "SQL",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_sql"
+        ],
+        "role": "direct"
+      },
+      {
+        "id": "m_snowflake",
+        "surface": "Snowflake",
+        "evidence": {
+          "block_id": "b000006",
+          "text": "Snowflake",
+          "occurrence": 0
+        },
+        "statement_ids": [
+          "s_snowflake"
+        ],
+        "role": "direct"
+      }
+    ],
+    "areas": [
+      {
+        "id": "a_education",
+        "name": "Education & Experience",
+        "kind": "credential",
+        "statement_ids": [
+          "s_degree",
+          "s_advanced_degree"
+        ],
+        "evidence": [
+          {
+            "block_id": "b000002",
+            "text": null,
+            "occurrence": null
+          }
+        ]
+      },
+      {
+        "id": "a_technical",
+        "name": "Technical Expertise",
+        "kind": "technical",
+        "statement_ids": [
+          "s_sql",
+          "s_snowflake"
+        ],
+        "evidence": [
+          {
+            "block_id": "b000005",
+            "text": null,
+            "occurrence": null
+          }
+        ]
+      }
+    ],
+    "block_accounting": [
+      {
+        "block_id": "b000001",
+        "disposition": "context",
+        "ref_ids": [],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000002",
+        "disposition": "context",
+        "ref_ids": [],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000003",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_degree"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000004",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_advanced_degree"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000005",
+        "disposition": "context",
+        "ref_ids": [],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000006",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_sql",
+          "s_snowflake"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      }
+    ]
+  }
+}

@@ -10,7 +10,7 @@ from jobhunter.l2.transforms import (
 
 
 def test_registry_shape() -> None:
-    assert VALIDATOR_VERSION == "8"
+    assert VALIDATOR_VERSION == "9"
     assert set(TRANSFORMS[VALIDATOR_VERSION]) == {
         "experience_months", "compensation", "deadline",
     }
@@ -150,7 +150,7 @@ def test_compensation_code_suffixed(text: str, expected: dict[str, object] | Non
 
 
 def test_validator_version_bumped_for_the_grammar_change() -> None:
-    assert VALIDATOR_VERSION == "8"
+    assert VALIDATOR_VERSION == "9"
 
 
 # --- Workday phrasing (validator/4) -----------------------------------------
@@ -233,3 +233,46 @@ def test_experience_at_least_is_a_floor() -> None:
     # untouched neighbours
     assert parse_experience_months("5+ years") == {"min": 60, "max": None}
     assert parse_experience_months("5 years of Python") == {"min": 60, "max": 60}
+
+
+# --- validator/9: "minimum (of) N", "more than N", "over N" are floors -------
+# audit 2026-09-06 defect 1 (C01): "a minimum of 8 years of experience" read as
+# exact {96, 96} under v8 — 72 validated records carried a false exact interval.
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("a minimum of 8 years of experience", {"min": 96, "max": None}),
+        ("Minimum 5 years in consulting", {"min": 60, "max": None}),
+        ("minimum of 10 years", {"min": 120, "max": None}),
+        ("more than 8 years of experience", {"min": 96, "max": None}),
+        ("over 12 years", {"min": 144, "max": None}),
+        # regressions: exact stays exact, ranges stay ranges
+        ("5 years of experience", {"min": 60, "max": 60}),
+        ("5-7 years", {"min": 60, "max": 84}),
+        ("at least 8 years of experience", {"min": 96, "max": None}),
+        ("8+ years", {"min": 96, "max": None}),
+    ],
+)
+def test_experience_floor_wordings_validator9(
+    text: str, expected: dict[str, object] | None
+) -> None:
+    assert parse_experience_months(text) == expected
+
+
+def test_validator_version_is_9() -> None:
+    # the grammar changed; stored validator/8 rows keep their meaning
+    assert VALIDATOR_VERSION == "9"
+    assert VALIDATOR_VERSION in TRANSFORMS
+
+
+def test_negated_more_than_is_not_a_floor() -> None:
+    # "no/not more than N years" states a ceiling; the validator/9 floor branch
+    # must not fire on the embedded "more than". v1 has no ceiling shape, so
+    # the exact fallback (validator/8 parity) is the conservative reading.
+    assert parse_experience_months("no more than 5 years") == {"min": 60, "max": 60}
+    assert parse_experience_months("not more than 5 years") == {"min": 60, "max": 60}
+    assert parse_experience_months("more than 5 years") == {"min": 60, "max": None}
+    # only the literal words "no"/"not" suppress the floor; a word that merely
+    # ends in them ("casino", "Reno") does not
+    assert parse_experience_months("casino over 5 years") == {"min": 60, "max": None}

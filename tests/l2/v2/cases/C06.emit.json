@@ -1,0 +1,279 @@
+{
+  "case": "C06",
+  "company": "Spotify",
+  "source_url": "https://jobs.lever.co/spotify/5fce53f3-83dd-4b6a-9058-a2c295560966",
+  "original_document_hash": "5ef9a4d4cc3f896508f06ddc81a0376b8f1014d24e3df47f13301ddd40073c41",
+  "excerpt_lines": [
+    36,
+    37,
+    38,
+    40
+  ],
+  "note": "Audit defect 6: the malformed salary vanished and office attendance was never extracted. Both survive here — the salary as a present_unparsed compensation entry with its evidence intact.",
+  "emit": {
+    "source_assessment": {
+      "usability": "usable",
+      "evidence": null,
+      "note": null
+    },
+    "statements": [
+      {
+        "id": "s_location",
+        "kind": "employment_constraint",
+        "subject": "role",
+        "topic": "New York City base location",
+        "evidence": [
+          {
+            "block_id": "b000002",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "unstated",
+        "importance_evidence": null,
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [],
+        "unresolved": []
+      },
+      {
+        "id": "s_attendance",
+        "kind": "employment_constraint",
+        "subject": "candidate",
+        "topic": "In-person office attendance",
+        "evidence": [
+          {
+            "block_id": "b000003",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "ambiguous",
+        "importance_evidence": [
+          {
+            "block_id": "b000003",
+            "text": "We ask that you come in",
+            "occurrence": 0
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [
+          "f_attendance"
+        ],
+        "unresolved": []
+      },
+      {
+        "id": "s_pay",
+        "kind": "compensation_statement",
+        "subject": "role",
+        "topic": "United States base salary range",
+        "evidence": [
+          {
+            "block_id": "b000004",
+            "text": "The United States base range for this position is $106,147 - $228, 781, plus equity.",
+            "occurrence": 0
+          }
+        ],
+        "importance": null,
+        "importance_evidence": null,
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [
+          "f_pay"
+        ],
+        "unresolved": []
+      }
+    ],
+    "relations": {
+      "groups": [],
+      "conditions": [],
+      "example_sets": []
+    },
+    "facts": {
+      "presence": {
+        "experience": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "compensation": {
+          "state": "stated",
+          "evidence": [
+            {
+              "block_id": "b000004",
+              "text": "$106,147 - $228, 781",
+              "occurrence": 0
+            }
+          ]
+        },
+        "quantities": {
+          "state": "stated",
+          "evidence": [
+            {
+              "block_id": "b000003",
+              "text": "2-3 times per week",
+              "occurrence": 0
+            }
+          ]
+        },
+        "dates": {
+          "state": "none_found",
+          "evidence": null
+        }
+      },
+      "entries": [
+        {
+          "id": "f_attendance",
+          "family": "quantity",
+          "statement_ids": [
+            "s_attendance"
+          ],
+          "condition_ids": [],
+          "scope": null,
+          "date_kind": null,
+          "component": null,
+          "evidence": {
+            "value": [
+              {
+                "block_id": "b000003",
+                "text": "2-3 times per week",
+                "occurrence": 0
+              }
+            ],
+            "comparison": null,
+            "unit": null,
+            "currency": null,
+            "component": null,
+            "applicability": null
+          }
+        },
+        {
+          "id": "f_pay",
+          "family": "compensation",
+          "statement_ids": [
+            "s_pay"
+          ],
+          "condition_ids": [],
+          "scope": null,
+          "date_kind": null,
+          "component": "base",
+          "evidence": {
+            "value": [
+              {
+                "block_id": "b000004",
+                "text": "$106,147 - $228, 781",
+                "occurrence": 0
+              }
+            ],
+            "comparison": null,
+            "unit": null,
+            "currency": null,
+            "component": [
+              {
+                "block_id": "b000004",
+                "text": "base range",
+                "occurrence": 0
+              }
+            ],
+            "applicability": null
+          }
+        }
+      ]
+    },
+    "mentions": [],
+    "areas": [
+      {
+        "id": "a_where",
+        "name": "Where You'll Be",
+        "kind": "constraint",
+        "statement_ids": [
+          "s_location",
+          "s_attendance"
+        ],
+        "evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ]
+      }
+    ],
+    "block_accounting": [
+      {
+        "block_id": "b000001",
+        "disposition": "context",
+        "ref_ids": [],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000002",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_location"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000003",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_attendance"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000003",
+        "disposition": "facts",
+        "ref_ids": [
+          "f_attendance"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000004",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_pay"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000004",
+        "disposition": "facts",
+        "ref_ids": [
+          "f_pay"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      },
+      {
+        "block_id": "b000004",
+        "disposition": "excluded",
+        "ref_ids": [],
+        "exclusion_reason": "benefits",
+        "evidence": [
+          {
+            "block_id": "b000004",
+            "text": "The benefits available for this position include health insurance",
+            "occurrence": 0
+          }
+        ]
+      }
+    ]
+  }
+}
