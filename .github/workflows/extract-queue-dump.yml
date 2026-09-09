@@ -1,0 +1,61 @@
+# Dump the extraction queue (document hash + canonical markdown +
+# next_attempt_no) as an artifact, for the local codex drain
+# (scripts/local_codex_drain.py). Read-only against the store.
+name: extract-queue-dump
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "How many queued documents to dump"
+        default: "40"
+permissions:
+  contents: read
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen --no-dev
+      - name: dump queue
+        env:
+          JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
+          JOB_HUNTER_L2_MODELS: ${{ vars.JOB_HUNTER_L2_MODELS }}
+          COUNT: ${{ github.event.inputs.count }}
+        run: |
+          uv run python - <<'EOF'
+          import json, os
+
+          from jobhunter.l2.prompt import PROMPT_VERSION
+          from jobhunter.l2.runner import SCHEMA_VERSION
+          from jobhunter.l2.state import globs_to_regex
+          from jobhunter.l2.transforms import VALIDATOR_VERSION
+          from jobhunter.markdown import NORMALIZER_VERSION
+          from jobhunter.store import db, extraction
+
+          conn = db.connect(os.environ["JOB_HUNTER_DATABASE_URL"])
+          globs = tuple(os.environ["JOB_HUNTER_L2_MODELS"].split(","))
+          docs = extraction.queue(
+              conn, prompt_version=PROMPT_VERSION, schema_version=SCHEMA_VERSION,
+              validator_version=VALIDATOR_VERSION, model_regex=globs_to_regex(globs),
+              normalizer_version=NORMALIZER_VERSION, limit=int(os.environ["COUNT"]),
+          )
+          with open("queue.jsonl", "w", encoding="utf-8") as fh:
+              for dh in docs:
+                  md = extraction.markdown_for(conn, dh, NORMALIZER_VERSION)
+                  if md is None:
+                      continue
+                  row = {"document_hash": dh, "markdown": md,
+                         "next_attempt_no": extraction.next_attempt_no(conn, dh)}
+                  fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+          print(f"dumped {len(docs)} queued documents")
+          EOF
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: queue-${{ github.run_id }}
+          path: queue.jsonl
+          retention-days: 3

@@ -33,3 +33,7 @@ infra/*.tfvars
 
 # agent worktrees (transient)
 .claude/worktrees/
+outbox/
+queue-*.jsonl
+queue.jsonl
+outbox.tgz*
