@@ -51,19 +51,25 @@ jobs:
           import os
           from pathlib import Path
 
-          from jobhunter.archive import open_store
+          from jobhunter.archive import keys, open_store
 
           store = open_store(os.environ["JOB_HUNTER_ARCHIVE_URL"])
           root = Path("outbox")
-          new = skipped = 0
+          new = skipped = junk = 0
           for path in sorted(root.rglob("*.json.gz")):
               key = path.relative_to(root).as_posix()
+              # only real attempt keys: macOS tar AppleDouble entries (._*) and
+              # anything else the catch-up scan would skip must not reach the
+              # write-once archive
+              if keys.parse_x_attempt_key(key) is None:
+                  junk += 1
+                  continue
               if store.exists(key):
                   skipped += 1
                   continue
               store.put(key, path.read_bytes())
               new += 1
-          print(f"archived {new} attempts, {skipped} already present")
+          print(f"archived {new} attempts, {skipped} already present, {junk} non-attempt files ignored")
           EOF
       - name: catch up and settle
         env:
