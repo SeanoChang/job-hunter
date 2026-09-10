@@ -1,8 +1,7 @@
 name: fetch
+# Schedule removed 2026-09-10 (owner instruction: no scheduled workflows;
+# collection runs locally). Manual dispatch only.
 on:
-  schedule:
-    # :17 dodges top-of-hour congestion, when GitHub delays or drops scheduled runs
-    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       extract_max_docs:

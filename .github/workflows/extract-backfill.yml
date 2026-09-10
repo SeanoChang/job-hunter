@@ -19,8 +19,7 @@ on:
       mode:
         description: "run = drain the queue; rebuild = $0 archive replay (validator migration)"
         default: "run"
-  schedule:
-    - cron: "37 */6 * * *"
+  # schedule removed 2026-09-10 (owner instruction: no scheduled workflows)
 concurrency:
   group: extract-backfill
   cancel-in-progress: false
