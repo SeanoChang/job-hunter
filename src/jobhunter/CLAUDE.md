@@ -96,7 +96,11 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
     `l2.runner.SCHEMA_VERSION`, `l2.transforms.VALIDATOR_VERSION`), so v1 rows
     keep serving even once a validated v2 row exists for the same document.
     Making the served tuple follow the selected bundle is open work and gates
-    any real cutover.
+    any real cutover. It is not the whole gate, though: the v2 bundle's
+    `mention_rows` projection returns nothing for an unaudited record (see
+    `l2/v2/` below), so `profile_mentions` under the v2 tuple is empty and
+    correcting the scoping alone leaves `q claims` returning nothing until
+    `semantic-audit/v1` lands.
   - `l2/v2/` — the v2 semantic contract
     (`docs/superpowers/specs/2026-09-07-parsing-contract-v2-design.md`;
     increment 1 offline modules plus the increment-2 harness wiring —
@@ -124,6 +128,15 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
     current renderer works unchanged). `pulse.py` and `extract show` dispatch
     on `profile["schema"] == "2"`; storage is NOT migrated. No model calls and
     no database/archive I/O inside `l2/v2/` itself.
+    **The mention projection is gated on `search_eligible` and therefore
+    yields nothing today.** `assemble.py` calls `quality.assess(source=…,
+    evidence="pass")` and leaves `semantics`/`completeness` at `not_checked`,
+    which no offline phase can clear, so `project.mention_rows` (and
+    `serve.mention_rows` through it) short-circuits to `[]` for every record a
+    v2 run produces — pinned by
+    `tests/l2/test_runner_v2.py::test_an_unaudited_record_stores_its_profile_but_indexes_no_mentions`.
+    The blob is populated, the aggregate is not; `semantic-audit/v1` is what
+    unblocks it.
 
 ## Conventions
 
