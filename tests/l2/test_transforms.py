@@ -330,8 +330,9 @@ def test_compensation_single_amount(text: str, expected: dict[str, object] | Non
          {"min": 639400, "max": 799300, "currency": "DKK", "period": None}),
         ("DKK 53283 - DKK 66608",
          {"min": 53283, "max": 66608, "currency": "DKK", "period": None}),
-        ("210 300.00 USD - 273 400.00 USD",
-         {"min": 210300, "max": 273400, "currency": "USD", "period": None}),
+        # bare space-thousands were dropped in the 4th adversarial round —
+        # ambiguous without a sign/code left anchor; sign/code-led forms below
+        ("210 300.00 USD - 273 400.00 USD", None),
         ("Approximately 65,000−87,500 OTE annually",
          {"min": 65000, "max": 87500, "currency": None, "period": "year"}),
         ("$40/hour to $65/hour", {"min": 40, "max": 65, "currency": None, "period": "hour"}),
@@ -444,8 +445,9 @@ def test_compensation_sign_case_insensitive(
          {"min": 100000, "max": 1200000, "currency": "USD", "period": None}),
         ("24 100,000 USD", {"min": 100000, "max": 100000, "currency": "USD", "period": None}),
         # genuine space-thousands still parse (homogeneous separators only)
-        ("210 300.00 USD - 273 400.00 USD",
-         {"min": 210300, "max": 273400, "currency": "USD", "period": None}),
+        # bare space-thousands were dropped in the 4th adversarial round —
+        # ambiguous without a sign/code left anchor; sign/code-led forms below
+        ("210 300.00 USD - 273 400.00 USD", None),
     ],
 )
 def test_amount_never_fuses_a_preceding_token(
@@ -462,16 +464,15 @@ def test_space_thousands_never_fuse_a_preceding_token() -> None:
     assert r is None or (r["min"] == 0 and r["max"] == 0)
     r = parse_compensation("Level 4 180 000 SEK")
     assert r is None or r["min"] == 0
-    # genuine bare space-grouped amounts (decimal tail, non-word left edge) hold
-    assert parse_compensation("210 300.00 USD - 273 400.00 USD") == {
-        "min": 210300, "max": 273400, "currency": "USD", "period": None,
-    }
-    assert parse_compensation("Salary: 210 300.00 USD - 273 400.00 USD") == {
-        "min": 210300, "max": 273400, "currency": "USD", "period": None,
-    }
-    # sign-led space groups stay unguarded — the sign disambiguates
+    # bare space groups refuse outright — support survives only behind a
+    # sign or leading code, where the left edge is anchored
+    assert parse_compensation("210 300.00 USD - 273 400.00 USD") is None
+    assert parse_compensation("Salary: 210 300.00 USD - 273 400.00 USD") is None
     assert parse_compensation("kr 850 000 SEK") == {
         "min": 850000, "max": 850000, "currency": "SEK", "period": None,
+    }
+    assert parse_compensation("USD 210 300 - USD 273 400") == {
+        "min": 210300, "max": 273400, "currency": "USD", "period": None,
     }
 
 
@@ -495,7 +496,9 @@ def test_space_thousands_never_fuse_a_preceding_token() -> None:
          {"min": 45000, "max": 60000, "currency": "USD", "period": None}),
         ("Level 4 100000 USD",
          {"min": 100000, "max": 100000, "currency": "USD", "period": None}),
-        ("Level 2 125 USD", {"min": 125, "max": 125, "currency": "USD", "period": None}),
+        # deliberate null-over-guess trade: a bare exactly-3-digit amount
+        # after digit+space is indistinguishable from a space-group tail
+        ("Level 2 125 USD", None),
         # code-lead beats a grade digit wearing a trailing code (D3)
         ("Level 2 PLN 45,000",
          {"min": 45000, "max": 45000, "currency": "PLN", "period": None}),
