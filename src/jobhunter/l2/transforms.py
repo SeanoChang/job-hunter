@@ -82,7 +82,13 @@ def _sign_currency(sign: str) -> str | None:
 # dot-thousands ("71.000" is 71000; three digits after a dot are never cents).
 # validator/12: space-thousands ("210 300") and a decimal-comma tail
 # ("130.600,00" — the comma tail is discarded exactly like a cents dot).
-_AMOUNT = r"(\d{1,3}(?:[, ]\d{3})+|\d{1,3}(?:\.\d{3})+|\d+)(?:[.,]\d{1,2})?\s*(k)?"
+# Separators are homogeneous per amount — mixing space and comma groups let a
+# preceding grade token fuse in ("Level 3 200,000" read as 3,200,000; the
+# 2026-09-10 adversarial review), so "3 200,000" is never one number.
+_AMOUNT = (
+    r"(\d{1,3}(?:,\d{3})+|\d{1,3}(?: \d{3})+|\d{1,3}(?:\.\d{3})+|\d+)"
+    r"(?:[.,]\d{1,2})?\s*(k)?"
+)
 # validator/12: range separators, including the Unicode minus family
 # (− U+2212, in addition to the hyphen/en dash/em dash already supported).
 _SEP = r"(?:--?|–|—|−|to)"
