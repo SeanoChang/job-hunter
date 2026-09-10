@@ -112,9 +112,24 @@ _CODE = (
     r"(USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|CNY|CHF|SEK|INR|TWD|KRW"
     r"|DKK|NOK|PLN|CZK|MYR|BRL|MXN|ILS)"
 )
+# validator/12 fix (QMRF, second adversarial re-review): in BARE-leading
+# positions — no sign or code immediately left — a space-grouped amount is
+# indistinguishable from "<grade token> <amount>" ("Level 1 100 000" is a
+# legal homogeneous space group), so the space alternative here (a) may not
+# start right after a word character ("Level 4 180 000" never fuses) and
+# (b) must carry a decimal tail ("210 300.00"), the only bare space-grouped
+# shape observed in the corpus. Sign- and code-led amounts keep the
+# unguarded _AMOUNT: "kr 850 000" and "USD 210 300" are unambiguous.
+_AMOUNT_BARE = (
+    r"(\d{1,3}(?:,\d{3})+"
+    r"|(?<![\w.,])(?<!\w\s)\d{1,3}(?: \d{3})+(?=[.,]\d{1,2})"
+    r"|(?<![\d.,])(?<!\d\s)\d{1,3}(?:\.\d{3})+"
+    r"|(?<![\d.,])(?<!\d\s)\d+)"
+    r"(?:[.,]\d{1,2})?\s*(k)?"
+)  # plain/dot alternatives refuse digit-adjacent starts: no "300" out of "210 300.00"
 _MONEY_CODE = re.compile(
-    _AMOUNT + _PERIOD_FRAG + r"\s*" + _CODE + r"?\s*" + _SEP + r"\s*"
-    + _AMOUNT + _PERIOD_FRAG + r"\s*" + _CODE + r"\b",
+    _AMOUNT_BARE + _PERIOD_FRAG + r"\s*" + _CODE + r"?\s*" + _SEP + r"\s*"
+    + _AMOUNT_BARE + _PERIOD_FRAG + r"\s*" + _CODE + r"\b",
     re.IGNORECASE,
 )
 # validator/6: the code may LEAD each amount ("EUR 71.000 to EUR 95.000").
@@ -150,6 +165,9 @@ _MONEY_BARE = re.compile(
     re.IGNORECASE,
 )
 # validator/11: single-amount forms, tried only after every range form fails.
+# the ambiguity COUNTER stays maximally permissive (unguarded _AMOUNT): a
+# guarded-out bound must still count, so "Step 2 210 300.00 USD - 273 400.00
+# USD" reads as two tokens and refuses instead of pointing at the second.
 _MONEY_TOKEN = re.compile(
     _SIGN + r"\s*" + _AMOUNT + _PERIOD_FRAG + r"|"
     + _AMOUNT + _PERIOD_FRAG + r"\s*" + _CODE + r"\b|"
@@ -158,7 +176,7 @@ _MONEY_TOKEN = re.compile(
 )
 _MONEY_ONE = re.compile(r"(" + _SIGN + r")\s*" + _AMOUNT + _PERIOD_FRAG, re.IGNORECASE)
 _MONEY_ONE_CODE = re.compile(
-    _AMOUNT + _PERIOD_FRAG + r"\s*" + _CODE + r"\b", re.IGNORECASE
+    _AMOUNT_BARE + _PERIOD_FRAG + r"\s*" + _CODE + r"\b", re.IGNORECASE
 )
 _MONEY_ONE_CODE_LEAD = re.compile(
     _CODE + r"\s*" + _AMOUNT + _PERIOD_FRAG, re.IGNORECASE
