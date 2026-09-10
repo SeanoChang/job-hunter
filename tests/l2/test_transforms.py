@@ -425,3 +425,30 @@ def test_compensation_sign_case_insensitive(
     text: str, expected: dict[str, object] | None
 ) -> None:
     assert parse_compensation(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # a grade/zone/year token before the amount must never fuse into it
+        # (adversarial review 2026-09-10: "Level 3 200,000" read as 3,200,000)
+        ("Level 3 200,000 USD - 250,000 USD",
+         {"min": 200000, "max": 250000, "currency": "USD", "period": None}),
+        ("P4 180,000 USD - 220,000 USD",
+         {"min": 180000, "max": 220000, "currency": "USD", "period": None}),
+        ("Zone 2 136,000 USD - 218,500 USD",
+         {"min": 136000, "max": 218500, "currency": "USD", "period": None}),
+        ("In 2026 130,000 USD - 150,000 USD",
+         {"min": 130000, "max": 150000, "currency": "USD", "period": None}),
+        ("Level 1 100,000 USD - 1,200,000 USD",
+         {"min": 100000, "max": 1200000, "currency": "USD", "period": None}),
+        ("24 100,000 USD", {"min": 100000, "max": 100000, "currency": "USD", "period": None}),
+        # genuine space-thousands still parse (homogeneous separators only)
+        ("210 300.00 USD - 273 400.00 USD",
+         {"min": 210300, "max": 273400, "currency": "USD", "period": None}),
+    ],
+)
+def test_amount_never_fuses_a_preceding_token(
+    text: str, expected: dict[str, object] | None
+) -> None:
+    assert parse_compensation(text) == expected
