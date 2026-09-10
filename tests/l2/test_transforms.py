@@ -452,3 +452,26 @@ def test_amount_never_fuses_a_preceding_token(
     text: str, expected: dict[str, object] | None
 ) -> None:
     assert parse_compensation(text) == expected
+
+
+def test_space_thousands_never_fuse_a_preceding_token() -> None:
+    # second adversarial re-review: "Level 1 100 000" is itself a legal space
+    # group, so bare space amounts require a non-word left edge AND a decimal
+    # tail; fused ranges must refuse rather than derive a false interval
+    assert parse_compensation("Level 1 100 000 USD - 1 200 000 USD") is None
+    assert parse_compensation("Step 2 210 300.00 USD - 273 400.00 USD") is None
+    # genuine bare space-grouped amounts (decimal tail, non-word left edge) hold
+    assert parse_compensation("210 300.00 USD - 273 400.00 USD") == {
+        "min": 210300, "max": 273400, "currency": "USD", "period": None,
+    }
+    assert parse_compensation("Salary: 210 300.00 USD - 273 400.00 USD") == {
+        "min": 210300, "max": 273400, "currency": "USD", "period": None,
+    }
+    # sign-led space groups stay unguarded — the sign disambiguates
+    assert parse_compensation("kr 850 000 SEK") == {
+        "min": 850000, "max": 850000, "currency": "SEK", "period": None,
+    }
+    # a fused single must never yield a plausible large value (v11 parity:
+    # the residual \d+ branch may still find a filterable 0, never 4.18M)
+    r = parse_compensation("Level 4 180 000 SEK")
+    assert r is None or r["min"] == 0
