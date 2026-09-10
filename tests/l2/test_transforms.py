@@ -356,14 +356,18 @@ def test_compensation_international(text: str, expected: dict[str, object] | Non
 
 
 # --- QMRF fix: the bare-range gate must not eat non-money ranges ------------
-# Adversarial review (2026-09-10, ticket QMRF) found _MONEY_BARE's gate — any
-# bare numeric range plus an "annually"/"/hour"-family token ANYWHERE in the
-# text — accepts PTO days, headcounts, cohort weeks, percentages, customer
-# counts and star ratings as compensation intervals. The gate now requires
-# BOTH bounds to carry comma-grouped thousands formatting (the shape of the
-# design's one bare-range row, "65,000−87,500") — space-thousands ("1 000 -
-# 2 000") and ungrouped numbers no longer qualify as money evidence on their
-# own; a currency sign or code is still required for those.
+# Adversarial review (2026-09-10, ticket QMRF) found the 36bf9b7 comma-grouped
+# gate only refused the eight literal strings in its own test because those
+# happened to use ungrouped digits ("100 - 200 people"). Comma-grouping the
+# same non-money sentence ("10,000 - 20,000 stock options") re-opened the
+# hole: any bare numeric range plus an "annually"/"/hour"-family token
+# ANYWHERE in the text still donated a false compensation interval — worst
+# case equity/RSU/share-grant prose living in the compensation section
+# itself. The gate now also requires the range to be immediately followed by
+# "OTE" (on-target-earnings, an unambiguous compensation term) — the exact
+# shape of the design's one bare-range row, "65,000−87,500 OTE annually".
+# Comma-grouping alone is no longer sufficient; a currency sign or code is
+# still required for every other bare numeric range, comma-grouped or not.
 @pytest.mark.parametrize(
     "text",
     [
@@ -375,6 +379,14 @@ def test_compensation_international(text: str, expected: dict[str, object] | Non
         "Serving 1 000 - 2 000 customers per year",
         "Rated 4.5 - 4.9 stars annually",
         "You will receive 15 to 25 days of paid time off per year",
+        # comma-grouped variants of the same non-money classes (QMRF finding):
+        # the pre-fix gate accepted every one of these as a compensation range
+        "Equity: 10,000 - 20,000 stock options, refreshed annually",
+        "Annual bonus target and 15,000 - 25,000 RSUs granted per year",
+        "401(k) with company match; 10,000 - 12,000 shares granted annually",
+        "A team of 1,000 - 2,000 people; all-hands per year",
+        "We serve 10,000 - 50,000 customers annually",
+        "Our platform handles 50,000 - 60,000 transactions per hour",
     ],
 )
 def test_compensation_bare_range_gate_rejects_non_money(text: str) -> None:
@@ -386,3 +398,30 @@ def test_compensation_bare_range_still_accepts_the_design_row() -> None:
     assert parse_compensation("Approximately 65,000−87,500 OTE annually") == {
         "min": 65000, "max": 87500, "currency": None, "period": "year",
     }
+
+
+# --- QMRF fix: the two-sign equality check must be case-insensitive ---------
+# Adversarial review (2026-09-10, ticket QMRF) found `sym_lo != sym_hi` was a
+# byte-exact comparison even though the signs are matched case-insensitively
+# (`_SIGN` under `re.IGNORECASE`) — a case difference between the two bounds
+# ("Kč" vs "KČ", "kr" vs "Kr", "CA$" vs "ca$") turned a legitimate range into
+# a refusal. Conservative (null, not wrong data) but it silently caps
+# recovery on exactly the currencies this ticket exists to recover, where
+# mixed casing across a range is common in real anchors.
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("Kč2,206,000 CZK - KČ3,308,000 CZK",
+         {"min": 2206000, "max": 3308000, "currency": "CZK", "period": None}),
+        ("kr539,400 – Kr809,200 DKK",
+         {"min": 539400, "max": 809200, "currency": "DKK", "period": None}),
+        ("CA$110,200 - ca$160,200 CAD",
+         {"min": 110200, "max": 160200, "currency": "CAD", "period": None}),
+        # regression: genuinely mismatched signs still refuse
+        ("£100,000 - €120,000", None),
+    ],
+)
+def test_compensation_sign_case_insensitive(
+    text: str, expected: dict[str, object] | None
+) -> None:
+    assert parse_compensation(text) == expected
