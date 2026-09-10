@@ -1495,6 +1495,7 @@ def extract_show(
 ) -> None:
     """Read the extracted demand profile: facts, areas, claims, evidence."""
     from jobhunter.l2.quotes import line_col
+    from jobhunter.l2.v2.serve import summary as v2_summary
     from jobhunter.markdown import NORMALIZER_VERSION
     from jobhunter.store import extraction as xstore
 
@@ -1532,44 +1533,99 @@ def extract_show(
     out: list[str] = [
         f"{row['title'] or '?'} — {row['company'] or '?'}",
         f"{doc[:12]}  {row['status']}  {row['model']}  {row['prompt_version']}",
-        "",
-        "facts",
     ]
-    facts = profile.get("facts") or {}
+    if profile.get("schema") == "2":
+        out += _extract_show_v2(profile, v2_summary, at)
+    else:
+        out += ["", "facts"]
+        facts = profile.get("facts") or {}
+        exp = facts.get("experience_months")
+        if exp:
+            hi = exp["max"] if exp["max"] is not None else "+"
+            out.append(
+                f"  experience    {exp['min']}–{hi} months ({exp.get('scope') or 'unscoped'})"
+            )
+            out.append(f"                {exp['anchor']['text'][:70]!r}  {at(exp['anchor'])}")
+        for comp in facts.get("compensation") or []:
+            span = f"{comp['min']:,}–{comp['max']:,}" if comp.get("min") else "?"
+            # currency/period are null when the posting never states them; say so
+            # rather than printing a bare "/?" that reads like a parse failure
+            unit = " ".join(
+                x for x in (
+                    comp.get("currency"), f"per {comp['period']}" if comp.get("period") else ""
+                )
+                if x
+            )
+            unstated = [k for k in ("currency", "period") if not comp.get(k)]
+            note = f"  ({', '.join(unstated)} not stated)" if unstated else ""
+            out.append(f"  compensation  {span} {unit}{note}  {at(comp['anchor'])}")
+        dl = facts.get("deadline")
+        out.append(f"  deadline      {dl['date'] if dl else '— (none stated)'}")
+        out.append(f"  boilerplate   {len(facts.get('boilerplate_spans') or [])} spans excluded")
+
+        areas = (profile.get("demand_profile") or {}).get("areas") or []
+        n_claims = sum(len(a["claims"]) for a in areas)
+        out += ["", f"areas ({len(areas)})  claims ({n_claims})"]
+        for area in areas:
+            level = f"/{area['level']}" if area.get("level") else ""
+            out.append(f"\n  [{area['kind']}] {area['name']}  — {area['importance']}{level}")
+            for claim in area["claims"]:
+                lvl = f"/{claim['level']}" if claim.get("level") else ""
+                out.append(f"    · {claim['importance']}{lvl}  {at(claim['quote'])}")
+                out.append(f"      {claim['quote']['text'][:96]!r}")
+                if claim.get("level_evidence"):
+                    out.append(f"      evidence: {claim['level_evidence']!r}")
+            if area.get("structure"):
+                out.append(f"    structure: {json.dumps(area['structure'])}")
+            if area.get("mentions"):
+                out.append(f"    mentions: {', '.join(area['mentions'][:8])}")
+    emit(payload, human="\n".join(out), output=output)
+
+
+def _extract_show_v2(
+    profile: dict[str, Any],
+    summary: Callable[[dict[str, Any]], dict[str, Any]],
+    at: Callable[[dict[str, Any]], str],
+) -> list[str]:
+    """The v2 branch of `extract show`: facts via `serve.summary` (the same
+    digest `pulse` renders) plus each statement's own kind/topic/importance/
+    proficiency/evidence, and the record's quality dimensions.
+
+    No v2 record internals beyond that — not `relations`, not the claim index
+    `demand_profile` carries for the agreement gate (invariant: cli.py gains
+    no deep v2 knowledge)."""
+    out: list[str] = ["", "facts"]
+    facts = summary(profile)["facts"]
     exp = facts.get("experience_months")
     if exp:
         hi = exp["max"] if exp["max"] is not None else "+"
-        out.append(f"  experience    {exp['min']}–{hi} months ({exp.get('scope') or 'unscoped'})")
-        out.append(f"                {exp['anchor']['text'][:70]!r}  {at(exp['anchor'])}")
+        out.append(f"  experience    {exp['min']}–{hi} months")
     for comp in facts.get("compensation") or []:
-        span = f"{comp['min']:,}–{comp['max']:,}" if comp.get("min") else "?"
-        # currency/period are null when the posting never states them; say so
-        # rather than printing a bare "/?" that reads like a parse failure
+        span = f"{comp['min']}–{comp['max']}" if comp.get("min") else "?"
         unit = " ".join(
             x for x in (comp.get("currency"), f"per {comp['period']}" if comp.get("period") else "")
             if x
         )
         unstated = [k for k in ("currency", "period") if not comp.get(k)]
         note = f"  ({', '.join(unstated)} not stated)" if unstated else ""
-        out.append(f"  compensation  {span} {unit}{note}  {at(comp['anchor'])}")
-    dl = facts.get("deadline")
-    out.append(f"  deadline      {dl['date'] if dl else '— (none stated)'}")
-    out.append(f"  boilerplate   {len(facts.get('boilerplate_spans') or [])} spans excluded")
+        out.append(f"  compensation  {span} {unit}{note}")
+    out.append(f"  deadline      {facts.get('deadline') or '— (none stated)'}")
 
-    areas = (profile.get("demand_profile") or {}).get("areas") or []
-    n_claims = sum(len(a["claims"]) for a in areas)
-    out += ["", f"areas ({len(areas)})  claims ({n_claims})"]
-    for area in areas:
-        level = f"/{area['level']}" if area.get("level") else ""
-        out.append(f"\n  [{area['kind']}] {area['name']}  — {area['importance']}{level}")
-        for claim in area["claims"]:
-            lvl = f"/{claim['level']}" if claim.get("level") else ""
-            out.append(f"    · {claim['importance']}{lvl}  {at(claim['quote'])}")
-            out.append(f"      {claim['quote']['text'][:96]!r}")
-            if claim.get("level_evidence"):
-                out.append(f"      evidence: {claim['level_evidence']!r}")
-        if area.get("structure"):
-            out.append(f"    structure: {json.dumps(area['structure'])}")
-        if area.get("mentions"):
-            out.append(f"    mentions: {', '.join(area['mentions'][:8])}")
-    emit(payload, human="\n".join(out), output=output)
+    statements = profile.get("statements") or []
+    out += ["", f"statements ({len(statements)})"]
+    for statement in statements:
+        level = f"/{statement['proficiency']}" if statement.get("proficiency") else ""
+        out.append(
+            f"\n  [{statement.get('kind')}] {statement.get('topic')}"
+            f"  — {statement.get('importance')}{level}"
+        )
+        for ev in statement.get("evidence") or []:
+            out.append(f"    · {at(ev)}")
+            out.append(f"      {ev['text'][:96]!r}")
+
+    quality = profile.get("quality") or {}
+    out += ["", "quality"]
+    out.append(f"  search_eligible  {quality.get('search_eligible')}")
+    for dim in ("source", "evidence", "semantics", "completeness", "sampling", "human_review"):
+        out.append(f"  {dim:<15} {quality.get(dim)}")
+    return out

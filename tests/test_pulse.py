@@ -145,6 +145,19 @@ def test_profile_summary_caps_mentions_and_dedupes_across_areas() -> None:
     assert summary["facts"] == {"compensation": [], "experience_months": None, "deadline": None}
 
 
+def test_profile_summary_dispatches_v2_blobs_to_serve_summary() -> None:
+    """The one dispatch point (T-20260910-JD35): `profile.get("schema") == "2"`
+    routes to `l2.v2.serve.summary`, never a structural sniff."""
+    from jobhunter.l2.v2 import serve
+    from tests.l2.v2.conftest import make_record
+
+    record = make_record()
+    profile = serve.profile_of(record)
+    assert profile["schema"] == "2"
+    assert profile_summary(profile) == serve.summary(profile)
+    assert set(profile_summary(profile)) == {"areas", "mentions", "facts"}
+
+
 # -- build_pulse ------------------------------------------------------------
 
 
