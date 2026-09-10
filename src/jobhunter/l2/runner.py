@@ -16,6 +16,11 @@ it cannot overwrite the failure that ended the run.
 catch-up scan, the review verbs and `extract rebuild` all fold the same
 config-scoped event streams through it, and the stored profile always comes
 from the chosen attempt's archived record, never from caller context.
+
+Nothing here names a prompt, a schema or a validator any more: the six things
+that define an engine tuple arrive as a `Bundle` (`l2/bundles.py`), so the
+loop — ladder, breaker, caps, catch-up, k-sampling, settle — is the same code
+whichever contract is being extracted under.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ import contextlib
 import json
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -34,10 +39,10 @@ from jobhunter import __version__
 from jobhunter.archive import keys
 from jobhunter.archive.base import ArchiveStore
 from jobhunter.config import Settings
-from jobhunter.l2 import verify
 from jobhunter.l2.agreement import cohort_hook
-from jobhunter.l2.assemble import AssembleError, assemble
+from jobhunter.l2.assemble import AssembleError
 from jobhunter.l2.attempts import Attempt, derived_error_detail, from_bytes, to_bytes
+from jobhunter.l2.bundles import DEFAULT_BUNDLE, Bundle, get_bundle, get_bundle_for_tuple
 from jobhunter.l2.engines import (
     Engine,
     EngineFatalError,
@@ -46,7 +51,7 @@ from jobhunter.l2.engines import (
     EngineThrottled,
     EngineTransportError,
 )
-from jobhunter.l2.prompt import PROMPT_VERSION, TEMPLATE, prompt_sha, render
+from jobhunter.l2.prompt import PROMPT_VERSION
 from jobhunter.l2.schemas import emit_schema, normalize_emit, validate_emit
 from jobhunter.l2.state import DerivedState, derive_state, globs_to_regex, model_matches
 from jobhunter.l2.transforms import VALIDATOR_VERSION
@@ -55,11 +60,48 @@ from jobhunter.store import db, extraction
 from jobhunter.store.extraction import Conn
 from jobhunter.timeutil import iso, utcnow_precise
 
+# The v1 engine tuple's public home. `pulse`, `views` and `cli` import
+# SCHEMA_VERSION from here, and rebinding these three names pins a run to a
+# different tuple without touching the bundle's behaviour (`_pinned`).
 SCHEMA_VERSION = "1"
 MAX_DOC_CHARS = 60_000
 CONTENT_ATTEMPTS = 3
 TRANSPORT_RETRIES = 3
 BREAKER_LIMIT = 5
+
+
+def _pinned(bundle: Bundle) -> Bundle:
+    """Honour a module-level pin of the v1 identity.
+
+    `PROMPT_VERSION`/`SCHEMA_VERSION`/`VALIDATOR_VERSION` are v1's identity and
+    predate the bundle; a version bump is exercised by rebinding them. A v1 run
+    therefore takes its identity from this module and its behaviour from the
+    bundle. Every other bundle owns both, and the usual case — the names still
+    spelling exactly what the v1 bundle carries — returns the bundle untouched.
+    """
+    here = (PROMPT_VERSION, SCHEMA_VERSION, VALIDATOR_VERSION)
+    theirs = (bundle.prompt_version, bundle.schema_version, bundle.validator_version)
+    if bundle.name != "v1" or here == theirs:
+        return bundle
+    return replace(
+        bundle, prompt_version=PROMPT_VERSION, schema_version=SCHEMA_VERSION,
+        validator_version=VALIDATOR_VERSION,
+    )
+
+
+def _bundle_for(prompt_version: str | None, schema_version: str | None) -> Bundle:
+    """The bundle whose shapes a fold over `(prompt_version, schema_version)` uses.
+
+    Catch-up and replay settle whatever tuples the archive holds, including
+    historical prompt versions no bundle claims any more. Those fold under the
+    default bundle's shapes — exactly what they did when the shapes were
+    constants in this module — while a tuple a bundle does claim folds under
+    that bundle, which is what makes a mixed archive replay correctly.
+    """
+    if prompt_version is not None and schema_version is not None:
+        with contextlib.suppress(KeyError):
+            return get_bundle_for_tuple(prompt_version, schema_version)
+    return _pinned(get_bundle(DEFAULT_BUNDLE))
 
 
 class LockLost(RuntimeError):
@@ -222,17 +264,15 @@ class ExtractSummary:
         }
 
 
-def _ensure_write_once(store: ArchiveStore) -> None:
-    pk = keys.x_prompt_key(PROMPT_VERSION)
+def _ensure_write_once(store: ArchiveStore, bundle: Bundle) -> None:
+    pk = keys.x_prompt_key(bundle.prompt_version)
     if not store.exists(pk):
-        store.put(pk, TEMPLATE.encode("utf-8"))
-    sk = keys.x_schema_key(SCHEMA_VERSION)
+        store.put(pk, bundle.template.encode("utf-8"))
+    sk = keys.x_schema_key(bundle.schema_version)
     if not store.exists(sk):
-        store.put(sk, json.dumps(emit_schema(SCHEMA_VERSION), sort_keys=True).encode("utf-8"))
-
-
-def _profile_of(record: dict[str, Any]) -> dict[str, Any]:
-    return {"facts": record["facts"], "demand_profile": record["demand_profile"]}
+        store.put(
+            sk, json.dumps(emit_schema(bundle.schema_version), sort_keys=True).encode("utf-8")
+        )
 
 
 def settle(
@@ -245,13 +285,15 @@ def settle(
     prompt_version: str | None = None,
     schema_version: str | None = None,
     validator_version: str | None = None,
+    bundle: Bundle | None = None,
 ) -> DerivedState:
     # call-time resolution: definition-time defaults would freeze the constants
     # and silently ignore a version bump
-    prompt_version = PROMPT_VERSION if prompt_version is None else prompt_version
-    schema_version = SCHEMA_VERSION if schema_version is None else schema_version
+    active = bundle if bundle is not None else _bundle_for(prompt_version, schema_version)
+    prompt_version = active.prompt_version if prompt_version is None else prompt_version
+    schema_version = active.schema_version if schema_version is None else schema_version
     validator_version = (
-        VALIDATOR_VERSION if validator_version is None else validator_version
+        active.validator_version if validator_version is None else validator_version
     )
     attempts = extraction.attempts_for(
         conn, dh, prompt_version=prompt_version, schema_version=schema_version,
@@ -267,7 +309,7 @@ def settle(
     # same hook over its in-memory re-judged records.
     def _archived_record(a: Attempt) -> dict[str, Any] | None:
         loaded = from_bytes(store.get(a.attempt_key))
-        return _profile_of(loaded.record) if loaded.record is not None else None
+        return active.profile_of(loaded.record) if loaded.record is not None else None
 
     state = derive_state(attempts, reviews, globs, cohort_hook(_archived_record))
     chosen = {a.attempt_key: a for a in attempts}.get(state.chosen_attempt or "")
@@ -278,16 +320,21 @@ def settle(
     if model_col is None:
         return state  # nothing decisive ever happened; no row to write
     profile: dict[str, Any] | None = None
+    mentions: list[tuple[str, str, str]] | None = None
     if state.status in ("validated", "needs_review") and state.chosen_attempt:
         # the profile is the CHOSEN attempt's archived record — never whatever
         # record the caller happened to hold (a later ok attempt, or nothing)
         chosen_obj = from_bytes(store.get(state.chosen_attempt))
         if chosen_obj.record is not None:
-            profile = _profile_of(chosen_obj.record)
+            profile = active.profile_of(chosen_obj.record)
+            # the aggregate's rows come from the same record and the same
+            # bundle as the blob, so the two can never describe different shapes
+            mentions = active.mention_rows(chosen_obj.record)
     extraction.upsert_state(
         conn, document_hash=dh, model=model_col, prompt_version=prompt_version,
         schema_version=schema_version, validator_version=validator_version,
-        state=state, profile=profile, k=state.k, agreement=state.agreement,
+        state=state, profile=profile, mentions=mentions, k=state.k,
+        agreement=state.agreement,
         reviewed_by=reviews[-1].actor if reviews else None,
         updated_at=updated_at,
     )
@@ -354,7 +401,11 @@ def run(
     dry_run: bool = False,
     now: Callable[[], datetime] = utcnow_precise,
     connect: Callable[[], Conn] | None = None,
+    bundle: Bundle | None = None,
 ) -> ExtractSummary:
+    # the engine tuple travels as a parameter, never as module state: the
+    # parallel drain runs this loop on several threads and the tests re-enter it
+    active = _pinned(get_bundle(settings.l2_bundle) if bundle is None else bundle)
     started = now()
     summary = ExtractSummary(run_id=f"x-{iso(started).replace(':', '').replace('-', '')}")
     if not settings.l2_model_candidates:
@@ -372,8 +423,8 @@ def run(
 
         def queue(c: Conn) -> list[str]:
             return extraction.queue(
-                c, prompt_version=PROMPT_VERSION, schema_version=SCHEMA_VERSION,
-                validator_version=VALIDATOR_VERSION, model_regex=model_regex,
+                c, prompt_version=active.prompt_version, schema_version=active.schema_version,
+                validator_version=active.validator_version, model_regex=model_regex,
                 normalizer_version=NORMALIZER_VERSION, limit=max_docs,
             )
 
@@ -381,7 +432,7 @@ def run(
             # strictly read-only: no write-once objects, no catch-up replay
             summary.queued = [only_doc] if only_doc else session.do(queue)
             return summary
-        _ensure_write_once(store)
+        _ensure_write_once(store, active)
         summary.replayed = session.do(lambda c: _catch_up(c, journal, iso(now())))
         session.do(lambda c: c.commit())
         docs = [only_doc] if only_doc else session.do(queue)
@@ -394,7 +445,7 @@ def run(
                 if summary.docs_attempted >= max_docs or summary.spend_usd > max_usd:
                     break
                 result = _extract_doc(settings, session, journal, engine, dh, summary,
-                                      breaker, now)
+                                      breaker, now, active)
                 if result is None:
                     continue  # document vanished (normalizer bump mid-flight)
                 disposition, breaker = result
@@ -436,7 +487,7 @@ def run(
                     if dh is None:
                         return
                     result = _extract_doc(settings, session, journal, engine, dh,
-                                          summary, b, now, gate)
+                                          summary, b, now, active, gate)
                     with gate:
                         if result is None:
                             continue
@@ -487,6 +538,7 @@ def _extract_doc(
     summary: ExtractSummary,
     breaker: int,
     now: Callable[[], datetime],
+    bundle: Bundle,
     gate: threading.RLock | None = None,
 ) -> tuple[str, int] | None:
     """With a gate (parallel drain): the gate is held for ALL state — DB,
@@ -494,10 +546,10 @@ def _extract_doc(
     the semantics stay those of the serial drain while the waiting overlaps."""
     if gate is None:
         return _extract_doc_inner(settings, session, journal, engine, dh, summary,
-                                  breaker, now, None)
+                                  breaker, now, bundle, None)
     with gate:
         return _extract_doc_inner(settings, session, journal, engine, dh, summary,
-                                  breaker, now, gate)
+                                  breaker, now, bundle, gate)
 
 
 def _ungated[T](gate: threading.RLock | None, fn: Callable[[], T]) -> T:
@@ -520,6 +572,7 @@ def _extract_doc_inner(
     summary: ExtractSummary,
     breaker: int,
     now: Callable[[], datetime],
+    bundle: Bundle,
     gate: threading.RLock | None,
 ) -> tuple[str, int] | None:
     store = journal.store
@@ -528,7 +581,7 @@ def _extract_doc_inner(
         return None
     summary.docs_attempted += 1
     seq = session.do(lambda c: extraction.next_attempt_no(c, dh)) - 1
-    schema = emit_schema(SCHEMA_VERSION)
+    schema = emit_schema(bundle.schema_version)
 
     def archive_attempt(
         *, requested_model: str, observed_model: str | None, outcome: str,
@@ -550,9 +603,9 @@ def _extract_doc_inner(
             run_id=summary.run_id, cli_version=__version__, document_hash=dh,
             normalizer_version=NORMALIZER_VERSION, sample_slot=sample_slot, attempt_no=seq,
             requested_engine=engine.name, requested_model=requested_model,
-            observed_model=observed_model, prompt_version=PROMPT_VERSION,
-            prompt_sha256=prompt_sha(), schema_version=SCHEMA_VERSION,
-            validator_version=VALIDATOR_VERSION, prior_errors=list(fed),
+            observed_model=observed_model, prompt_version=bundle.prompt_version,
+            prompt_sha256=bundle.prompt_sha(), schema_version=bundle.schema_version,
+            validator_version=bundle.validator_version, prior_errors=list(fed),
             raw_response=raw_response, validation=validation, outcome=outcome,
             ladder_exhausted=ladder_exhausted, input_tokens=tokens[0],
             output_tokens=tokens[1], cost_usd=cost, started_at=t0.isoformat(),
@@ -563,7 +616,9 @@ def _extract_doc_inner(
         return attempt
 
     def settle_and_disposition() -> tuple[str, int]:
-        state = session.do(lambda c: settle(c, store, dh, settings.l2_models, iso(now())))
+        state = session.do(
+            lambda c: settle(c, store, dh, settings.l2_models, iso(now()), bundle=bundle)
+        )
         # the summary must agree with the fold: model_rejected fall-throughs
         # settle to no row (pending), not quarantine
         if state.status == "quarantined":
@@ -589,7 +644,7 @@ def _extract_doc_inner(
         content_no = 0
         while content_no < CONTENT_ATTEMPTS:
             t0 = now()
-            prompt = render(markdown, prior_errors)
+            prompt = bundle.render(markdown, prior_errors)
             # Hold NO open transaction while the model runs (a minute-plus): end the
             # pre-call reads (markdown, next_attempt_no) and any prior attempt's
             # insert-only write here, so the connection is transaction-idle — the
@@ -671,7 +726,7 @@ def _extract_doc_inner(
                 emit = json.loads(result.raw_text)
                 if not isinstance(emit, dict):
                     raise ValueError("top level is not an object")
-                emit = normalize_emit(emit, SCHEMA_VERSION)
+                emit = normalize_emit(emit, bundle.schema_version)
             except ValueError as exc:
                 errors = [f"response is not valid JSON: {exc}"]
                 archive_attempt(requested_model=model, observed_model=observed,
@@ -682,7 +737,7 @@ def _extract_doc_inner(
                                 cost=result.cost_usd)
                 prior_errors = errors
                 continue
-            if schema_errors := validate_emit(emit, SCHEMA_VERSION):
+            if schema_errors := validate_emit(emit, bundle.schema_version):
                 archive_attempt(requested_model=model, observed_model=observed,
                                 outcome="schema_invalid", raw_response=result.raw_text,
                                 fed=prior_errors, produced=schema_errors,
@@ -692,9 +747,9 @@ def _extract_doc_inner(
                 prior_errors = schema_errors
                 continue
             try:
-                record = assemble(emit, markdown, document_hash=dh,
-                                  normalizer_version=NORMALIZER_VERSION,
-                                  observed_model=observed, at=iso(t0))
+                record = bundle.assemble(emit, markdown, document_hash=dh,
+                                         normalizer_version=NORMALIZER_VERSION,
+                                         observed_model=observed, at=iso(t0))
             except AssembleError as exc:
                 archive_attempt(requested_model=model, observed_model=observed,
                                 outcome="attribution_failed", raw_response=result.raw_text,
@@ -704,7 +759,7 @@ def _extract_doc_inner(
                                 cost=result.cost_usd)
                 prior_errors = exc.errors
                 continue
-            report = verify(record, markdown)
+            report = bundle.verify(record, markdown)
             findings: list[dict[str, Any]] = [
                 {"check": f.check, "path": f.path, "code": f.code,
                  "severity": f.severity, "detail": f.detail}
@@ -739,7 +794,7 @@ def _extract_doc_inner(
             if audit or reprompted:
                 verdict = _take_samples(
                     settings, session, engine, model, markdown, schema,
-                    summary, archive_attempt, now, dh, gate,
+                    summary, archive_attempt, now, dh, bundle, gate,
                 )
                 if verdict is not None:
                     return verdict, breaker
@@ -759,6 +814,7 @@ def _take_samples(
     archive_attempt: Callable[..., Attempt],
     now: Callable[[], datetime],
     dh: str,
+    bundle: Bundle,
     gate: threading.RLock | None = None,
 ) -> str | None:
     """Slots 2 and 3: one fresh single-shot generation each, archived whatever
@@ -767,7 +823,7 @@ def _take_samples(
     the batch, else None (the caller settles)."""
     for slot in (2, 3):
         t0 = now()
-        prompt = render(markdown, [])
+        prompt = bundle.render(markdown, [])
         session.do(lambda c: c.commit())  # transaction-idle while the model runs
         try:
             def _call(p: str = prompt, m: str = model) -> EngineResult:
@@ -811,22 +867,22 @@ def _take_samples(
             emit = json.loads(result.raw_text)
             if not isinstance(emit, dict):
                 raise ValueError("top level is not an object")
-            emit = normalize_emit(emit, SCHEMA_VERSION)
+            emit = normalize_emit(emit, bundle.schema_version)
         except ValueError as exc:
             archive_attempt(outcome="schema_invalid",
                             produced=[f"response is not valid JSON: {exc}"], **common)
             continue
-        if schema_errors := validate_emit(emit, SCHEMA_VERSION):
+        if schema_errors := validate_emit(emit, bundle.schema_version):
             archive_attempt(outcome="schema_invalid", produced=schema_errors, **common)
             continue
         try:
-            record = assemble(emit, markdown, document_hash=dh,
-                              normalizer_version=NORMALIZER_VERSION,
-                              observed_model=observed, at=iso(t0))
+            record = bundle.assemble(emit, markdown, document_hash=dh,
+                                     normalizer_version=NORMALIZER_VERSION,
+                                     observed_model=observed, at=iso(t0))
         except AssembleError as exc:
             archive_attempt(outcome="attribution_failed", produced=exc.errors, **common)
             continue
-        report = verify(record, markdown)
+        report = bundle.verify(record, markdown)
         findings = [
             {"check": f.check, "path": f.path, "code": f.code,
              "severity": f.severity, "detail": f.detail}
