@@ -52,8 +52,8 @@ def emit_of(case: str) -> dict[str, Any]:
     return body
 
 
-def v2_settings() -> Any:
-    return _settings(JOB_HUNTER_L2_BUNDLE="v2")
+def v2_settings(**env: str) -> Any:
+    return _settings(JOB_HUNTER_L2_BUNDLE="v2", **env)
 
 
 def seed_case(pg: Conn, case: str) -> str:
@@ -175,6 +175,53 @@ def test_settle_writes_statement_derived_importance_into_the_aggregate(
         ("ACCA", "qualification", "preferred"),
         ("CPA", "qualification", "preferred"),
     ]
+
+
+def test_disagreeing_samples_demote_a_v2_document_to_needs_review(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """The k-sampling gate has teeth under v2.
+
+    The audit slot takes three samples; two of them cite a different span for
+    the same requirement, so `agreement` demotes the document instead of
+    certifying it. The gate reads one place — `demand_profile.areas[].claims[]`
+    of whatever `bundle.profile_of` returns — so before the served slice carried
+    a claim index it scored every v2 cohort a vacuous 1.0 and every audited or
+    reprompted document validated itself.
+    """
+    seed_case(pg, "C01")
+    divergent = copy.deepcopy(emit_of("C01"))
+    divergent["statements"][0]["evidence"] = [
+        {"block_id": "b000002", "occurrence": 0,
+         "text": "a proven track record of exceeding sales targets"}
+    ]
+    engine = FakeEngine([result(emit_of("C01")), result(divergent), result(divergent)])
+    summary = run(v2_settings(JOB_HUNTER_L2_AUDIT_MOD="1"), pg, store, engine=engine,
+                  max_docs=10, max_usd=5.0)
+    assert summary.validated == 0
+
+    row = pg.execute("SELECT status, k, agreement, chosen_attempt FROM extractions").fetchone()
+    assert row is not None
+    assert row["status"] == "needs_review" and row["k"] == 3
+    assert "f1" in row["agreement"]["failures"] and row["agreement"]["mean_f1"] < 0.8
+    # the medoid is the majority reading, and a demoted document indexes nothing
+    chosen = {a.attempt_key: a for a in attempts_in(store)}[row["chosen_attempt"]]
+    assert chosen.sample_slot in (2, 3)
+    assert mention_rows_in(pg) == []
+
+
+def test_agreeing_samples_still_certify(pg: Conn, store: ArchiveStore) -> None:  # noqa: F811
+    """The other half of the gate: three samples that say the same thing settle
+    validated, so the claim index demotes disagreement rather than everything."""
+    seed_case(pg, "C01")
+    engine = FakeEngine([result(emit_of("C01"))] * 3)
+    summary = run(v2_settings(JOB_HUNTER_L2_AUDIT_MOD="1"), pg, store, engine=engine,
+                  max_docs=10, max_usd=5.0)
+    assert summary.validated == 1
+    row = pg.execute("SELECT status, k, agreement FROM extractions").fetchone()
+    assert row is not None
+    assert row["status"] == "validated" and row["k"] == 3
+    assert row["agreement"]["mean_f1"] == 1.0 and row["agreement"]["failures"] == []
 
 
 def test_a_broken_reference_quarantines_after_the_ladder(

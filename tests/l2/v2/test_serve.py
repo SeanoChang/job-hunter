@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 
 from jobhunter.hashing import sha256_hex
+from jobhunter.l2.agreement import agree
 from jobhunter.l2.v2 import serve
 from jobhunter.l2.v2.assemble import assemble
 from jobhunter.l2.v2.quality import assess
@@ -72,6 +73,7 @@ def test_profile_of_is_the_served_slice_under_a_shape_marker(v2_record: dict[str
         "facts": v2_record["facts"],
         "mentions": v2_record["mentions"],
         "quality": v2_record["quality"],
+        "demand_profile": serve.claim_index(v2_record),
     }
 
 
@@ -91,6 +93,101 @@ def test_profile_of_is_idempotent_over_its_own_output(v2_record: dict[str, Any])
     must get the same slice back, or a re-fold would change the row."""
     once = serve.profile_of(v2_record)
     assert serve.profile_of(once) == once
+
+
+# --- the claim index: what the cross-sample agreement gate compares ----------
+#
+# `runner.settle` hands `bundle.profile_of(record)` to `agreement.cohort_hook`,
+# and `agreement._claims` reads exactly one place: `demand_profile.areas[].
+# claims[]`. A served slice without that key made every k-sample cohort score a
+# perfect 1.0 (empty claim sets, `denom == 0`, `f1 = 1.0`) and certify itself,
+# so the audit slot and every reprompted document validated no matter how badly
+# their samples disagreed. These tests are the gate's teeth.
+
+
+def _c01_variant(**changes: Any) -> dict[str, Any]:
+    """A second sample of the C01 document: the same emit, one field moved."""
+    emit = copy.deepcopy(case_emit("C01"))
+    emit["statements"][0].update(changes)
+    return serve.profile_of(case_record("C01", emit))
+
+
+#: the same requirement cited as a narrower substring — one sample reading the
+#: whole bullet, the other only its tail (span Jaccard 0.30, below the gate's 0.5)
+OTHER_SPAN = [{"block_id": "b000002", "occurrence": 0,
+               "text": "a proven track record of exceeding sales targets"}]
+
+
+def test_two_unrelated_documents_never_agree() -> None:
+    """The floor the missing index removed: samples of two different documents
+    must not certify each other."""
+    result = agree([serve.profile_of(case_record("C01")),
+                    serve.profile_of(case_record("C04"))])
+    assert result.passed is False
+    assert result.report["mean_f1"] == 0.0 and "f1" in result.report["failures"]
+
+
+def test_a_sample_citing_different_text_fails_the_f1_gate() -> None:
+    """The realistic disagreement: two samples of ONE document that do not agree
+    on which text carries the requirement."""
+    result = agree([serve.profile_of(case_record("C01")), _c01_variant(evidence=OTHER_SPAN)])
+    assert result.passed is False
+    assert result.report["mean_f1"] < 0.8 and "f1" in result.report["failures"]
+
+
+def test_a_flipped_importance_reaches_the_importance_gate() -> None:
+    """Same spans, different demand: `required` in one sample and `preferred` in
+    the other is the disagreement the F1 count cannot see."""
+    result = agree([serve.profile_of(case_record("C01")), _c01_variant(importance="preferred")])
+    assert result.report["mean_f1"] == 1.0  # the claims align ...
+    assert result.report["required_importance_agreement"] == 0.0  # ... and still disagree
+    assert result.report["failures"] == ["importance"] and result.passed is False
+
+
+def test_a_flipped_polarity_escalates() -> None:
+    """Polarity is the attribution gate's documented blind spot, so any split
+    escalates unconditionally (`agreement` module docstring). C01's statement
+    and the experience fact hanging off it both carry that polarity, so the flip
+    shows up on both aligned pairs."""
+    result = agree([serve.profile_of(case_record("C01")), _c01_variant(polarity="negative")])
+    assert result.report["negation_disagreements"] == 2
+    assert "negation" in result.report["failures"] and result.passed is False
+
+
+def test_the_claim_index_covers_every_statement_mention_and_fact() -> None:
+    """One claim per statement, per (mention, statement) link, and per fact
+    entry — every assertion the record makes about the document, so a sample
+    that drops one is a disagreement."""
+    record = case_record("C04")
+    claims = [c for a in serve.claim_index(record)["areas"] for c in a["claims"]]
+    assert len(claims) == (
+        len(record["statements"])
+        + sum(len(m["statement_ids"]) for m in record["mentions"])
+        + len(record["facts"]["entries"])
+    )
+    # ... and the index is derivable from the stored slice, not just the record
+    assert serve.claim_index(serve.profile_of(record)) == serve.claim_index(record)
+
+
+def test_the_claim_index_carries_no_area_level_mentions() -> None:
+    """`upsert_state` walks `profile["demand_profile"]` for mentions when a
+    caller passes no precomputed rows; an area-level mention list here would
+    hand that path v1's area importance again — the exact C04 defect. The index
+    carries none, so the fallback yields nothing rather than something wrong."""
+    index = serve.claim_index(_audited(case_record("C04")))
+    assert all("mentions" not in area for area in index["areas"])
+
+
+def test_claims_carry_the_fields_a_v1_renderer_prints() -> None:
+    """`extract show` prints `claim["quote"]["text"]` and locates it by
+    `quote["span"][0]`; `pulse` prints each area's name/kind/importance/level.
+    A v2 blob reaching either renderer must render, never raise."""
+    for area in serve.claim_index(case_record("C04"))["areas"]:
+        assert {"name", "kind", "importance", "level", "claims"} <= set(area)
+        for claim in area["claims"]:
+            assert isinstance(claim["quote"]["text"], str)
+            assert isinstance(claim["quote"]["span"][0], int)
+            assert "importance" in claim and "negated" in claim
 
 
 # --- mention_rows: the C04 fix at the write path ----------------------------
@@ -137,6 +234,21 @@ def test_one_mention_supporting_two_equal_statements_is_one_row() -> None:
     cpa["statement_ids"] = ["s_cpa", "s_netsuite"]  # both `qualification`/`preferred`
     rows = serve.mention_rows(_audited(case_record("C04", emit)))
     assert rows.count(("CPA", "qualification", "preferred")) == 1
+
+
+def test_v2_importance_words_reach_the_column_verbatim() -> None:
+    """A recorded deviation, pinned so the decision is made rather than found in
+    production: `profile_mentions.importance` is TEXT with no CHECK and has only
+    ever held v1's three words, and v2 writes its own five. `not_required` in
+    the demand aggregate inverts the reading of any consumer that treats a row
+    as "this employer wants X" — the column's shape is increment 3's call
+    (spec §7's per-claim table), so v2 states its vocabulary here rather than
+    flattening `not_required` into a word that means the opposite."""
+    emit = copy.deepcopy(case_emit("C04"))
+    statement = next(s for s in emit["statements"] if s["id"] == "s_cpa")
+    statement["importance"] = "not_required"
+    rows = serve.mention_rows(_audited(case_record("C04", emit)))
+    assert ("CPA", "qualification", "not_required") in rows
 
 
 def test_statements_without_importance_project_as_contextual() -> None:
@@ -247,6 +359,32 @@ def test_summary_ignores_facts_the_grammar_could_not_parse() -> None:
     }
     facts = serve.summary(blob)["facts"]
     assert facts == {"compensation": [], "experience_months": None, "deadline": None}
+
+
+def test_summary_ignores_a_derivation_the_auditor_marked_conflicting() -> None:
+    """`parsed` is the only state the summary reports. `conflicting` is the
+    increment-2 auditor's verdict — the grammar read a value, and the document
+    contradicts it — and a headline fact is the wrong place to launder that into
+    a number (spec §6 lists it as a state requiring review)."""
+    blob = {
+        "facts": {
+            "entries": [
+                {"family": "compensation",
+                 "derived": {"state": "conflicting",
+                             "money": {"min_amount": "100", "max_amount": "200",
+                                       "currency": "USD", "period": "year"}}},
+                {"family": "experience",
+                 "derived": {"state": "conflicting",
+                             "quantity": {"unit": "month", "min_value": 12,
+                                          "max_value": None}}},
+                {"family": "date", "date_kind": "application_deadline",
+                 "derived": {"state": "conflicting", "date": {"date": "2026-11-30"}}},
+            ]
+        }
+    }
+    assert serve.summary(blob)["facts"] == {
+        "compensation": [], "experience_months": None, "deadline": None
+    }
 
 
 @pytest.mark.parametrize("blob", [{}, {"statements": None}, {"facts": {}}])
