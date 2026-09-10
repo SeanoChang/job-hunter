@@ -120,13 +120,19 @@ _CODE = (
 # (b) must carry a decimal tail ("210 300.00"), the only bare space-grouped
 # shape observed in the corpus. Sign- and code-led amounts keep the
 # unguarded _AMOUNT: "kr 850 000" and "USD 210 300" are unambiguous.
+# Only the SPACE alternative is guarded: "Level 1 100 000" is lexically a
+# legal space group, so bare space amounts need a non-word left edge and a
+# decimal tail. Ungrouped, dot-grouped and comma-grouped spellings after a
+# grade token are NOT ambiguous and stay validator/11-identical — the third
+# adversarial review showed guards there flip real ranges into false
+# ceiling point-values ("Level 4 100000 - 150000 USD" → 150000–150000).
 _AMOUNT_BARE = (
     r"(\d{1,3}(?:,\d{3})+"
     r"|(?<![\w.,])(?<!\w\s)\d{1,3}(?: \d{3})+(?=[.,]\d{1,2})"
-    r"|(?<![\d.,])(?<!\d\s)\d{1,3}(?:\.\d{3})+"
-    r"|(?<![\d.,])(?<!\d\s)\d+)"
+    r"|\d{1,3}(?:\.\d{3})+"
+    r"|\d+)"
     r"(?:[.,]\d{1,2})?\s*(k)?"
-)  # plain/dot alternatives refuse digit-adjacent starts: no "300" out of "210 300.00"
+)
 _MONEY_CODE = re.compile(
     _AMOUNT_BARE + _PERIOD_FRAG + r"\s*" + _CODE + r"?\s*" + _SEP + r"\s*"
     + _AMOUNT_BARE + _PERIOD_FRAG + r"\s*" + _CODE + r"\b",
@@ -277,11 +283,14 @@ def _single_amount(text: str) -> dict[str, object] | None:
         symbol, digits, k = m.groups()
         code = _CURRENCY.search(text)
         currency = code.group(1).upper() if code else _sign_currency(symbol)
+    elif m := _MONEY_ONE_CODE_LEAD.search(text):
+        # code-lead before trailing-code (third adversarial review, D3): in
+        # "Level 2 PLN 45,000" the unambiguous reading is "PLN 45,000", not
+        # the grade digit "2" wearing "PLN" as a trailing code.
+        code_txt, digits, k = m.groups()
+        currency = code_txt.upper()
     elif m := _MONEY_ONE_CODE.search(text):
         digits, k, code_txt = m.groups()
-        currency = code_txt.upper()
-    elif m := _MONEY_ONE_CODE_LEAD.search(text):
-        code_txt, digits, k = m.groups()
         currency = code_txt.upper()
     else:
         return None

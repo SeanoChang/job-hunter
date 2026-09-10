@@ -455,11 +455,13 @@ def test_amount_never_fuses_a_preceding_token(
 
 
 def test_space_thousands_never_fuse_a_preceding_token() -> None:
-    # second adversarial re-review: "Level 1 100 000" is itself a legal space
-    # group, so bare space amounts require a non-word left edge AND a decimal
-    # tail; fused ranges must refuse rather than derive a false interval
-    assert parse_compensation("Level 1 100 000 USD - 1 200 000 USD") is None
-    assert parse_compensation("Step 2 210 300.00 USD - 273 400.00 USD") is None
+    # third adversarial review: only the SPACE spelling is lexically ambiguous
+    # ("Level 1 100 000" is a legal space group); those must refuse or degrade
+    # to a filterable zero — never a plausible fused/carved interval
+    r = parse_compensation("Level 1 100 000 USD - 1 200 000 USD")
+    assert r is None or (r["min"] == 0 and r["max"] == 0)
+    r = parse_compensation("Level 4 180 000 SEK")
+    assert r is None or r["min"] == 0
     # genuine bare space-grouped amounts (decimal tail, non-word left edge) hold
     assert parse_compensation("210 300.00 USD - 273 400.00 USD") == {
         "min": 210300, "max": 273400, "currency": "USD", "period": None,
@@ -471,7 +473,37 @@ def test_space_thousands_never_fuse_a_preceding_token() -> None:
     assert parse_compensation("kr 850 000 SEK") == {
         "min": 850000, "max": 850000, "currency": "SEK", "period": None,
     }
-    # a fused single must never yield a plausible large value (v11 parity:
-    # the residual \d+ branch may still find a filterable 0, never 4.18M)
-    r = parse_compensation("Level 4 180 000 SEK")
-    assert r is None or r["min"] == 0
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # unambiguous spellings behind a grade token stay validator/11-exact —
+        # the third review's harm table: guards here flipped ranges into false
+        # ceiling point-values (D1) or refused v11's recovery outright (D2)
+        ("Level 4 100000 - 150000 USD",
+         {"min": 100000, "max": 150000, "currency": "USD", "period": None}),
+        ("Level 2 25 - 35 USD per hour",
+         {"min": 25, "max": 35, "currency": "USD", "period": "hour"}),
+        ("Grade A1 100K-150K USD",
+         {"min": 100000, "max": 150000, "currency": "USD", "period": None}),
+        ("Band 5 120.000 - 160.000 EUR annually",
+         {"min": 120000, "max": 160000, "currency": "EUR", "period": "year"}),
+        ("Level 4 100000 USD - 150000 USD",
+         {"min": 100000, "max": 150000, "currency": "USD", "period": None}),
+        ("Level 2 45K USD - 60K USD",
+         {"min": 45000, "max": 60000, "currency": "USD", "period": None}),
+        ("Level 4 100000 USD",
+         {"min": 100000, "max": 100000, "currency": "USD", "period": None}),
+        ("Level 2 125 USD", {"min": 125, "max": 125, "currency": "USD", "period": None}),
+        # code-lead beats a grade digit wearing a trailing code (D3)
+        ("Level 2 PLN 45,000",
+         {"min": 45000, "max": 45000, "currency": "PLN", "period": None}),
+        ("Grade 3 CZK 850,000 annually",
+         {"min": 850000, "max": 850000, "currency": "CZK", "period": "year"}),
+    ],
+)
+def test_grade_tokens_never_distort_unambiguous_amounts(
+    text: str, expected: dict[str, object] | None
+) -> None:
+    assert parse_compensation(text) == expected
