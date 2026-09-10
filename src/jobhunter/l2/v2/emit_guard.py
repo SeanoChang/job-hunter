@@ -19,21 +19,73 @@ from typing import Any
 from jobhunter.l2.schemas import emit_schema
 from jobhunter.l2.v2.types import IMPORTANCE_KINDS
 
+_EVIDENCED_IMPORTANCE = ["required", "preferred", "not_required", "ambiguous"]
 
-def engine_emit_schema() -> dict[str, Any]:
-    schema = copy.deepcopy(emit_schema("2"))
-    statement = schema["$defs"]["statement"]
+
+def _statement_variants(statement: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every conditional the verifier enforces on a statement, as a union.
+
+    Axes: kind↔importance (IMPORTANCE_KINDS carry one, others must not),
+    evidenced importance ⇒ importance_evidence present, and
+    proficiency ⇒ proficiency_evidence present. 3 × 2 = 6 variants.
+    """
     all_kinds: list[str] = list(statement["properties"]["kind"]["enum"])
     ruled = [k for k in all_kinds if k in IMPORTANCE_KINDS]
     unruled = [k for k in all_kinds if k not in IMPORTANCE_KINDS]
+    evidence_present = {"$ref": "#/$defs/evidence"}
 
-    with_importance = copy.deepcopy(statement)
-    with_importance["properties"]["kind"] = {"enum": ruled}
-    with_importance["properties"]["importance"] = {"$ref": "#/$defs/importance"}
+    importance_axis = [
+        {"kind": {"enum": ruled},
+         "importance": {"enum": _EVIDENCED_IMPORTANCE},
+         "importance_evidence": evidence_present},
+        {"kind": {"enum": ruled},
+         "importance": {"const": "unstated"}},
+        {"kind": {"enum": unruled},
+         "importance": {"type": "null"},
+         "importance_evidence": {"type": "null"}},
+    ]
+    proficiency_axis = [
+        {"proficiency": {"type": "null"}, "proficiency_evidence": {"type": "null"}},
+        {"proficiency": statement["properties"]["proficiency"],
+         "proficiency_evidence": evidence_present},
+    ]
+    variants = []
+    for imp in importance_axis:
+        for prof in proficiency_axis:
+            v = copy.deepcopy(statement)
+            v["properties"].update(copy.deepcopy(imp))
+            v["properties"].update(copy.deepcopy(prof))
+            variants.append(v)
+    return variants
 
-    without_importance = copy.deepcopy(statement)
-    without_importance["properties"]["kind"] = {"enum": unruled}
-    without_importance["properties"]["importance"] = {"type": "null"}
 
-    schema["$defs"]["statement"] = {"anyOf": [with_importance, without_importance]}
+def _fact_entry_variants(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per-family field rules: date_kind ⇔ date; component ⇒ compensation;
+    scope ⇒ experience/quantity (verify._check_facts)."""
+    null = {"type": "null"}
+    date_kinds = [k for k in entry["properties"]["date_kind"]["enum"] if k is not None]
+    shapes = [
+        {"family": {"const": "date"}, "date_kind": {"enum": date_kinds},
+         "component": null, "scope": null},
+        {"family": {"const": "compensation"}, "date_kind": null,
+         "component": entry["properties"]["component"], "scope": null},
+        {"family": {"enum": ["experience", "quantity"]}, "date_kind": null,
+         "component": null, "scope": entry["properties"]["scope"]},
+    ]
+    variants = []
+    for shape in shapes:
+        v = copy.deepcopy(entry)
+        v["properties"].update(copy.deepcopy(shape))
+        variants.append(v)
+    return variants
+
+
+def engine_emit_schema() -> dict[str, Any]:
+    schema = copy.deepcopy(emit_schema("2"))
+    schema["$defs"]["statement"] = {
+        "anyOf": _statement_variants(schema["$defs"]["statement"])
+    }
+    schema["$defs"]["fact_entry"] = {
+        "anyOf": _fact_entry_variants(schema["$defs"]["fact_entry"])
+    }
     return schema
