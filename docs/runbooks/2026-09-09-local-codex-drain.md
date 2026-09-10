@@ -46,32 +46,69 @@ JOB_HUNTER_L2_BUNDLE=v2   # demand-profile/v6, schema 2, validator/10 (l2/v2)
 The tuple keys the queue, so a flip is a full re-extraction, never a resume:
 every document re-queues under the new tuple and pays a fresh model call.
 
-**The read surface does not follow the bundle yet** (verified 2026-09-10, and
-the reason cutover is not a pure `.env` edit). `views.profile_row`,
-`views.claims_view` and `pulse` all compute "the engine tuple in force" from
-the v1 module constants — `l2.prompt.PROMPT_VERSION`, `l2.runner.SCHEMA_VERSION`,
-`l2.transforms.VALIDATOR_VERSION` — not from `JOB_HUNTER_L2_BUNDLE`. So while
-the bundle is `v2`:
-
-- `q profile` / MCP `q_profile` keep serving the v1 row for any document that
-  has one, because current-tuple rows sort first and v1 *is* the current tuple
-  to that query; a document whose only row is v2 surfaces with
-  `historical: true`.
-- `q claims` filters `profile_mentions` on the v1 tuple, so mention rows
-  written by a v2 run are invisible to it.
-- `pulse`'s inline profile summaries come from `validated_profiles` scoped to
-  the v1 tuple, so v2 extractions do not appear there either.
-
-Nothing is lost — the v2 rows are in `extractions` and readable via
-`extract show` — but a cutover that expects the read surface to move with the
-writer needs those three call sites to take the tuple from the selected bundle
-first. Treat that as a prerequisite of the flip, not a follow-up.
-
 The setting governs `job-hunter extract run`, and therefore
 `scripts/local_drain_loop.py`, which shells out to it. It does NOT reach
 `scripts/local_codex_drain.py`: the outbox producer in the loop above still
 imports the v1 prompt and `transforms.VALIDATOR_VERSION` directly, so the
 CI-mediated pipeline stays on v1 until that script takes a bundle too.
+
+A flip has **two** read-path prerequisites, not one. Both were verified in code
+on 2026-09-10, and together they are why cutover is not a pure `.env` edit.
+
+### Prerequisite 1 — the served tuple is hard-coded to v1
+
+`views.profile_row`, `views.claims_view` and `pulse` all compute "the engine
+tuple in force" from the v1 module constants — `l2.prompt.PROMPT_VERSION`,
+`l2.runner.SCHEMA_VERSION`, `l2.transforms.VALIDATOR_VERSION` — not from
+`JOB_HUNTER_L2_BUNDLE`. So while the bundle is `v2`:
+
+- `q profile` / MCP `q_profile` keep serving the v1 row for any document that
+  has one, because current-tuple rows sort first and v1 *is* the current tuple
+  to that query; a document whose only row is v2 surfaces with
+  `historical: true`.
+- `pulse`'s inline profile summaries come from `validated_profiles` scoped to
+  the v1 tuple, so v2 extractions do not appear there either.
+- `q claims` / MCP `q_claims` scope `profile_mentions` to that same v1 tuple.
+  Fixing the scoping does **not** fix `q claims` — see prerequisite 2, there
+  are no v2 rows for a corrected scope to find.
+
+Those three call sites have to take the tuple from the selected bundle.
+`views.py` is where the fix lives.
+
+### Prerequisite 2 — a v2 run writes ZERO `profile_mentions` rows
+
+This one is policy, not a wiring gap, and it is the prerequisite that costs a
+capability rather than a patch. `l2/v2/assemble.py` builds every record with
+`quality.assess(source=…, evidence="pass")`, leaving `semantics` and
+`completeness` at their `not_checked` defaults (`l2/v2/quality.py`), so
+`search_eligible` is always `False`. `l2/v2/project.mention_rows` returns `[]`
+for any record that is not eligible, and `l2/v2/serve.mention_rows` — the v2
+bundle's aggregate projection — goes through it. The repo pins exactly this:
+`tests/l2/test_runner_v2.py::test_an_unaudited_record_stores_its_profile_but_indexes_no_mentions`
+asserts an empty `profile_mentions` for a **validated** v2 record. Only the
+`semantic-audit/v1` phase can move those two dimensions off `not_checked`, and
+that prompt is still open (`docs/README.md`, increment 2).
+
+So state the cost of a flip honestly: **the profile blob survives, the mention
+aggregate does not.** v2 rows land in `extractions`, `extract show` reads them
+today, and `q profile` will serve them once prerequisite 1 is fixed — but the
+claim index gets nothing. The two prerequisites interact, so pick the branch
+deliberately:
+
+- **Prerequisite 1 unfixed (today).** `q claims` keeps scoping to the v1 tuple
+  and keeps returning v1 rows, which survive a v2 write untouched: every
+  `profile_mentions` delete in `store/extraction.py` is scoped to the writing
+  tuple. Claims keeps working, on data that goes staler with every
+  re-extraction.
+- **Prerequisite 1 fixed, auditor not landed.** `q claims` scopes to
+  `(demand-profile/v6, 2, 10)`, which has zero rows corpus-wide, and returns
+  **nothing at all** — for every document, not just re-extracted ones — until
+  `semantic-audit/v1` ships. Nothing is deleted and rollback restores service
+  immediately, but the claim index is dark for the duration.
+
+Cutover therefore needs the `views.py` fix **and** either `semantic-audit/v1`
+shipped or an explicit decision to run with a dark claim index. Treat both as
+prerequisites of the flip, not follow-ups.
 
 ### The A/B gate before flipping
 
@@ -91,11 +128,26 @@ JOB_HUNTER_L2_BUNDLE=v2 uv run job-hunter extract run --max-docs 20 --max-usd 0 
 3. Compare against v1's quarantine rate on the same documents (v1's per-tuple
    status counts come straight out of `extractions`).
 
-**Pass** — v2 quarantine ≤ half of v1's, *and* the read path above takes its
-tuple from the bundle: set `JOB_HUNTER_L2_BUNDLE=v2` in `.env` and restart the
-drain loop; re-extraction proceeds newest-first. **Fail**: cutover halts, the
-loop stays on v1, and the quarantined documents get a quarantine-class analysis
-before anyone tries again. The switch never happens on the fixture suite alone.
+**Compute the baseline under the v1 tuple actually in force**, always with the
+`prompt_version`/`schema_version`/`validator_version` predicate in the WHERE
+clause. `SELECT … FROM extractions WHERE status='quarantined'` with no tuple
+filter is not the baseline: it sweeps in every retired tuple (`demand-profile/
+v1`–`v3`, validator `9`), and documents that a retired tuple quarantined are
+routinely `validated` under the current one. The 2026-09-10 A/B was scoped that
+way and mis-stated its own gate — 113 "v1-quarantined" documents that under
+`(demand-profile/v5, 1, 12)` are 61 quarantined, 9 validated, 7 needs_review
+and 36 with no current-tuple row at all. Also decide up front which denominator
+the rate uses: all sampled documents, or only those with a current-tuple row.
+The two differ a lot (54% vs 79% on that sample), and the gate is half of
+whichever you pick.
+
+**Pass** — v2 quarantine ≤ half of v1's, *and* both read-path prerequisites
+above are settled (the `views.py` tuple fix landed, and `semantic-audit/v1`
+shipped or a dark claim index accepted): set `JOB_HUNTER_L2_BUNDLE=v2` in
+`.env` and restart the drain loop; re-extraction proceeds newest-first.
+**Fail**: cutover halts, the loop stays on v1, and the quarantined documents
+get a quarantine-class analysis before anyone tries again. The switch never
+happens on the fixture suite alone.
 
 Rolling back is selecting the previous bundle — set `JOB_HUNTER_L2_BUNDLE`
 back to `v1` and restart. Never delete or relabel the rows the other tuple

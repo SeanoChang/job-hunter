@@ -54,7 +54,13 @@ dispositions of the 2026-08-17 external review:
   `pulse`/`extract show`, and archive reads moved out of the write
   transaction. Still **open** from increment 2: the `semantic-audit/v1` and
   `semantic-repair/v1` prompts and the audit/repair loop — the deterministic
-  verifier plus the quality gate carry correctness until they land.
+  verifier plus the quality gate carry correctness until they land. Note what
+  that gate costs while they are open: `assemble` leaves `semantics` and
+  `completeness` at `not_checked`, so no offline v2 record is
+  `search_eligible` and the `profile_mentions` projection yields **no rows at
+  all**. The v2 profile blob is populated; the v2 mention aggregate is empty by
+  construction until the auditor lands, which makes `semantic-audit/v1` a
+  prerequisite of cutover rather than a fast follow.
   Increment 3 (persistence + explicit reads: the additive migration, the
   richer per-claim table, v2 views in `cli_q`/`mcp`) is still design only;
   storage is unmigrated and the hosted MCP is untouched. Frozen identifiers:
@@ -189,11 +195,16 @@ All still current as research; none define the design.
   the [A1] fix — archive GETs never hold an open write transaction. The bundle
   is selected by `JOB_HUNTER_L2_BUNDLE` (`v1` default); the live A/B gate and
   the local flip to `v2` are the operator procedure in
-  `runbooks/2026-09-09-local-codex-drain.md`. Not shipped with it, and a
-  prerequisite of any real flip: the read path still takes "the tuple in
-  force" from v1's module constants (`views.profile_row`,
+  `runbooks/2026-09-09-local-codex-drain.md`. Two read-path prerequisites of
+  any real flip are NOT shipped with it: (1) the read path still takes "the
+  tuple in force" from v1's module constants (`views.profile_row`,
   `views.claims_view`, `pulse`), so serving does not follow the selected
-  bundle. No schema migration, no MCP or CI change, no GitHub activity.
+  bundle; (2) a v2 run writes zero `profile_mentions` rows, because the quality
+  gate holds every unaudited record ineligible — so fixing (1) alone points
+  `q claims` at an empty tuple and it returns nothing corpus-wide until
+  `semantic-audit/v1` ships. No schema migration, no MCP or CI change, no
+  GitHub activity. The 2026-09-10 live A/B failed its gate and cutover is
+  halted (`please-map-it/tickets/T-20260910-3D6M-benchmark-cutover-docs.md`).
 
 Not built yet: M3 alerting (attention digests via generic webhook), the
 concept linker (L3), and the workspace/tracker faces.
@@ -269,9 +280,14 @@ and a dated judge run. Its README carries the superseded banner.
   previous bundle — never deleting or relabelling rows (spec §10). A cutover
   is gated on a live A/B against the bundle in force (v2's quarantine rate at
   most half of v1's on the same sample), run with the drain loop paused so one
-  writer holds the lock; the fixture suite alone never authorizes a flip. In
-  v2, importance belongs to a statement, never to the presentation area a
-  mention sits in — `profile_mentions` takes it from the linked statement.
+  writer holds the lock; the fixture suite alone never authorizes a flip. That
+  A/B baseline is always computed under the v1 tuple in force, never as an
+  unfiltered `status='quarantined'` scan, which sweeps in retired tuples and
+  inflates the rate. In v2, importance belongs to a statement, never to the
+  presentation area a mention sits in — `profile_mentions` takes it from the
+  linked statement, and only for a `search_eligible` record: the aggregate is a
+  corpus-wide assertion, so an unaudited record populates the profile blob and
+  contributes nothing to the claim index.
 - 2026-09-04 — ingestion policy amended: official ATS APIs only widens to
   official ATS APIs and, absent one, the first-party structured JSON endpoint
   the company's own careers page calls (Workday CXS, Oracle Recruiting Cloud,
