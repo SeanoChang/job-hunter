@@ -117,23 +117,30 @@ _MONEY_CODE_LEAD = re.compile(
     + _CODE + r"\s*" + _AMOUNT + _PERIOD_FRAG,
     re.IGNORECASE,
 )
-# validator/12 fix (QMRF, 2026-09-10 adversarial review): a bare numeric
-# range with no currency signal at all is money evidence only when BOTH
-# bounds carry comma-grouped thousands formatting AND an explicit period
-# marker (annually, /hour, ...) appears elsewhere in the text — the exact
-# shape of the design's one bare-range row, "65,000−87,500 OTE annually".
-# The original gate matched ANY bare range (`_AMOUNT`, which also accepts
-# space-thousands and ungrouped digits) next to a period word anywhere in
-# the text, so it swallowed PTO days ("20-30 days annually"), headcounts,
-# cohort weeks, percentages, space-grouped customer counts ("1 000 - 2 000")
-# and star ratings as compensation. Requiring the comma-grouped shape (and
-# only that shape — space-thousands still needs a sign or code) keeps the
-# one legitimate case while refusing every non-money bare range found in
-# review; anything else outside the grammar stays None, per this module's
-# null-over-guess rule.
+# validator/12 fix (QMRF, 2026-09-10 adversarial re-review): a bare numeric
+# range with no currency signal at all is money evidence only when the range
+# is immediately followed by the literal marker "OTE" (on-target-earnings —
+# unambiguously a compensation term, never a body-count/PTO/percentage
+# word) — the exact shape of the design's one authorized bare-range row,
+# "65,000−87,500 OTE annually". A first fix required only comma-grouped
+# thousands formatting on both bounds; that refused its own eight-row test
+# (all ungrouped digits) but the same defect class survived whenever the
+# non-money numbers happened to be comma-grouped too — "Equity: 10,000 -
+# 20,000 stock options, refreshed annually" still derived a false interval,
+# because comma-grouping says nothing about whether the range IS money.
+# Requiring the "OTE" collocation (not merely comma-grouping, and not a
+# period word anywhere in the text) keeps the one legitimate case while
+# refusing every non-money bare range found in review — equity/RSU/share
+# grants, headcounts, cohort weeks, percentages, customer/transaction
+# counts, star ratings, PTO days — without matching on prose meaning;
+# anything else outside the grammar stays None, per this module's
+# null-over-guess rule. `_CODE` is not reused here: none of `_CODE`'s
+# entries name a specific compensation figure the way "OTE" does — a
+# currency code still requires the sign/code branches above.
 _AMOUNT_THOUSANDS = r"(\d{1,3}(?:,\d{3})+)(?:[.,]\d{1,2})?\s*(k)?"
 _MONEY_BARE = re.compile(
-    _AMOUNT_THOUSANDS + _PERIOD_FRAG + r"\s*" + _SEP + r"\s*" + _AMOUNT_THOUSANDS + _PERIOD_FRAG,
+    _AMOUNT_THOUSANDS + _PERIOD_FRAG + r"\s*" + _SEP + r"\s*" + _AMOUNT_THOUSANDS + _PERIOD_FRAG
+    + r"\s+OTE\b",
     re.IGNORECASE,
 )
 # validator/11: single-amount forms, tried only after every range form fails.
@@ -201,7 +208,10 @@ def parse_compensation(text: str) -> dict[str, object] | None:
     currency: str | None
     if m := _MONEY.search(text):
         sym_lo, lo_digits, lo_k, sym_hi, hi_digits, hi_k = m.groups()
-        if sym_hi and sym_lo != sym_hi:
+        # validator/12 fix (QMRF): _SIGN is matched case-insensitively, so
+        # the equality check must casefold too — "CA$" vs "ca$", "Kč" vs
+        # "KČ" are the same sign in different case, not a currency mismatch.
+        if sym_hi and sym_lo.casefold() != sym_hi.casefold():
             return None  # "£100,000 - €120,000" is not a range
         code = _CURRENCY.search(text)
         currency = code.group(1).upper() if code else _sign_currency(sym_lo)
@@ -216,8 +226,10 @@ def parse_compensation(text: str) -> dict[str, object] | None:
             return None  # "100,000 USD - 120,000 EUR" is not a range
         currency = code_hi.upper()
     elif (m := _MONEY_BARE.search(text)) and (_HOURLY.search(text) or _YEARLY.search(text)):
-        # validator/12: no symbol, no code — only a period marker (elsewhere
-        # in the text) makes a bare numeric range evidently compensation.
+        # validator/12 (QMRF fix): no symbol, no code — the range must be
+        # immediately followed by "OTE" (matched inside _MONEY_BARE itself)
+        # AND a period marker must appear somewhere in the text before a
+        # bare numeric range counts as compensation evidence.
         lo_digits, lo_k, hi_digits, hi_k = m.groups()
         currency = None
     else:
