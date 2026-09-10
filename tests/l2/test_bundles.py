@@ -154,7 +154,7 @@ def test_v2_bundle_is_the_v6_engine_tuple() -> None:
     b = get_bundle("v2")
     assert b.name == "v2"
     assert (b.prompt_version, b.schema_version, b.validator_version) == (
-        "demand-profile/v6",
+        "demand-profile/v7",
         "2",
         "10",
     )
@@ -185,12 +185,12 @@ def test_v2_assemble_speaks_the_runners_failure_vocabulary() -> None:
 
 def test_get_bundle_for_tuple_maps_both_engine_tuples() -> None:
     assert get_bundle_for_tuple("demand-profile/v5", "1") is get_bundle("v1")
-    assert get_bundle_for_tuple("demand-profile/v6", "2") is get_bundle("v2")
+    assert get_bundle_for_tuple("demand-profile/v7", "2") is get_bundle("v2")
     # a historical or unregistered tuple is a KeyError, never a silent v1
     with pytest.raises(KeyError):
         get_bundle_for_tuple("demand-profile/v4", "1")
     with pytest.raises(KeyError):
-        get_bundle_for_tuple("demand-profile/v6", "1")
+        get_bundle_for_tuple("demand-profile/v7", "1")
 
 
 def _env(**extra: str) -> dict[str, str]:
