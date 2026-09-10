@@ -283,6 +283,14 @@ def parse_compensation(text: str) -> dict[str, object] | None:
     return {"min": lo, "max": hi, "currency": currency, "period": period}
 
 
+# validator/12 (fifth adversarial review): a single token flanked by a range
+# separator with a digit run on the other side is one bound of a range whose
+# other bound the bare guards refused ("Level 2 800 - 1,200 USD") — emitting
+# it as a point value is the false-exact harm class. Refuse instead.
+_SEP_BEFORE = re.compile(r"\d[\s.,]*(?:--?|–|—|−|\bto)\s*$", re.IGNORECASE)
+_SEP_AFTER = re.compile(r"\s*(?:--?|–|—|−|to\b)\s*[$£€¥]?\s*\d", re.IGNORECASE)
+
+
 def _single_amount(text: str) -> dict[str, object] | None:
     """validator/11: one amount with a currency signal is a point value."""
     if len(_MONEY_TOKEN.findall(text)) != 1:
@@ -303,6 +311,8 @@ def _single_amount(text: str) -> dict[str, object] | None:
         currency = code_txt.upper()
     else:
         return None
+    if _SEP_BEFORE.search(text[: m.start()]) or _SEP_AFTER.match(text[m.end():]):
+        return None  # one bound of a range whose other bound was refused
     value = _amount(digits, k)
     period = "hour" if _HOURLY.search(text) else "year" if _YEARLY.search(text) else None
     lo: int | None = value

@@ -510,3 +510,27 @@ def test_grade_tokens_never_distort_unambiguous_amounts(
     text: str, expected: dict[str, object] | None
 ) -> None:
     assert parse_compensation(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # fifth adversarial review: a range whose low bound the bare guards
+        # refuse must refuse whole — never emit the surviving bound as exact
+        ("Level 2 800 - 1,200 USD", None),
+        ("Grade 2 105 - 130 USD per hour", None),
+        ("Pay grade 7 800 - 1000 USD weekly", None),
+        ("Monthly salary 30 000 - 35,000 SEK", None),
+        ("SEK 45 000 - 55000 per month", None),
+        # ranges with unrefused bounds still parse
+        ("800 - 1,200 USD", {"min": 800, "max": 1200, "currency": "USD", "period": None}),
+        # legitimate singles with no adjacent separator survive
+        ("9-5 schedule, $45 per hour",
+         {"min": 45, "max": 45, "currency": None, "period": "hour"}),
+        ("up to $180,000", {"min": None, "max": 180000, "currency": None, "period": None}),
+    ],
+)
+def test_refused_bound_never_becomes_a_point_value(
+    text: str, expected: dict[str, object] | None
+) -> None:
+    assert parse_compensation(text) == expected
