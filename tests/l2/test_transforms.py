@@ -353,3 +353,36 @@ def test_compensation_single_amount(text: str, expected: dict[str, object] | Non
 )
 def test_compensation_international(text: str, expected: dict[str, object] | None) -> None:
     assert parse_compensation(text) == expected
+
+
+# --- QMRF fix: the bare-range gate must not eat non-money ranges ------------
+# Adversarial review (2026-09-10, ticket QMRF) found _MONEY_BARE's gate — any
+# bare numeric range plus an "annually"/"/hour"-family token ANYWHERE in the
+# text — accepts PTO days, headcounts, cohort weeks, percentages, customer
+# counts and star ratings as compensation intervals. The gate now requires
+# BOTH bounds to carry comma-grouped thousands formatting (the shape of the
+# design's one bare-range row, "65,000−87,500") — space-thousands ("1 000 -
+# 2 000") and ungrouped numbers no longer qualify as money evidence on their
+# own; a currency sign or code is still required for those.
+@pytest.mark.parametrize(
+    "text",
+    [
+        "PTO: 20-30 days annually",
+        "0-2 YOE preferred, promotions annually",
+        "We are a team of 100 - 200 people; all-hands per year",
+        "Cohorts run 6 - 8 weeks, twice per year",
+        "Discount of 10-15 percent per year",
+        "Serving 1 000 - 2 000 customers per year",
+        "Rated 4.5 - 4.9 stars annually",
+        "You will receive 15 to 25 days of paid time off per year",
+    ],
+)
+def test_compensation_bare_range_gate_rejects_non_money(text: str) -> None:
+    assert parse_compensation(text) is None
+
+
+def test_compensation_bare_range_still_accepts_the_design_row() -> None:
+    # regression: the one legitimate bare-range shape must keep working
+    assert parse_compensation("Approximately 65,000−87,500 OTE annually") == {
+        "min": 65000, "max": 87500, "currency": None, "period": "year",
+    }

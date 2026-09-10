@@ -117,13 +117,23 @@ _MONEY_CODE_LEAD = re.compile(
     + _CODE + r"\s*" + _AMOUNT + _PERIOD_FRAG,
     re.IGNORECASE,
 )
-# validator/12: a bare numeric range with no currency signal at all is
-# money evidence only when an explicit period marker (annually, /hour, ...)
-# appears elsewhere in the text — "65,000−87,500 OTE annually". Without a
-# period marker a bare range stays a correct refusal (validator/3: "not
-# evidently money"); the gate lives in parse_compensation, not here.
+# validator/12 fix (QMRF, 2026-09-10 adversarial review): a bare numeric
+# range with no currency signal at all is money evidence only when BOTH
+# bounds carry comma-grouped thousands formatting AND an explicit period
+# marker (annually, /hour, ...) appears elsewhere in the text — the exact
+# shape of the design's one bare-range row, "65,000−87,500 OTE annually".
+# The original gate matched ANY bare range (`_AMOUNT`, which also accepts
+# space-thousands and ungrouped digits) next to a period word anywhere in
+# the text, so it swallowed PTO days ("20-30 days annually"), headcounts,
+# cohort weeks, percentages, space-grouped customer counts ("1 000 - 2 000")
+# and star ratings as compensation. Requiring the comma-grouped shape (and
+# only that shape — space-thousands still needs a sign or code) keeps the
+# one legitimate case while refusing every non-money bare range found in
+# review; anything else outside the grammar stays None, per this module's
+# null-over-guess rule.
+_AMOUNT_THOUSANDS = r"(\d{1,3}(?:,\d{3})+)(?:[.,]\d{1,2})?\s*(k)?"
 _MONEY_BARE = re.compile(
-    _AMOUNT + _PERIOD_FRAG + r"\s*" + _SEP + r"\s*" + _AMOUNT + _PERIOD_FRAG,
+    _AMOUNT_THOUSANDS + _PERIOD_FRAG + r"\s*" + _SEP + r"\s*" + _AMOUNT_THOUSANDS + _PERIOD_FRAG,
     re.IGNORECASE,
 )
 # validator/11: single-amount forms, tried only after every range form fails.
