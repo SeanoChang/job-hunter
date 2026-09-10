@@ -34,13 +34,15 @@ def _statement_variants(statement: dict[str, Any]) -> list[dict[str, Any]]:
     unruled = [k for k in all_kinds if k not in IMPORTANCE_KINDS]
     evidence_present = {"$ref": "#/$defs/evidence"}
 
+    # every union member carries an explicit "type": the OpenAI strict
+    # validator rejects bare const/enum nodes ("schema must have a 'type' key")
     importance_axis = [
-        {"kind": {"enum": ruled},
-         "importance": {"enum": _EVIDENCED_IMPORTANCE},
+        {"kind": {"type": "string", "enum": ruled},
+         "importance": {"type": "string", "enum": _EVIDENCED_IMPORTANCE},
          "importance_evidence": evidence_present},
-        {"kind": {"enum": ruled},
-         "importance": {"const": "unstated"}},
-        {"kind": {"enum": unruled},
+        {"kind": {"type": "string", "enum": ruled},
+         "importance": {"type": "string", "enum": ["unstated"]}},
+        {"kind": {"type": "string", "enum": unruled},
          "importance": {"type": "null"},
          "importance_evidence": {"type": "null"}},
     ]
@@ -65,11 +67,13 @@ def _fact_entry_variants(entry: dict[str, Any]) -> list[dict[str, Any]]:
     null = {"type": "null"}
     date_kinds = [k for k in entry["properties"]["date_kind"]["enum"] if k is not None]
     shapes = [
-        {"family": {"const": "date"}, "date_kind": {"enum": date_kinds},
+        {"family": {"type": "string", "enum": ["date"]},
+         "date_kind": {"type": "string", "enum": date_kinds},
          "component": null, "scope": null},
-        {"family": {"const": "compensation"}, "date_kind": null,
+        {"family": {"type": "string", "enum": ["compensation"]}, "date_kind": null,
          "component": entry["properties"]["component"], "scope": null},
-        {"family": {"enum": ["experience", "quantity"]}, "date_kind": null,
+        {"family": {"type": "string", "enum": ["experience", "quantity"]},
+         "date_kind": null,
          "component": null, "scope": entry["properties"]["scope"]},
     ]
     variants = []
