@@ -196,6 +196,17 @@ def mention_rows(record: dict[str, Any]) -> list[tuple[str, str, str]]:
     CHECK. Flattening `not_required` into one of v1's three would make the
     aggregate assert the opposite of the document; stating it plainly leaves the
     reading to consumers, who filter by kind before importance either way.
+
+    The read surface has not caught up, and that is a known consequence rather
+    than an accident: `q claims --importance` (`cli_q.IMPORTANCES`) and the MCP
+    `q_claims` tool both validate the argument against v1's closed three-word
+    tuple, so a row written under one of the new three is returned by an
+    unfiltered `q claims` but can never be selected BY that importance. Nothing
+    is lost or mislabeled — the filter is simply narrower than the column.
+    Widening it (and deciding what `--importance required` should mean when the
+    corpus mixes vocabularies) is the read-surface half of increment 3, the same
+    increment that owns the per-claim table; until then no offline v2 record is
+    `search_eligible`, so the aggregate carries none of these words yet.
     """
     rows: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str, str]] = set()
