@@ -26,13 +26,22 @@ one its pre-flight reads open before the first PUT, and `_catch_up` scans the
 archive in committed chunks of `CATCH_UP_CHUNK` keys, holding neither a
 transaction nor the chunk's bytes across the next batch.
 
+The parallel drain shares ONE connection, so the property is about the gate as
+much as about any single call path: `_extract_doc` commits the document before
+it releases the gate, because the worker that takes the gate next goes straight
+to the archive. A commit made after re-acquiring the gate would leave
+`upsert_state`'s transaction live across someone else's round trip.
+
 A chunk that commits also SETTLES — before the next chunk's first archive read,
 and for every tuple it saw, not only the rows it inserted. The watermark is
 max(started_at) over committed attempt rows, so a row that lands without its
 derived row sits ON the watermark: later scans skip its key, and for the one
 key still inside the window `record_attempt` answers "known". Neither signal
 says whether the fold ran, so the scan re-derives what it read and every chunk
-leaves the surface consistent.
+leaves the surface consistent. The review scan carries the same lesson with a
+different bound: `settle`'s boundary commits its caller's decision, so a
+decision whose derived row does not post-date it is re-folded whether or not
+the scan inserted it.
 
 Nothing here names a prompt, a schema or a validator any more: the six things
 that define an engine tuple arrive as a `Bundle` (`l2/bundles.py`), so the
@@ -76,7 +85,7 @@ from jobhunter.l2.transforms import VALIDATOR_VERSION
 from jobhunter.markdown import NORMALIZER_VERSION
 from jobhunter.store import db, extraction
 from jobhunter.store.extraction import Conn
-from jobhunter.timeutil import iso, utcnow_precise
+from jobhunter.timeutil import iso, parse_iso, utcnow_precise
 
 # The v1 engine tuple's public home. `pulse`, `views` and `cli` import
 # SCHEMA_VERSION from here, and rebinding these three names pins a run to a
@@ -336,11 +345,16 @@ def settle(
     # gate loads each ok sample's record, then the chosen attempt is fetched
     # whole — and a managed Postgres kills a backend that sits idle in a
     # transaction across a round trip (SQLSTATE 25P03, canary run 33666006472).
-    # The commit also lands whatever the caller had pending, which is safe for
-    # the one thing a caller ever holds here: an insert-only attempt or review
-    # row, already in the archive and idempotent on its key. The write below
-    # then opens a fresh transaction, so `settle`'s own row still commits
-    # atomically with the caller's per-document commit.
+    # The commit also lands whatever the caller had pending: an insert-only
+    # attempt or review row, already in the archive and idempotent on its key.
+    # The write below then opens a fresh transaction, so `settle`'s own row
+    # still commits atomically with the caller's per-document commit — but the
+    # caller's row and this fold are no longer one transaction, and a death in
+    # between leaves the event committed and its derived row stale. Nothing
+    # here can close that gap (one connection cannot both hold the caller's
+    # write and be transaction-idle), so `_catch_up` heals it instead, on both
+    # sides: the attempt scan folds every tuple in its watermark window, and
+    # the review scan folds every decision its derived row does not post-date.
     conn.commit()
 
     # The ONE gate every fold shares (review P0-1): live settlement loads each
@@ -395,6 +409,31 @@ def _settle_all(
     for dh, pv, sv, vv in sorted(touched):
         settle(conn, store, dh, globs, updated_at,
                prompt_version=pv, schema_version=sv, validator_version=vv)
+
+
+def _folded_at(
+    conn: Conn, documents: set[str]
+) -> dict[tuple[str, str, str, str], datetime]:
+    """When each engine tuple of these documents was last folded.
+
+    The review scan's staleness test, and the review scan's alone — it is the
+    scan's own bookkeeping over a derived table, not part of the extraction
+    write path, so it reads `extractions` here rather than growing a helper on
+    the write module every other caller would inherit.
+    """
+    if not documents:
+        return {}
+    rows = conn.execute(
+        "SELECT document_hash, prompt_version, schema_version, validator_version,"
+        " max(updated_at) AS updated_at FROM extractions WHERE document_hash = ANY(%s)"
+        " GROUP BY 1, 2, 3, 4",
+        (sorted(documents),),
+    ).fetchall()
+    return {
+        (r["document_hash"], r["prompt_version"], r["schema_version"],
+         r["validator_version"]): r["updated_at"]
+        for r in rows
+    }
 
 
 def _catch_up(conn: Conn, journal: _Journal, updated_at: str) -> int:
@@ -461,20 +500,34 @@ def _catch_up(conn: Conn, journal: _Journal, updated_at: str) -> int:
     # review events are archived BEFORE their DB row (archive-as-truth): a crash
     # between the two must not leave a human decision unapplied until a manual
     # rebuild. The prefix is tiny (human verbs), so a full idempotent scan is
-    # fine. Unlike the attempt scan this one has no watermark to bound it, so
-    # only NEW rows are folded: re-folding every reviewed document on every run
-    # would keep refreshing their `updated_at` and hide how long the review
-    # queue has really been waiting (`oldest_review_at`).
+    # fine. Unlike the attempt scan this one has no watermark to bound it, but
+    # "the row was already there" says nothing about whether the FOLD ran, and
+    # here it says even less than on the attempt side: `settle` lands the
+    # caller's pending review insert at its [A1] boundary and only then reads
+    # the archive, so a death in that gap — the `extract review` verbs and the
+    # refuter both write in exactly that shape — leaves the decision committed
+    # with its derived row untouched, unreachable by every later scan.
+    #
+    # The derived row's own `updated_at` is the bound: a fold that finished
+    # post-dates the decision it folded (its callers stamp it after the event),
+    # so anything it does not post-date is re-derived and everything else is
+    # left alone. Untouched matters — `oldest_review_at`, how long the queue has
+    # really been waiting, is min(updated_at) over the rows awaiting a human, so
+    # a scan that re-folded every reviewed document would erase it. A tuple with
+    # no row at all is not this failure (a review is only ever issued against an
+    # existing row); it is a fold that already ran and settled to pending.
     for review_batch in batched(store.list(keys.X_REVIEWS_PREFIX), CATCH_UP_CHUNK):
         events = [json.loads(store.get(key)) for key in review_batch]
+        folded = _folded_at(conn, {e["document_hash"] for e in events})
         touched = set()
         for event in events:
+            config = (event["document_hash"], event["prompt_version"],
+                      event["schema_version"], event["validator_version"])
             if extraction.record_review(conn, **event):
                 replayed += 1
-                touched.add(
-                    (event["document_hash"], event["prompt_version"], event["schema_version"],
-                     event["validator_version"])
-                )
+                touched.add(config)
+            elif config in folded and folded[config] <= parse_iso(event["at"]):
+                touched.add(config)  # committed decision, fold never finished
         _settle_all(conn, store, globs, updated_at, touched)
         conn.commit()
     return replayed
@@ -539,8 +592,7 @@ def run(
                                       breaker, now, active)
                 if result is None:
                     continue  # document vanished (normalizer bump mid-flight)
-                disposition, breaker = result
-                session.do(lambda c: c.commit())
+                disposition, breaker = result  # already committed by _extract_doc
                 if disposition == "validated":
                     summary.validated += 1
                 elif disposition == "quarantined":
@@ -584,7 +636,8 @@ def run(
                             continue
                         disposition, b_after = result
                         breaker_box[0] = b_after
-                        session.do(lambda c: c.commit())
+                        # the document's own commit already happened under the
+                        # gate _extract_doc held; this block only counts it
                         if disposition == "validated":
                             summary.validated += 1
                         elif disposition == "quarantined":
@@ -632,15 +685,42 @@ def _extract_doc(
     bundle: Bundle,
     gate: threading.RLock | None = None,
 ) -> tuple[str, int] | None:
-    """With a gate (parallel drain): the gate is held for ALL state — DB,
-    journal, summary, breaker — and released strictly around engine calls, so
-    the semantics stay those of the serial drain while the waiting overlaps."""
+    """One document, start to committed.
+
+    With a gate (parallel drain): the gate is held for ALL state — DB, journal,
+    summary, breaker — and released strictly around engine calls, so the
+    semantics stay those of the serial drain while the waiting overlaps.
+
+    The per-document commit belongs HERE, not to the caller ([A1]). The gate is
+    handed to another worker the instant this returns, and that worker's first
+    act on the SAME connection is archive I/O — its attempt PUT, or `settle`'s
+    GETs. A commit the caller makes after re-acquiring the gate is too late: the
+    transaction `upsert_state` opened would be live across another worker's
+    round trip, which is the idle-in-transaction state SQLSTATE 25P03 kills. The
+    early returns are covered too — a document that vanished leaves the read
+    transaction its markdown lookup opened, and a document that raises leaves
+    its `engine_fatal` row.
+    """
     if gate is None:
-        return _extract_doc_inner(settings, session, journal, engine, dh, summary,
-                                  breaker, now, bundle, None)
+        result = _extract_doc_inner(settings, session, journal, engine, dh, summary,
+                                    breaker, now, bundle, None)
+        session.do(lambda c: c.commit())
+        return result
     with gate:
-        return _extract_doc_inner(settings, session, journal, engine, dh, summary,
-                                  breaker, now, bundle, gate)
+        try:
+            result = _extract_doc_inner(settings, session, journal, engine, dh, summary,
+                                        breaker, now, bundle, gate)
+        except BaseException:
+            # Landing this document's rows is what `settle`'s own boundary does
+            # with them: insert-only, already archived, idempotent on their key.
+            # A commit that cannot happen changes nothing here — the connection
+            # is gone, so no other worker will reach the archive on it either —
+            # and must never replace the failure that is ending the run.
+            with contextlib.suppress(psycopg.Error):
+                session.conn.commit()
+            raise
+        session.do(lambda c: c.commit())
+        return result
 
 
 def _ungated[T](gate: threading.RLock | None, fn: Callable[[], T]) -> T:
