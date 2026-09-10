@@ -208,6 +208,11 @@ def upload(outbox: Path, workdir: Path, key: Path, count: int, *, run: Run, slee
     run_id = resolve_run(INGEST_WORKFLOW, started, run=run, sleep=sleep)
     _check(run(["gh", "run", "watch", str(run_id), "--exit-status"], capture=False),
            f"outbox-ingest run {run_id}")
+    # The whole outbox is re-tarred every cycle, so keeping the tarballs would
+    # grow the work dir by the outbox's size per cycle; the release holds the
+    # copy that matters. The queue dump stays — it is small and it is evidence.
+    tgz.unlink(missing_ok=True)
+    enc.unlink(missing_ok=True)
     return Upload(tag, run_id, count)
 
 
@@ -237,6 +242,10 @@ def loop(args: argparse.Namespace, *, run: Run, sleep: Sleep) -> int:
     work_root = Path(args.work_dir) if args.work_dir else Path(tempfile.mkdtemp(prefix="drain-"))
 
     pool = "queue" if args.pool == "auto" else args.pool
+    # stdout stays the cycle log; the banner (and the throttle notices) are for
+    # the operator watching an unattended run.
+    print(f"drain-cycle: pool={args.pool} batch={args.batch} cycles={args.cycles or 'until dry'} "
+          f"outbox={outbox} work-dir={work_root}", file=sys.stderr, flush=True)
     cycle = 0
     while args.cycles == 0 or cycle < args.cycles:
         cycle += 1
