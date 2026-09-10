@@ -21,9 +21,18 @@ Archive I/O never happens inside a transaction (spec amendment [A1]). A GET is
 a network round trip, and a managed Postgres kills a session that waits on one
 with a transaction open (SQLSTATE 25P03, canary run 33666006472) — the same
 kill the engine call already commits around. So `settle` closes the read
-transaction before it fetches archived records, and `_catch_up` scans the
+transaction before it fetches archived records, `_extract_doc_inner` closes the
+one its pre-flight reads open before the first PUT, and `_catch_up` scans the
 archive in committed chunks of `CATCH_UP_CHUNK` keys, holding neither a
 transaction nor the chunk's bytes across the next batch.
+
+A chunk that commits also SETTLES — before the next chunk's first archive read,
+and for every tuple it saw, not only the rows it inserted. The watermark is
+max(started_at) over committed attempt rows, so a row that lands without its
+derived row sits ON the watermark: later scans skip its key, and for the one
+key still inside the window `record_attempt` answers "known". Neither signal
+says whether the fold ran, so the scan re-derives what it read and every chunk
+leaves the surface consistent.
 
 Nothing here names a prompt, a schema or a validator any more: the six things
 that define an engine tuple arrive as a `Bundle` (`l2/bundles.py`), so the
@@ -171,13 +180,10 @@ class _Journal:
             extraction.record_review(conn, **event)
             touched.add((event["document_hash"], event["prompt_version"],
                          event["schema_version"], event["validator_version"]))
-        updated_at = iso(self._now())
-        for dh, pv, sv, vv in touched:
-            # the derived row died with the attempt rows: without this a run can
-            # report a validation the store does not hold (death on the per-doc
-            # commit, after settle has already written it)
-            settle(conn, self.store, dh, self.globs, updated_at,
-                   prompt_version=pv, schema_version=sv, validator_version=vv)
+        # the derived row died with the attempt rows: without this a run can
+        # report a validation the store does not hold (death on the per-doc
+        # commit, after settle has already written it)
+        _settle_all(conn, self.store, self.globs, iso(self._now()), touched)
 
 
 class _Session:
@@ -374,6 +380,23 @@ def settle(
     return state
 
 
+def _settle_all(
+    conn: Conn,
+    store: ArchiveStore,
+    globs: tuple[str, ...],
+    updated_at: str,
+    touched: set[tuple[str, str, str, str]],
+) -> None:
+    """Fold every `(document, prompt, schema, validator)` tuple in `touched`.
+
+    Sorted so a replay's writes land in a deterministic order, and so two runs
+    folding the same set take the same path through it.
+    """
+    for dh, pv, sv, vv in sorted(touched):
+        settle(conn, store, dh, globs, updated_at,
+               prompt_version=pv, schema_version=sv, validator_version=vv)
+
+
 def _catch_up(conn: Conn, journal: _Journal, updated_at: str) -> int:
     store, globs = journal.store, journal.globs
     mark = extraction.watermark(conn)
@@ -397,9 +420,21 @@ def _catch_up(conn: Conn, journal: _Journal, updated_at: str) -> int:
     # mid-scan re-runs `_catch_up` whole; the batches commit in key order and
     # keys sort chronologically, so the new watermark lands before every batch
     # that did not commit and the rescan finds them all again.
+    #
+    # Each batch also FOLDS before the next batch's first GET, and it folds
+    # every tuple it SAW, not only the rows it inserted. Both halves are the
+    # same lesson: a committed attempt row whose derived row never landed is
+    # unreachable afterwards — the watermark sits on it, so the next scan skips
+    # its key, and `record_attempt` answering "known" for the one key still in
+    # the window would drop it from the fold set. "The row was already there"
+    # says nothing about whether the fold ran, and `settle` commits its rows at
+    # its [A1] boundary before it reads the archive, so the gap is real: the
+    # kill that motivated [A1] lands squarely inside it. Re-folding is a pure
+    # re-derivation over committed rows; the window is bounded by the watermark
+    # (one second of keys in the steady state), so the cost is one redundant
+    # fold per run and a refreshed `updated_at` on that document.
     conn.commit()
     replayed = 0
-    touched: set[tuple[str, str, str, str]] = set()
     for batch in batched(store.list(keys.X_ATTEMPTS_PREFIX, start_after=start_after),
                          CATCH_UP_CHUNK):
         loaded: list[Attempt] = []
@@ -410,20 +445,29 @@ def _catch_up(conn: Conn, journal: _Journal, updated_at: str) -> int:
             if mark is not None and parsed[0] < mark:
                 continue
             loaded.append(from_bytes(store.get(key)))
+        touched: set[tuple[str, str, str, str]] = set()
         for attempt in loaded:
             if extraction.record_attempt(conn, attempt, derived_error_detail(attempt)):
-                replayed += 1
-                touched.add(
-                    (attempt.document_hash, attempt.prompt_version, attempt.schema_version,
-                     attempt.validator_version)
-                )
+                replayed += 1  # counted for the caller: only a real replay is news
+            touched.add(
+                (attempt.document_hash, attempt.prompt_version, attempt.schema_version,
+                 attempt.validator_version)
+            )
+        _settle_all(conn, store, globs, updated_at, touched)
+        # ends the last fold's write — or, for a batch that folded nothing, the
+        # transaction the no-op inserts opened — before the next batch's GETs
         conn.commit()
         loaded.clear()  # the batch's bytes go with its transaction
     # review events are archived BEFORE their DB row (archive-as-truth): a crash
     # between the two must not leave a human decision unapplied until a manual
-    # rebuild. The prefix is tiny (human verbs), so a full idempotent scan is fine.
+    # rebuild. The prefix is tiny (human verbs), so a full idempotent scan is
+    # fine. Unlike the attempt scan this one has no watermark to bound it, so
+    # only NEW rows are folded: re-folding every reviewed document on every run
+    # would keep refreshing their `updated_at` and hide how long the review
+    # queue has really been waiting (`oldest_review_at`).
     for review_batch in batched(store.list(keys.X_REVIEWS_PREFIX), CATCH_UP_CHUNK):
         events = [json.loads(store.get(key)) for key in review_batch]
+        touched = set()
         for event in events:
             if extraction.record_review(conn, **event):
                 replayed += 1
@@ -431,10 +475,8 @@ def _catch_up(conn: Conn, journal: _Journal, updated_at: str) -> int:
                     (event["document_hash"], event["prompt_version"], event["schema_version"],
                      event["validator_version"])
                 )
+        _settle_all(conn, store, globs, updated_at, touched)
         conn.commit()
-    for dh, pv, sv, vv in touched:
-        settle(conn, store, dh, globs, updated_at,
-               prompt_version=pv, schema_version=sv, validator_version=vv)
     return replayed
 
 
@@ -631,6 +673,12 @@ def _extract_doc_inner(
     summary.docs_attempted += 1
     seq = session.do(lambda c: extraction.next_attempt_no(c, dh)) - 1
     schema = emit_schema(bundle.schema_version)
+    # [A1] end the transaction those two lookups opened. Everything this
+    # function does next is archive traffic — the over-budget branch PUTs its
+    # attempt object without ever reaching the pre-call commit below — and a PUT
+    # is the same round trip a GET is, so it may no more hold a transaction open
+    # (SQLSTATE 25P03, canary run 33666006472).
+    session.do(lambda c: c.commit())
 
     def archive_attempt(
         *, requested_model: str, observed_model: str | None, outcome: str,

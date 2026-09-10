@@ -5,7 +5,8 @@ import copy
 import json
 import time
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import psycopg
@@ -28,6 +29,7 @@ from jobhunter.l2.prompt import PROMPT_VERSION
 from jobhunter.l2.runner import LockLost, run
 from jobhunter.l2.transforms import VALIDATOR_VERSION
 from jobhunter.store import db
+from jobhunter.timeutil import iso
 from tests.conftest import TEST_DSN
 from tests.l2.conftest import DOC_MD
 from tests.l2.test_assemble import EMIT
@@ -1092,21 +1094,51 @@ ORPHAN_RECORD = {
 }
 
 
+@contextmanager
+def _own_connection(pg: Conn) -> Iterator[Conn]:
+    """A second session for the runner, so `pg` sees only what really committed."""
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    pg.commit()
+    conn = db.connect(TEST_DSN, schema=str(schema_row["s"]))
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def _breaking_store(store: ArchiveStore, dh: str) -> SlowStore:
+    """The archive with one document's objects unreadable.
+
+    Nothing on the catch-up path catches, so a GET that raises in a later chunk
+    ends the scan exactly where a killed backend would — without needing one.
+    """
+
+    def boom(op: str, key: str) -> None:
+        if op == "get" and dh[:12] in key:  # attempt keys carry 12 hex chars of it
+            raise RuntimeError("the archive went away mid-scan")
+
+    return SlowStore(store, boom)
+
+
+def _orphan_bytes(at: datetime, dh: str, no: int, ok: bool) -> tuple[str, bytes]:
+    """One archived attempt that never reached the database — the crash window
+    between the archive write and its row. An `ok` one carries the record the
+    fold settles on; anything else is a transport failure, which settles
+    nothing on its own."""
+    orphan = _attempt(
+        attempt_key=keys.x_attempt_key(at, dh, 1, no), document_hash=dh, attempt_no=no,
+        outcome="ok" if ok else "transport",
+        observed_model="z-ai/glm-5.2:free" if ok else None,
+        record=ORPHAN_RECORD if ok else None, started_at=iso(at),
+    )
+    return orphan.attempt_key, to_bytes(orphan)
+
+
 def _seed_orphans(store: ArchiveStore, n: int) -> None:
-    """n attempt objects in the archive that never reached the database — the
-    crash window between the archive write and its row. The last one carries a
-    record, so the fold has something to settle."""
+    """n orphans one second apart, the last of them the one carrying a record."""
     for i in range(1, n + 1):
-        at = datetime(2026, 8, 27, 7, 0, i, tzinfo=UTC)
-        ok = i == n
-        orphan = _attempt(
-            attempt_key=keys.x_attempt_key(at, DH, 1, i), document_hash=DH, attempt_no=i,
-            outcome="ok" if ok else "transport",
-            observed_model="z-ai/glm-5.2:free" if ok else None,
-            record=ORPHAN_RECORD if ok else None,
-            started_at=f"2026-08-27T07:00:{i:02d}Z",
-        )
-        store.put(orphan.attempt_key, to_bytes(orphan))
+        store.put(*_orphan_bytes(datetime(2026, 8, 27, 7, 0, i, tzinfo=UTC), DH, i, i == n))
 
 
 def test_settle_archive_reads_are_transaction_idle(pg: Conn, store: ArchiveStore) -> None:
@@ -1149,7 +1181,9 @@ def test_catch_up_archive_reads_are_transaction_idle(
     assert summary.replayed == 6  # five attempts and the review event
     assert [s for _, _, s in seen] == [TransactionStatus.IDLE] * len(seen)
     gets = [k for op, k, _ in seen if op == "get" and k.startswith(keys.X_ATTEMPTS_PREFIX)]
-    assert len(gets) == 6  # five scanned orphans, plus settle's chosen attempt
+    # five scanned orphans, plus the chosen attempt once per folding chunk: the
+    # chunk that replayed the ok attempt, and the one that replayed the review
+    assert len(gets) == 7
     row = _state_row(pg)
     assert row and row["status"] == "needs_review"  # the flagged fold, settled once
     again = run(_settings(), pg, slow, engine=FakeEngine([]), max_docs=10, max_usd=5.0)
@@ -1189,3 +1223,161 @@ def test_catch_up_commits_each_chunk_as_it_scans(
     # chunks of two: the third and fifth GETs see the earlier chunks already
     # committed, which a single scan-wide transaction could never show
     assert committed[:5] == [0, 0, 2, 2, 4]
+
+
+def test_catch_up_settles_each_chunk_before_reading_the_next(
+    pg: Conn, store: ArchiveStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scan that dies in a later chunk leaves the earlier chunks FOLDED.
+
+    Each chunk commits its attempt rows, and the watermark is max(started_at)
+    over committed rows — so a chunk whose rows landed without their
+    `extractions` row would sit behind every later run's watermark, unreachable
+    by `record_attempt` (idempotent: no insert, no settle) and healed only by
+    `extract rebuild`. The scan therefore settles what it recorded before it
+    touches the archive again. No database death is needed to show it: the
+    loops have no `except`, so a single unreadable object in a later chunk ends
+    the scan exactly as a killed backend would.
+    """
+    from jobhunter.l2 import runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "CATCH_UP_CHUNK", 1)  # one orphan per chunk
+    dh_b = sha256_hex(f"{DOC_MD}B".encode())
+    _seed_doc(pg)
+    _seed_doc(pg, dh=dh_b, markdown=f"{DOC_MD}B", uid="gh:x:2")
+    for i, dh in ((1, DH), (2, dh_b)):
+        at = datetime(2026, 8, 27, 7, 0, i, tzinfo=UTC)
+        orphan = _attempt(
+            attempt_key=keys.x_attempt_key(at, dh, 1, 1), document_hash=dh,
+            record=ORPHAN_RECORD, started_at=f"2026-08-27T07:00:0{i}Z",
+        )
+        store.put(orphan.attempt_key, to_bytes(orphan))
+
+    with _own_connection(pg) as runner_conn, pytest.raises(RuntimeError, match="mid-scan"):
+        run(_settings(), runner_conn, _breaking_store(store, dh_b),
+            engine=FakeEngine([]), max_docs=10, max_usd=5.0)
+    pg.commit()  # a fresh snapshot: what the interrupted scan really left behind
+    rows = pg.execute("SELECT document_hash, status FROM extractions").fetchall()
+    assert {r["document_hash"]: r["status"] for r in rows} == {DH: "validated"}
+    n = pg.execute("SELECT count(*) AS n FROM extraction_attempts").fetchone()
+    assert n and n["n"] == 1  # only the folded chunk's row committed
+
+
+def test_catch_up_refolds_a_document_its_chunk_reopens(
+    pg: Conn, store: ArchiveStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The chunk's fold is the whole document's, not just the new attempt's.
+
+    A settled document that a replayed sample reopens (k=1 -> k=2, agreement
+    computed) must be re-derived by the chunk that replays it — otherwise the
+    served row keeps a verdict the events no longer support and, the watermark
+    having moved past the sample, nothing re-reads it.
+    """
+    from jobhunter.l2 import runner as runner_mod
+    from jobhunter.timeutil import utcnow_precise
+
+    monkeypatch.setattr(runner_mod, "CATCH_UP_CHUNK", 1)
+    _seed_doc(pg)
+    assert run(_settings(), pg, store, engine=FakeEngine([GOOD]),
+               max_docs=1, max_usd=5.0).validated == 1
+    before = _state_row(pg)
+    assert before and before["k"] == 1 and before["agreement"] is None
+    first = from_bytes(store.get(before["chosen_attempt"]))
+    assert first.record is not None
+    dh_b = sha256_hex(f"{DOC_MD}B".encode())
+    _seed_doc(pg, dh=dh_b, markdown=f"{DOC_MD}B", uid="gh:x:2")
+    at = utcnow_precise() + timedelta(seconds=1)  # after the run's own watermark
+    sample = _attempt(  # a second slot, archived, its row lost to the crash
+        attempt_key=keys.x_attempt_key(at, DH, 2, 9), document_hash=DH, sample_slot=2,
+        attempt_no=9, record=copy.deepcopy(first.record), started_at=iso(at),
+    )
+    store.put(sample.attempt_key, to_bytes(sample))
+    later = at + timedelta(seconds=1)
+    orphan_b = _attempt(
+        attempt_key=keys.x_attempt_key(later, dh_b, 1, 1), document_hash=dh_b,
+        record=ORPHAN_RECORD, started_at=iso(later),
+    )
+    store.put(orphan_b.attempt_key, to_bytes(orphan_b))
+    with _own_connection(pg) as runner_conn, pytest.raises(RuntimeError, match="mid-scan"):
+        run(_settings(), runner_conn, _breaking_store(store, dh_b),
+            engine=FakeEngine([]), max_docs=10, max_usd=5.0)
+    pg.commit()
+    after = _state_row(pg)
+    assert after and after["k"] == 2 and after["agreement"] is not None
+
+
+def test_catch_up_heals_the_fold_its_own_death_interrupted(
+    pg: Conn, store: ArchiveStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backend killed DURING a chunk's fold is healed by the rescan.
+
+    `settle` commits the chunk's attempt rows at its [A1] boundary and only then
+    reads the archive, so a kill in that gap leaves rows committed with no
+    derived row — and the watermark now sits ON those rows, so `record_attempt`
+    answers "known" for them ever after. The rescan that the reconnect triggers
+    therefore folds every tuple in its window, not only the ones it inserted:
+    "the row was already there" says nothing about whether the fold ran.
+    """
+    from jobhunter.l2 import runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "CATCH_UP_CHUNK", 2)
+    dh_b = sha256_hex(f"{DOC_MD}B".encode())
+    _seed_doc(pg)
+    _seed_doc(pg, dh=dh_b, markdown=f"{DOC_MD}B", uid="gh:x:2")
+    for dh, secs in ((DH, (1, 2)), (dh_b, (3, 4, 5, 6))):
+        for i, sec in enumerate(secs, start=1):
+            at = datetime(2026, 8, 27, 7, 0, sec, tzinfo=UTC)
+            ok = i == len(secs)
+            store.put(*_orphan_bytes(at, dh, i, ok))
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    schema = str(schema_row["s"])
+    pg.commit()
+    runner_conn = db.connect(TEST_DSN, schema=schema)
+    pid_row = runner_conn.execute("SELECT pg_backend_pid() AS p").fetchone()
+    assert pid_row is not None
+    runner_conn.commit()
+    gets = [0]
+
+    def kill_on_third_get(op: str, key: str) -> None:
+        if op != "get" or not key.startswith(keys.X_ATTEMPTS_PREFIX):
+            return
+        gets[0] += 1
+        # 1,2 = chunk one's scan; 3 = its fold re-reading the chosen attempt,
+        # i.e. after settle's boundary commit landed doc A's rows
+        if gets[0] == 3:
+            _terminate(pg, int(pid_row["p"]))
+
+    try:
+        # max_docs=0: this is the scan's story, so no engine work follows it
+        summary = run(_settings(), runner_conn, SlowStore(store, kill_on_third_get),
+                      engine=FakeEngine([]), max_docs=0, max_usd=0.0,
+                      connect=lambda: db.connect(TEST_DSN, schema=schema))
+    finally:
+        runner_conn.close()
+    assert summary.aborted is None
+    pg.commit()
+    rows = pg.execute("SELECT document_hash, status FROM extractions").fetchall()
+    assert {r["document_hash"]: r["status"] for r in rows} == {
+        DH: "validated", dh_b: "validated",
+    }  # the interrupted document is folded too, by the rescan that followed
+
+
+def test_over_budget_attempt_is_archived_transaction_idle(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """The over-budget branch never calls an engine, so nothing on its path has
+    ended the read transaction `markdown_for`/`next_attempt_no` opened. It ends
+    that transaction itself: its archive PUT is a round trip like any other, and
+    [A1] holds for writes as well as reads."""
+    huge = "# Big\n\n" + "requirement " * 6_000
+    dh = sha256_hex(huge.encode("utf-8"))
+    _seed_doc(pg, dh=dh, markdown=huge, uid="gh:x:big")
+    seen: list[tuple[str, str, TransactionStatus]] = []
+    slow = SlowStore(store, lambda op, key: seen.append((op, key, pg.info.transaction_status)))
+    summary = run(_settings(), pg, slow, engine=FakeEngine([]), max_docs=10, max_usd=5.0)
+    assert summary.docs_attempted == 1
+    puts = [(k, s) for op, k, s in seen if op == "put" and k.startswith(keys.X_ATTEMPTS_PREFIX)]
+    assert len(puts) == 1  # the over_budget attempt object
+    assert [s for _, s in puts] == [TransactionStatus.IDLE]
+    assert [s for _, _, s in seen] == [TransactionStatus.IDLE] * len(seen)
