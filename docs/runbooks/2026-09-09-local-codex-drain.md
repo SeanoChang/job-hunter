@@ -32,6 +32,75 @@ The ingest run ends with `extract run --max-docs 0` — the documented free-work
 mode: catch-up replay and settle, zero engine calls. Its JSON summary's
 `replayed` count is the number of attempts folded in.
 
+## Which bundle a drain runs
+
+`JOB_HUNTER_L2_BUNDLE` selects the engine tuple a run extracts under, from the
+process env or `.env` like every other setting; an unregistered name fails at
+startup rather than at the first document:
+
+```bash
+JOB_HUNTER_L2_BUNDLE=v1   # default — demand-profile/v5, schema 1, transforms.VALIDATOR_VERSION
+JOB_HUNTER_L2_BUNDLE=v2   # demand-profile/v6, schema 2, validator/10 (l2/v2)
+```
+
+The tuple keys the queue, so a flip is a full re-extraction, never a resume:
+every document re-queues under the new tuple and pays a fresh model call.
+
+**The read surface does not follow the bundle yet** (verified 2026-09-10, and
+the reason cutover is not a pure `.env` edit). `views.profile_row`,
+`views.claims_view` and `pulse` all compute "the engine tuple in force" from
+the v1 module constants — `l2.prompt.PROMPT_VERSION`, `l2.runner.SCHEMA_VERSION`,
+`l2.transforms.VALIDATOR_VERSION` — not from `JOB_HUNTER_L2_BUNDLE`. So while
+the bundle is `v2`:
+
+- `q profile` / MCP `q_profile` keep serving the v1 row for any document that
+  has one, because current-tuple rows sort first and v1 *is* the current tuple
+  to that query; a document whose only row is v2 surfaces with
+  `historical: true`.
+- `q claims` filters `profile_mentions` on the v1 tuple, so mention rows
+  written by a v2 run are invisible to it.
+- `pulse`'s inline profile summaries come from `validated_profiles` scoped to
+  the v1 tuple, so v2 extractions do not appear there either.
+
+Nothing is lost — the v2 rows are in `extractions` and readable via
+`extract show` — but a cutover that expects the read surface to move with the
+writer needs those three call sites to take the tuple from the selected bundle
+first. Treat that as a prerequisite of the flip, not a follow-up.
+
+The setting governs `job-hunter extract run`, and therefore
+`scripts/local_drain_loop.py`, which shells out to it. It does NOT reach
+`scripts/local_codex_drain.py`: the outbox producer in the loop above still
+imports the v1 prompt and `transforms.VALIDATOR_VERSION` directly, so the
+CI-mediated pipeline stays on v1 until that script takes a bundle too.
+
+### The A/B gate before flipping
+
+Cutover is gated on live documents, never on the fixture benchmark alone — the
+fixtures are the twelve curated contract cases; the gate is fresh queue
+documents from the real corpus.
+
+1. Pause the drain loop. One attempt writer at a time: a competing writer both
+   contends for the advisory lock and skews the sample with `lock_held` skips.
+2. Run the sample under v2 and read the JSON summary's
+   `validated`/`quarantined`/`pending` counts:
+
+```bash
+JOB_HUNTER_L2_BUNDLE=v2 uv run job-hunter extract run --max-docs 20 --max-usd 0 -o json
+```
+
+3. Compare against v1's quarantine rate on the same documents (v1's per-tuple
+   status counts come straight out of `extractions`).
+
+**Pass** — v2 quarantine ≤ half of v1's, *and* the read path above takes its
+tuple from the bundle: set `JOB_HUNTER_L2_BUNDLE=v2` in `.env` and restart the
+drain loop; re-extraction proceeds newest-first. **Fail**: cutover halts, the
+loop stays on v1, and the quarantined documents get a quarantine-class analysis
+before anyone tries again. The switch never happens on the fixture suite alone.
+
+Rolling back is selecting the previous bundle — set `JOB_HUNTER_L2_BUNDLE`
+back to `v1` and restart. Never delete or relabel the rows the other tuple
+wrote; both tuples coexist in `extractions` by design.
+
 ## Invariants and gotchas
 
 - **Exactly one attempt writer at a time.** While this pipeline is active,
