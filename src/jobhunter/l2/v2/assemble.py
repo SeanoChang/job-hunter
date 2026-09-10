@@ -31,7 +31,7 @@ from jobhunter.l2.v2.source import (
 from jobhunter.l2.v2.types import Block
 from jobhunter.markdown import NORMALIZER_VERSION
 
-RULES_VERSION = "parsing-rules/2"
+RULES_VERSION = "parsing-rules/3"  # /3: exact-unique re-anchor in source.resolve
 SCHEMA_VERSION = "2"
 PROMPT_VERSION = "demand-profile/v6"
 ALIAS_POLICY = "aliases/1"

@@ -57,3 +57,30 @@ def test_resolve_rejects(ref: dict[str, object]) -> None:
     blocks = blocks_by_id(annotate(MD))
     with pytest.raises(RefBindError):
         resolve(ref, blocks)
+
+
+def test_reanchor_binds_a_unique_exact_match_elsewhere() -> None:
+    # parsing-rules/3: a verbatim quote citing the wrong block binds to the
+    # one block that actually contains it; ambiguity still refuses
+    md = "# Basic Qualifications:\n\n5 years of Go.\n\nNice to have: Rust."
+    blocks = blocks_by_id(annotate(md))
+    wrong = {"block_id": "b000002", "text": "Basic Qualifications:", "occurrence": 0}
+    bound = resolve(wrong, blocks)
+    assert bound["block_id"] == "b000001"
+    assert md[bound["span"][0]:bound["span"][1]] == "Basic Qualifications:"
+
+
+def test_reanchor_refuses_ambiguity_and_absence() -> None:
+    md = "# Title\n\nGo experience.\n\nGo tooling."
+    blocks = blocks_by_id(annotate(md))
+    with pytest.raises(RefBindError):  # "Go" occurs in two other blocks
+        resolve({"block_id": "b000001", "text": "Go", "occurrence": 0}, blocks)
+    with pytest.raises(RefBindError):  # absent text still refuses
+        resolve({"block_id": "b000001", "text": "Rust", "occurrence": 0}, blocks)
+
+
+def test_reanchor_never_fires_for_nonzero_occurrence() -> None:
+    md = "# T\n\nGo and Go.\n\nGo again."
+    blocks = blocks_by_id(annotate(md))
+    with pytest.raises(RefBindError):
+        resolve({"block_id": "b000003", "text": "and", "occurrence": 1}, blocks)
