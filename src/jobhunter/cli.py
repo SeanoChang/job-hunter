@@ -1062,21 +1062,23 @@ app.add_typer(extract_app, name="extract")
 
 
 def _extraction_block(settings: Settings) -> dict[str, Any] | None:
-    from jobhunter.l2.prompt import PROMPT_VERSION
-    from jobhunter.l2.runner import SCHEMA_VERSION
+    from jobhunter.l2.bundles import get_bundle
     from jobhunter.l2.state import globs_to_regex
-    from jobhunter.l2.transforms import VALIDATOR_VERSION
     from jobhunter.markdown import NORMALIZER_VERSION
     from jobhunter.store.queries import extraction_status
 
+    # the queue depth `status`/`doctor` report is the ACTIVE bundle's: a
+    # different engine tuple is a different corpus partition
+    bundle = get_bundle(settings.l2_bundle)
     try:
         conn = _db.connect(settings.require_database_url(), schema=_schema)
     except Exception:
         return None
     try:
         return extraction_status(
-            conn, prompt_version=PROMPT_VERSION, schema_version=SCHEMA_VERSION,
-            validator_version=VALIDATOR_VERSION,
+            conn, prompt_version=bundle.prompt_version,
+            schema_version=bundle.schema_version,
+            validator_version=bundle.validator_version,
             model_regex=globs_to_regex(settings.l2_models),
             normalizer_version=NORMALIZER_VERSION,
         )
@@ -1139,12 +1141,16 @@ def _extract_once(
     them differently, and only one of them owns the envelope.
     """
     from jobhunter.l2 import runner as l2_runner
+    from jobhunter.l2.bundles import get_bundle
     from jobhunter.l2.engines import EngineFatalError
 
     try:
         settings.require_l2()
+        bundle = get_bundle(settings.l2_bundle)
         conn = _db.connect(settings.require_database_url(), schema=_schema)
     except ConfigError as e:
+        raise _ExtractFailure("config", f"config error: {e}", Exit.CONFIG) from e
+    except KeyError as e:  # an unregistered bundle name is configuration, not backend
         raise _ExtractFailure("config", f"config error: {e}", Exit.CONFIG) from e
     except Exception as e:  # psycopg.OperationalError and friends
         raise _ExtractFailure("backend", f"database error: {e}", Exit.BACKEND,
@@ -1157,7 +1163,7 @@ def _extract_once(
             engine=_make_engine(settings),
             max_docs=max_docs if max_docs is not None else settings.l2_max_docs,
             max_usd=max_usd if max_usd is not None else settings.l2_max_usd,
-            only_doc=doc, dry_run=dry_run,
+            only_doc=doc, dry_run=dry_run, bundle=bundle,
             # a batch outlives a managed Postgres' idle timeout; the runner
             # replaces the dropped connection itself and commits its own work
             connect=lambda: _db.connect(settings.require_database_url(), schema=_schema),

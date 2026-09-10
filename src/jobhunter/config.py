@@ -66,6 +66,15 @@ def env_snapshot() -> dict[str, str]:
     return load_env_files(os.environ)
 
 
+# The extraction engine tuples (`l2/bundles.py`). Names live here rather than
+# behind an import so loading settings stays free of the L2 stack: _NAMES is
+# what the environment may spell, _WIRED is what `l2.bundles` registers today.
+# A name in the first list but not the second gets a teaching error, not a
+# stack trace at the first document.
+_L2_BUNDLE_NAMES = ("v1", "v2")
+_L2_BUNDLES_WIRED = ("v1",)
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     archive_url: str
@@ -76,6 +85,7 @@ class Settings:
     drop_ratio: float = 0.5
     ping_url: str | None = None
     mcp_token: str | None = None  # the bearer the hosted MCP server demands
+    l2_bundle: str = "v1"  # the engine tuple a run selects (l2/bundles.py)
     l2_engine: str = "openai-compat"
     l2_base_url: str | None = None
     l2_api_key: str | None = None
@@ -146,6 +156,16 @@ class Settings:
             raise ConfigError(
                 f"JOB_HUNTER_L2_REASONING_EFFORT must be low|medium|high|max: {effort}"
             )
+        bundle = (e.get("JOB_HUNTER_L2_BUNDLE") or "v1").strip()
+        if bundle not in _L2_BUNDLE_NAMES:
+            raise ConfigError(
+                f"JOB_HUNTER_L2_BUNDLE must be one of {'|'.join(_L2_BUNDLE_NAMES)}: {bundle}"
+            )
+        if bundle not in _L2_BUNDLES_WIRED:
+            raise ConfigError(
+                f"JOB_HUNTER_L2_BUNDLE={bundle} is a known name but no bundle is registered"
+                f" for it yet; the runner can select {'|'.join(_L2_BUNDLES_WIRED)}"
+            )
 
         def _csv(name: str) -> tuple[str, ...] | None:
             raw = e.get(name)
@@ -213,6 +233,7 @@ class Settings:
             drop_ratio=drop_ratio,
             ping_url=e.get("JOB_HUNTER_PING_URL") or None,
             mcp_token=e.get("JOB_HUNTER_MCP_TOKEN") or None,
+            l2_bundle=bundle,
             l2_engine=engine,
             l2_base_url=e.get("JOB_HUNTER_L2_BASE_URL") or None,
             l2_api_key=e.get("JOB_HUNTER_L2_API_KEY") or None,

@@ -110,6 +110,7 @@ def upsert_state(
     validator_version: str,
     state: DerivedState,
     profile: dict[str, Any] | None,
+    mentions: list[tuple[str, str, str]] | None = None,
     flags: dict[str, Any] | None = None,
     k: int = 1,
     agreement: dict[str, Any] | None = None,
@@ -123,7 +124,11 @@ def upsert_state(
     status None (pending) removes the config's row entirely.
     profile_mentions is derived from the same write: it follows the extractions
     row through every one of these deletes, and is refilled only for a validated
-    status (2026-08-26 ruling: aggregates carry what the corpus asserts)."""
+    status (2026-08-26 ruling: aggregates carry what the corpus asserts).
+    `mentions` is that projection precomputed by the caller's extraction bundle
+    ((mention, area_kind, importance) rows, already normalized); without it the
+    v1 walk over profile["demand_profile"] runs, which is what every caller that
+    predates bundles still gets."""
     config = (document_hash, prompt_version, schema_version, validator_version)
     if state.status is None:
         conn.execute(
@@ -183,13 +188,18 @@ def upsert_state(
     )
     if profile is None or state.status != "validated":
         return
-    rows: list[tuple[Any, ...]] = []
-    for area in (profile.get("demand_profile") or {}).get("areas") or []:
-        seen: dict[str, str] = {}  # casefold → first spelling, one row per skill
-        for raw in area.get("mentions") or []:
-            for mention in split_mention(raw):
-                seen.setdefault(mention.casefold(), mention)
-        rows += [(*key, m, area["kind"], area["importance"]) for m in seen.values()]
+    projected: list[tuple[str, str, str]] = []
+    if mentions is None:
+        for area in (profile.get("demand_profile") or {}).get("areas") or []:
+            seen: dict[str, str] = {}  # casefold → first spelling, one row per skill
+            for raw in area.get("mentions") or []:
+                for mention in split_mention(raw):
+                    seen.setdefault(mention.casefold(), mention)
+            projected += [(m, area["kind"], area["importance"]) for m in seen.values()]
+    else:
+        projected = list(mentions)
+    rows: list[tuple[Any, ...]] = [(*key, m, kind, importance)
+                                   for m, kind, importance in projected]
     if rows:
         with conn.cursor() as cur:
             cur.executemany(
