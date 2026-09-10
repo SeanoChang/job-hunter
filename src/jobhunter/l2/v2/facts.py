@@ -11,7 +11,9 @@ import re
 from datetime import date as _date
 from typing import Any
 
-VALIDATOR_VERSION = "10"
+# validator/13 (11/12 are v1's): casefolded mention grounding (aliases/1
+# consistency) and code-derived presence reconciliation in assemble.
+VALIDATOR_VERSION = "13"
 
 _CMP_PHRASES: list[tuple[str, str]] = [
     (r"at\s+least|a\s+minimum\s+of|minimum\s+of|minimum|no\s+less\s+than", "gte"),

@@ -10,7 +10,7 @@ from jobhunter.l2.v2.verify import verify
 
 
 def test_version_and_sha() -> None:
-    assert PROMPT_VERSION == "demand-profile/v7"
+    assert PROMPT_VERSION == "demand-profile/v8"
     assert prompt_sha() == sha256_hex(TEMPLATE.encode("utf-8"))
 
 
@@ -113,6 +113,6 @@ def test_prior_error_text_is_not_rescanned_for_placeholders() -> None:
 def test_v7_contract_lines() -> None:
     # the first live run failed 240/240 on the kind-importance rule the
     # prompt never stated; v7 states it and the block-copy discipline
-    assert PROMPT_VERSION == "demand-profile/v7"
+    assert PROMPT_VERSION == "demand-profile/v8"
     assert "Importance belongs only to qualification, employment_constraint," in TEMPLATE
     assert "copied verbatim from inside the single block" in TEMPLATE

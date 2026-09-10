@@ -31,7 +31,7 @@ from jobhunter.l2.v2.source import (
 from jobhunter.l2.v2.types import Block
 from jobhunter.markdown import NORMALIZER_VERSION
 
-RULES_VERSION = "parsing-rules/3"  # /3: exact-unique re-anchor in source.resolve
+RULES_VERSION = "parsing-rules/4"  # /3: exact-unique re-anchor; /4: presence derived from entries
 SCHEMA_VERSION = "2"
 PROMPT_VERSION = "demand-profile/v6"
 ALIAS_POLICY = "aliases/1"
@@ -39,6 +39,10 @@ ALIAS_POLICY = "aliases/1"
 # every nullable aspect of a fact entry's evidence, in schema order
 _ASPECTS = ("comparison", "unit", "currency", "component", "applicability")
 _PRESENCE_FAMILIES = ("experience", "compensation", "quantities", "dates")
+# family → presence key; verify._PRESENCE_KEY mirrors this (verify imports
+# from assemble, so the map lives here to avoid the cycle)
+_PRESENCE_KEY = {"experience": "experience", "compensation": "compensation",
+                 "quantity": "quantities", "date": "dates"}
 
 
 class AssembleError(Exception):
@@ -337,5 +341,30 @@ def assemble(
     }
     if binder.errors:
         raise AssembleError(binder.errors)
+    _reconcile_presence(record)
     record["extraction"]["candidate_hash"] = candidate_hash(record)
     return record
+
+
+def _reconcile_presence(record: dict[str, Any]) -> None:
+    """parsing-rules/4: presence states are code-derived from the entries.
+
+    The live failure class this resolves: models declare a family "stated"
+    and then fail to produce its (hard) per-aspect entries — 94 of ~230
+    verify errors on the 2026-09-10 quarantine set, all honest
+    under-extraction. Entries are proof of statedness, so code owns the
+    consistency: entries present ⇒ stated; a "stated" claim without entries
+    downgrades to `unresolved` when it carries evidence (the document says
+    it, extraction did not resolve it) and `none_found` when it does not.
+    Omission detection moves to the auditor, where the spec places semantic
+    recall — the deterministic layer never fails a record for a claim code
+    can reconcile.
+    """
+    entries = record["facts"]["entries"]
+    for family, key in _PRESENCE_KEY.items():
+        node = record["facts"]["presence"][key]
+        has_entries = any(e["family"] == family for e in entries)
+        if has_entries:
+            node["state"] = "stated"
+        elif node["state"] == "stated":
+            node["state"] = "unresolved" if node["evidence"] else "none_found"

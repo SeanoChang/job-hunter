@@ -352,7 +352,10 @@ def _check_mentions(record: dict[str, Any], report: Report) -> None:
     for i, mention in enumerate(record["mentions"]):
         path = f"mentions[{i}]"
         surface = mention["surface"]
-        if surface not in mention["evidence"]["text"]:
+        # validator/13: grounding is casefolded, matching the aliases/1 policy
+        # ("Python" grounded by evidence text "python" is the same word, not a
+        # fabrication; live class: brand names cased differently in URLs)
+        if surface.casefold() not in mention["evidence"]["text"].casefold():
             report.error("mentions", path, "mention_ungrounded",
                          surface=surface, evidence=mention["evidence"]["text"])
         expected = normalize_key(surface)

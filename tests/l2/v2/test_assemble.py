@@ -18,7 +18,7 @@ def test_assemble_binds_derives_and_validates() -> None:
                                    "inclusive_min": True, "inclusive_max": None,
                                    "unit": "month"}
     assert record["extraction"]["schema_version"] == "2"
-    assert record["extraction"]["validator_version"] == "10"
+    assert record["extraction"]["validator_version"] == "13"
     assert record["document"]["annotation_version"] == "blocks/1"
     assert record["extraction"]["candidate_hash"] == candidate_hash(record)
 
