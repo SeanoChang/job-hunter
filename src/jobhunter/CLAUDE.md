@@ -74,9 +74,34 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
   consolidation — drift report, human audit queue, refuter summary
   (`consolidate.py`). `VALIDATOR_VERSION` (see `transforms.py`) is frozen per
   version — any check or threshold change bumps it, never edits in place.
-  - `l2/v2/` — the offline v2 semantic contract (increment 1 of
-    `docs/superpowers/specs/2026-09-07-parsing-contract-v2-design.md`; not
-    wired into the runner, CLI, or MCP yet): source block annotation and
+  - **bundles** (`bundles.py`) — the six things that define an engine tuple
+    travel together as one frozen `Bundle` the runner is handed: prompt
+    version + frozen bytes + renderer, emit schema version, validator version,
+    emit→record assembly, the record verifier, and the two storage projections
+    (`profile_of` for the `extractions.profile` blob, `mention_rows` for
+    `profile_mentions`). The loop around them — ladder, breaker, caps,
+    catch-up, k-sampling, settle — names none of them. `get_bundle(name)`
+    selects by name (`JOB_HUNTER_L2_BUNDLE`, `v1` default, validated in
+    `config.py` so a typo fails at startup); `get_bundle_for_tuple(prompt,
+    schema)` is replay's inverse, so a mixed archive folds each attempt under
+    the bundle that judged it. Registered: **v1** = (`demand-profile/v5`,
+    schema `1`, `transforms.VALIDATOR_VERSION`) — today's behaviour, byte for
+    byte; **v2** = (`demand-profile/v6`, schema `2`, `validator/10`). The
+    tuple keys every attempt and every derived row, so choosing a bundle is
+    choosing a corpus partition: a flip re-queues the corpus under the new
+    tuple, and rollback is selecting the previous bundle, never deleting rows.
+    The write path follows the bundle; the **read path does not yet** —
+    `views.profile_row`, `views.claims_view` and `pulse` compute "the engine
+    tuple in force" from the v1 module constants (`l2.prompt.PROMPT_VERSION`,
+    `l2.runner.SCHEMA_VERSION`, `l2.transforms.VALIDATOR_VERSION`), so v1 rows
+    keep serving even once a validated v2 row exists for the same document.
+    Making the served tuple follow the selected bundle is open work and gates
+    any real cutover.
+  - `l2/v2/` — the v2 semantic contract
+    (`docs/superpowers/specs/2026-09-07-parsing-contract-v2-design.md`;
+    increment 1 offline modules plus the increment-2 harness wiring —
+    selectable from the runner and CLI through the v2 bundle, hosted MCP
+    unchanged): source block annotation and
     exact reference binding (`source.py`, `blocks/1`), closed enums and typed
     derivation results (`types.py`), versioned derivation grammars
     (`facts.py`, `validator/10` — quantity comparisons, money/date
@@ -88,8 +113,17 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
     mention/statement row projection (`project.py`). Schemas v2 live at
     `schemas_data/2/{emit,record}.schema.json`, served by the same
     version-parameterized loader as v1. `parsing-rules/2` and `aliases/1` are
-    the other identifiers frozen with this increment. Zero model calls, zero
-    database/archive I/O.
+    the other identifiers frozen with this increment. Wiring adds two equally
+    pure modules: `prompt.py` (`demand-profile/v6` — the spec §4 extractor text
+    over a numbered `blocks/1` listing, so the model cites block ids and exact
+    substrings and never computes offsets) and `serve.py` (what a record looks
+    like once it leaves the archive: the stored slice with its `"schema": "2"`
+    marker, the claim index the agreement gate compares, `profile_mentions`
+    rows whose importance comes from each mention's linked STATEMENT — the C04
+    fix — and a `summary()` whose keys match `pulse.profile_summary` so every
+    current renderer works unchanged). `pulse.py` and `extract show` dispatch
+    on `profile["schema"] == "2"`; storage is NOT migrated. No model calls and
+    no database/archive I/O inside `l2/v2/` itself.
 
 ## Conventions
 

@@ -46,12 +46,21 @@ dispositions of the 2026-08-17 external review:
   (offline contract) is **shipped**: `l2/v2/` pure modules, schema `2`,
   `blocks/1` source annotation, `validator/10`, the v1 floor-grammar repair
   (`validator/9`), and the twelve case contracts plus synthetic minimal
-  pairs — all no model calls, no database/archive I/O. Frozen identifiers:
+  pairs — all no model calls, no database/archive I/O.
+  `superpowers/plans/2026-09-10-v2-cutover-local.md` ships increment 2's
+  **harness slice**: the `Bundle` engine tuple, prompt `demand-profile/v6`
+  over annotated blocks, the v2 bundle end to end (emit → record → verify →
+  stored profile + statement-derived `profile_mentions`), shape-aware
+  `pulse`/`extract show`, and archive reads moved out of the write
+  transaction. Still **open** from increment 2: the `semantic-audit/v1` and
+  `semantic-repair/v1` prompts and the audit/repair loop — the deterministic
+  verifier plus the quality gate carry correctness until they land.
+  Increment 3 (persistence + explicit reads: the additive migration, the
+  richer per-claim table, v2 views in `cli_q`/`mcp`) is still design only;
+  storage is unmigrated and the hosted MCP is untouched. Frozen identifiers:
   `blocks/1`, schema `2`, `validator/9` (v1) / `validator/10` (v2),
-  `parsing-rules/2`, `aliases/1`; any further change to these bumps rather
-  than edits in place. Increments 2 (extraction-quality harness) and 3
-  (persistence + explicit reads) are still design only; no production
-  cutover yet — the runner, CLI, and MCP are untouched.
+  `demand-profile/v6`, `parsing-rules/2`, `aliases/1`; any further change to
+  these bumps rather than edits in place.
 - `superpowers/specs/2026-09-02-hosted-mcp-design.md` — **current, normative
   for the hosted read surface**: the MCP wrapper over `views.py`, static-bearer
   auth, server-side pulse cursors (schema v4 `mcp_cursors`), Cloud Run deploy
@@ -168,6 +177,23 @@ All still current as research; none define the design.
   seven synthetic minimal pairs. Frozen identifiers: `blocks/1`, schema `2`,
   `validator/9`/`validator/10`, `parsing-rules/2`, `aliases/1`. Zero model
   calls, zero database/archive I/O; the runner, CLI, and MCP are untouched.
+- `superpowers/plans/2026-09-10-v2-cutover-local.md` — parsing v2 increment 2,
+  harness slice (shipped, local): `l2/bundles.py` — the engine tuple (prompt,
+  schema, validator, assembly, verifier, both storage projections) as one
+  selectable `Bundle`, with `get_bundle_for_tuple` so a mixed archive replays
+  under the bundle that judged each attempt; `l2/v2/prompt.py`
+  (`demand-profile/v6` over a numbered `blocks/1` listing); `l2/v2/serve.py`
+  (stored slice with its `"schema": "2"` marker, `profile_mentions` rows whose
+  importance comes from the linked statement, a `summary()` matching
+  `pulse.profile_summary`'s keys); shape-aware `pulse` and `extract show`; and
+  the [A1] fix — archive GETs never hold an open write transaction. The bundle
+  is selected by `JOB_HUNTER_L2_BUNDLE` (`v1` default); the live A/B gate and
+  the local flip to `v2` are the operator procedure in
+  `runbooks/2026-09-09-local-codex-drain.md`. Not shipped with it, and a
+  prerequisite of any real flip: the read path still takes "the tuple in
+  force" from v1's module constants (`views.profile_row`,
+  `views.claims_view`, `pulse`), so serving does not follow the selected
+  bundle. No schema migration, no MCP or CI change, no GitHub activity.
 
 Not built yet: M3 alerting (attention digests via generic webhook), the
 concept linker (L3), and the workspace/tracker faces.
@@ -236,6 +262,16 @@ and a dated judge run. Its README carries the superseded banner.
   Terraform (`infra/`), never hand-run gcloud, and secret *values* never enter
   tf state; Cloudflare Containers rejected at a $5/mo baseline against Cloud
   Run's free tier.
+- 2026-09-10 — the extraction engine tuple is a named bundle
+  (`JOB_HUNTER_L2_BUNDLE`, `l2/bundles.py`), and the tuple keys the corpus
+  partition: switching bundles re-extracts rather than resumes, both tuples
+  coexist in `extractions`, and rollback is selecting the
+  previous bundle — never deleting or relabelling rows (spec §10). A cutover
+  is gated on a live A/B against the bundle in force (v2's quarantine rate at
+  most half of v1's on the same sample), run with the drain loop paused so one
+  writer holds the lock; the fixture suite alone never authorizes a flip. In
+  v2, importance belongs to a statement, never to the presentation area a
+  mention sits in — `profile_mentions` takes it from the linked statement.
 - 2026-09-04 — ingestion policy amended: official ATS APIs only widens to
   official ATS APIs and, absent one, the first-party structured JSON endpoint
   the company's own careers page calls (Workday CXS, Oracle Recruiting Cloud,
