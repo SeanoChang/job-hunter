@@ -60,10 +60,15 @@ POLL_SECONDS = 5.0
 POLL_TRIES = 60
 # GitHub stamps `createdAt` on its own clock; this machine's may sit seconds
 # ahead of it between NTP syncs. Without slack a freshly created run reads as
-# stale and the driver abandons a CI job it just paid for. Identity, not time,
-# is what keeps a previous cycle's run out: `seen` holds every id already
-# adopted, so the slack can never re-adopt one.
+# stale and the driver abandons a CI job it just paid for. Time is therefore
+# only a coarse backstop against ancient runs — identity is what actually
+# separates this dispatch's run from every other, via `seen`.
 CLOCK_SKEW = timedelta(seconds=60)
+# How far back the pre-dispatch snapshot records existing run ids. One would do
+# (the resolve poll only ever looks at the newest run), but the listing is one
+# cheap call and a few extra ids cost nothing, while a missed one costs a
+# wrongly adopted run.
+SNAPSHOT_LIMIT = 20
 # Driver-owned, inside the outbox because that is what survives between
 # invocations (the work dir may be a temp dir): the outbox-relative keys whose
 # ingest has been watched green. Never shipped, never read by anything else.
@@ -115,16 +120,53 @@ def _check(res: subprocess.CompletedProcess[str], what: str) -> subprocess.Compl
     return res
 
 
+def snapshot_runs(workflow: str, *, run: Run, seen: set[int]) -> None:
+    """Record the ids of `workflow` runs that exist now, before a dispatch adds one.
+
+    This is the whole anti-stale guarantee, and it has to happen before the
+    dispatch. Time cannot provide it: GitHub stamps `createdAt` on its own
+    clock, so a dispatch's own run must be accepted with seconds of slack — and
+    anything already inside that slack window would be accepted too. Two real
+    things sit in that window: the operator's manual `gh workflow run
+    extract-queue-dump.yml` from the runbook, and the dump a previous
+    invocation of this driver left behind when it stopped on a throttle or a
+    Ctrl-C (the loop restarts from cycle 1 with an empty `seen`). Adopting one
+    of those would watch and drain a foreign dump while the run this cycle paid
+    for went unwatched. Identity has no window: an id that existed before the
+    dispatch is not the dispatch's id.
+    """
+    res = _check(
+        run(["gh", "run", "list", f"--workflow={workflow}", "--limit", str(SNAPSHOT_LIMIT),
+             "--json", "databaseId"]),
+        "gh run list",
+    )
+    for row in json.loads(res.stdout or "[]"):
+        seen.add(int(row["databaseId"]))
+
+
+def dispatch(
+    workflow: str, inputs: Sequence[str], *, run: Run, sleep: Sleep, seen: set[int]
+) -> int:
+    """Dispatch `workflow` with `-f` inputs; return the id of the run it created."""
+    snapshot_runs(workflow, run=run, seen=seen)
+    started = utcnow()
+    argv: list[str] = ["gh", "workflow", "run", workflow]
+    for value in inputs:
+        argv += ["-f", value]
+    _check(run(argv), f"{workflow} dispatch")
+    return resolve_run(workflow, started, run=run, sleep=sleep, seen=seen)
+
+
 def resolve_run(workflow: str, after: datetime, *, run: Run, sleep: Sleep, seen: set[int]) -> int:
     """The id of the `workflow` run this dispatch created; records it in `seen`.
 
     A dispatch prints no id, so the run has to be looked up — and the lookup
-    must never adopt a run that was already there. Two guards do that. `seen`
-    rejects every id this process has already taken, which is exact: GitHub
-    never reissues one, so a run this driver watched before cannot be the one
-    the dispatch just made. `after` (the whole-second floored instant just
-    before the dispatch, less `CLOCK_SKEW`) rejects runs from before this
-    process started, where `seen` has nothing to say.
+    must never adopt a run that was already there. `seen` is what rules them
+    out, and it is exact: it holds every id the pre-dispatch snapshot saw plus
+    every id this process has already adopted, and GitHub never reissues one.
+    `after` (the whole-second floored instant just before the dispatch, less
+    `CLOCK_SKEW`) is the coarse backstop for ids no snapshot could have seen —
+    a run that surfaces in the listing late, days after it was created.
     """
     floor = after - CLOCK_SKEW
     for _ in range(POLL_TRIES):
@@ -150,12 +192,9 @@ def dump(pool: str, batch: int, workdir: Path, *, run: Run, sleep: Sleep, seen: 
     a throttle stop or a Ctrl-C) otherwise holds an earlier invocation's dump
     too, and draining that one would burn a CI run to extract nothing new.
     """
-    started = utcnow()
-    _check(
-        run(["gh", "workflow", "run", DUMP_WORKFLOW, "-f", f"count={batch}", "-f", f"pool={pool}"]),
-        "queue-dump dispatch",
+    run_id = dispatch(
+        DUMP_WORKFLOW, [f"count={batch}", f"pool={pool}"], run=run, sleep=sleep, seen=seen
     )
-    run_id = resolve_run(DUMP_WORKFLOW, started, run=run, sleep=sleep, seen=seen)
     _check(run(["gh", "run", "watch", str(run_id), "--exit-status"], capture=False),
            f"queue-dump run {run_id}")
     dest = workdir / f"dump-{run_id}"
@@ -229,12 +268,22 @@ def shipped(outbox: Path) -> set[str]:
 
 
 def record_shipped(outbox: Path, keys: Iterable[str]) -> None:
-    """Add `keys` to the ledger. Called only after an ingest ran green."""
+    """Add `keys` to the ledger, atomically. Called only after an ingest ran green.
+
+    Write-then-replace, not truncate-then-write: an unattended run is stopped
+    with Ctrl-C by design, and an interrupt in the middle of an in-place
+    rewrite leaves invalid JSON, which `shipped()` reads as "nothing shipped".
+    Nothing would be lost, but the next cycle would put the entire accumulated
+    outbox back on the wire — the linear transport this ledger exists to
+    provide, silently gone.
+    """
     path = outbox / SHIPPED_LEDGER
-    path.write_text(
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(
         json.dumps({"shipped": sorted(shipped(outbox) | set(keys))}, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    os.replace(tmp, path)
 
 
 def member_list(outbox: Path, keys: Sequence[str], dest: Path) -> Path:
@@ -292,9 +341,7 @@ def upload(
              f"{enc}#outbox.tgz.enc"]),
         "gh release create",
     )
-    started = utcnow()
-    _check(run(["gh", "workflow", "run", INGEST_WORKFLOW, "-f", f"tag={tag}"]), "ingest dispatch")
-    run_id = resolve_run(INGEST_WORKFLOW, started, run=run, sleep=sleep, seen=seen)
+    run_id = dispatch(INGEST_WORKFLOW, [f"tag={tag}"], run=run, sleep=sleep, seen=seen)
     _check(run(["gh", "run", "watch", str(run_id), "--exit-status"], capture=False),
            f"outbox-ingest run {run_id}")
     # The release holds the copy that matters; the tarballs would just grow the
@@ -367,6 +414,13 @@ def loop(args: argparse.Namespace, *, run: Run, sleep: Sleep) -> int:
 
         held = blobs(outbox)
         new = held - before
+        # The contract words this as "skip when the outbox gained no new
+        # blobs"; the gate is on *unshipped* blobs, which is the same condition
+        # for a cycle starting from a clean outbox and deliberately wider
+        # otherwise. Blobs an interrupted cycle left behind have to reach the
+        # archive too, and waiting for some later cycle to happen to write
+        # would strand them. Being wrong here costs one redundant upload — the
+        # ingest skips keys already in the archive — never an attempt.
         pending = sorted(held - shipped(outbox))
         sent = (
             upload(outbox, workdir, key, pending, run=run, sleep=sleep, seen=seen)
@@ -379,13 +433,17 @@ def loop(args: argparse.Namespace, *, run: Run, sleep: Sleep) -> int:
         # document already in the outbox — is the end of the work, not a reason
         # to buy another CI run. Without this the loop would dispatch a dump per
         # cycle forever, attempting nothing.
-        stuck = totals["attempted"] == 0 and not new
+        # A cycle that spent its whole throttle budget also attempted nothing,
+        # but its pool is untouched, not finished: calling that "no progress"
+        # would tell the operator — and any campaign script reading the log —
+        # that the backlog is done when codex was merely rate-limited.
+        stuck = code != 3 and totals["attempted"] == 0 and not new
         _log(outbox, {**base, "drained": totals["attempted"], "counts": totals["counts"],
                       "blobs": len(new), "shipped": len(pending) if sent else 0,
                       "tag": sent.tag if sent else None,
                       "ingest_run": sent.run_id if sent else None,
                       "throttled": code == 3,
-                      "note": "no progress" if stuck else None})
+                      "note": "throttled" if code == 3 else ("no progress" if stuck else None)})
         if code == 3:
             return 3
         if stuck:
