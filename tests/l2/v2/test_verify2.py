@@ -22,7 +22,7 @@ def _codes(record: dict[str, Any], markdown: str = MD) -> set[str]:
 def test_clean_record_passes(v2_record: dict[str, Any]) -> None:
     report = verify(v2_record, MD)
     assert report.findings == []
-    assert report.status == "pass" and report.validator_version == "10"
+    assert report.status == "pass" and report.validator_version == "13"
     assert report.metrics == {
         "n_statements": 1, "n_mentions": 0, "n_fact_entries": 1,
         "n_blocks": 2, "blocks_accounted": 2, "excluded_blocks": 0,

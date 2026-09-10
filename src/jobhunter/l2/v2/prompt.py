@@ -23,7 +23,7 @@ from __future__ import annotations
 from jobhunter.hashing import sha256_hex
 from jobhunter.l2.v2.source import annotate
 
-PROMPT_VERSION = "demand-profile/v7"
+PROMPT_VERSION = "demand-profile/v8"
 
 _GUARD = """\
 You are extracting a demand profile from ONE job posting document, given to \
@@ -42,6 +42,11 @@ be copied verbatim from inside the single block whose ID it cites — never
 from a neighbouring block, never spanning blocks, never reworded. Use a
 whole-block reference when appropriate. Never calculate offsets or
 normalize quotations.
+
+A quote never crosses a block boundary: evidence that continues over
+several blocks becomes one reference per block, each quoting only its own
+block's text. Presence states are reconciled against your fact entries by
+code — declare a family stated only when you also emit its entries.
 
 Importance belongs only to qualification, employment_constraint, and
 hiring_policy statements, and those three kinds always carry one — with
