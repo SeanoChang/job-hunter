@@ -10,7 +10,7 @@ from jobhunter.l2.transforms import (
 
 
 def test_registry_shape() -> None:
-    assert VALIDATOR_VERSION == "11"
+    assert VALIDATOR_VERSION == "12"
     assert set(TRANSFORMS[VALIDATOR_VERSION]) == {
         "experience_months", "compensation", "deadline",
     }
@@ -150,7 +150,7 @@ def test_compensation_code_suffixed(text: str, expected: dict[str, object] | Non
 
 
 def test_validator_version_bumped_for_the_grammar_change() -> None:
-    assert VALIDATOR_VERSION == "11"
+    assert VALIDATOR_VERSION == "12"
 
 
 # --- Workday phrasing (validator/4) -----------------------------------------
@@ -262,7 +262,7 @@ def test_experience_floor_wordings_validator9(
 
 def test_validator_version_is_9() -> None:
     # the grammar changed; stored validator/8 rows keep their meaning
-    assert VALIDATOR_VERSION == "11"
+    assert VALIDATOR_VERSION == "12"
     assert VALIDATOR_VERSION in TRANSFORMS
 
 
@@ -303,4 +303,53 @@ def test_negated_more_than_is_not_a_floor() -> None:
     ],
 )
 def test_compensation_single_amount(text: str, expected: dict[str, object] | None) -> None:
+    assert parse_compensation(text) == expected
+
+
+# --- validator/12: international compensation forms -------------------------
+# 91 quarantined compensation anchors are international forms the range
+# grammar refused: multi-character currency signs (CA$, zł, Kč, RM), "kr"
+# with DKK/SEK/NOK ambiguity resolved only through an explicit code,
+# space-thousands, a decimal-comma tail, the Unicode minus family, and a
+# period fragment inside each bound (2026-09-10 quarantine audit).
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("CA$110,200 - CA$160,200 CAD gross",
+         {"min": 110200, "max": 160200, "currency": "CAD", "period": None}),
+        ("kr539,400 – kr809,200 DKK gross",
+         {"min": 539400, "max": 809200, "currency": "DKK", "period": None}),
+        ("kr739,000 SEK - kr1,109,000 SEK",
+         {"min": 739000, "max": 1109000, "currency": "SEK", "period": None}),
+        ("zł188.400 PLN - zł282.600 PLN",
+         {"min": 188400, "max": 282600, "currency": "PLN", "period": None}),
+        ("Kč2,206,000 CZK - Kč3,308,000 CZK",
+         {"min": 2206000, "max": 3308000, "currency": "CZK", "period": None}),
+        ("639,400 - 799,300 DKK",
+         {"min": 639400, "max": 799300, "currency": "DKK", "period": None}),
+        ("DKK 53283 - DKK 66608",
+         {"min": 53283, "max": 66608, "currency": "DKK", "period": None}),
+        ("210 300.00 USD - 273 400.00 USD",
+         {"min": 210300, "max": 273400, "currency": "USD", "period": None}),
+        ("Approximately 65,000−87,500 OTE annually",
+         {"min": 65000, "max": 87500, "currency": None, "period": "year"}),
+        ("$40/hour to $65/hour", {"min": 40, "max": 65, "currency": None, "period": "hour"}),
+        ("110,000 - 200,000/year SGD",
+         {"min": 110000, "max": 200000, "currency": "SGD", "period": "year"}),
+        ("$130.600,00 to $ 209.300,00 USD per year",
+         {"min": 130600, "max": 209300, "currency": "USD", "period": "year"}),
+        ("RM2,000", {"min": 2000, "max": 2000, "currency": "MYR", "period": None}),
+        # right refusals stay refusals
+        ("competitive salaries", None),
+        ("85% paid through base salary and 15% variable compensation", None),
+        ("$M+", None),
+        ("5-10% of the time", None),
+        # regression: nothing about the US forms moves
+        ("$163,800 - $245,800 USD per year",
+         {"min": 163800, "max": 245800, "currency": "USD", "period": "year"}),
+        ("$332,200.00", {"min": 332200, "max": 332200, "currency": None, "period": None}),
+    ],
+)
+def test_compensation_international(text: str, expected: dict[str, object] | None) -> None:
     assert parse_compensation(text) == expected
