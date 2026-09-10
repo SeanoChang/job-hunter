@@ -1381,3 +1381,214 @@ def test_over_budget_attempt_is_archived_transaction_idle(
     assert len(puts) == 1  # the over_budget attempt object
     assert [s for _, s in puts] == [TransactionStatus.IDLE]
     assert [s for _, _, s in seen] == [TransactionStatus.IDLE] * len(seen)
+
+
+def _runner_scaffold(
+    pg: Conn, store: ArchiveStore, settings: Settings
+) -> tuple[Any, Any, Any]:
+    """The three objects `run()` builds around a document, without the loop."""
+    from jobhunter.l2 import runner as runner_mod
+    from jobhunter.timeutil import utcnow_precise
+
+    journal = runner_mod._Journal(store, settings.l2_models, utcnow_precise)
+    session = runner_mod._Session(pg, None, journal)
+    session.holds_lock = True
+    return journal, session, runner_mod.ExtractSummary(run_id="x-handoff")
+
+
+def test_parallel_extract_doc_hands_the_gate_on_transaction_idle(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """One document's work ends transaction-idle, before the gate is handed on.
+
+    Under the parallel drain the gate is released the instant `_extract_doc`
+    returns, and the next worker's first act on the SAME connection is archive
+    I/O — its attempt PUT, or `settle`'s GETs. A per-document commit left to the
+    caller (which only re-acquires the gate afterwards) means the handoff happens
+    with `upsert_state`'s transaction still open: idle in a transaction across a
+    network round trip, which is exactly what SQLSTATE 25P03 kills ([A1]).
+    """
+    import threading
+
+    from jobhunter.l2 import runner as runner_mod
+    from jobhunter.l2.bundles import DEFAULT_BUNDLE, get_bundle
+    from jobhunter.timeutil import utcnow_precise
+
+    _seed_doc(pg)
+    settings = _settings(JOB_HUNTER_L2_CONCURRENCY="3")
+    journal, session, summary = _runner_scaffold(pg, store, settings)
+    gate = threading.RLock()
+    result = runner_mod._extract_doc(
+        settings, session, journal, FakeEngine([GOOD]), DH, summary, 0,
+        utcnow_precise, get_bundle(DEFAULT_BUNDLE), gate,
+    )
+    assert result == ("validated", 0)
+    assert pg.info.transaction_status == TransactionStatus.IDLE
+    assert gate.acquire(blocking=False)  # and the gate really is free to take
+    gate.release()
+
+
+class _FatalThenGood:
+    """Two workers meet inside the engine; the first dies, the second answers.
+
+    The meeting point is what makes the interleaving deterministic: the survivor
+    is already past its own pre-call commit when the other worker records its
+    `engine_fatal` attempt, so the survivor's next act after re-taking the gate
+    is an archive PUT — with the dead worker's transaction whatever the runner
+    left it.
+    """
+
+    name = "fake"
+
+    def __init__(self) -> None:
+        import threading
+
+        self.barrier = threading.Barrier(2, timeout=30)
+        self.released = threading.Event()
+        self.lock = threading.Lock()
+        self.n = 0
+
+    def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
+        with self.lock:
+            self.n += 1
+            mine = self.n
+        self.barrier.wait()  # both workers are inside an engine call
+        if mine == 1:
+            raise EngineAuthError(402, "Insufficient credits")
+        assert self.released.wait(30), "the failing worker never archived its attempt"
+        return GOOD
+
+
+def test_parallel_archive_writes_are_transaction_idle_after_a_worker_dies(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """A worker that raises must not hand the gate on inside a transaction either.
+
+    Its `engine_fatal` attempt row is recorded and then the exception unwinds; if
+    that transaction is still open when the gate passes, the surviving worker's
+    attempt PUT is a round trip made from an idle-in-transaction session.
+    """
+    for i in (20, 21):
+        md = DOC_MD + f"\n\n<!-- doc {i} -->"
+        _seed_doc(pg, dh=sha256_hex(md.encode("utf-8")), markdown=md, uid=f"gh:x:{i}")
+    engine = _FatalThenGood()
+    seen: list[tuple[str, str, TransactionStatus]] = []
+
+    def watch(op: str, key: str) -> None:
+        seen.append((op, key, pg.info.transaction_status))
+        if op == "put" and key.startswith(keys.X_ATTEMPTS_PREFIX):
+            engine.released.set()
+
+    with pytest.raises(EngineFatalError):
+        run(_settings(JOB_HUNTER_L2_CONCURRENCY="2", JOB_HUNTER_L2_AUDIT_MOD="999983"),
+            pg, SlowStore(store, watch), engine=engine, max_docs=10, max_usd=5.0)
+    assert [(op, k) for op, k, s in seen if s != TransactionStatus.IDLE] == []
+
+
+def test_catch_up_heals_a_review_its_settle_committed_but_never_folded(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    """A decision `settle` committed and then failed to fold is re-derived.
+
+    `settle` lands the caller's pending `extraction_reviews` insert at its [A1]
+    boundary and only then reads the archive, so a death in that gap leaves the
+    decision COMMITTED with the derived row untouched — the review verbs and the
+    refuter both write in exactly that shape. The attempt scan cannot heal it:
+    the watermark moved past this document's attempts long ago. So the review
+    scan folds every decision whose derived row does not already post-date it,
+    not only the rows it inserted itself.
+    """
+    from jobhunter.archive.keys import x_review_key
+    from jobhunter.store import extraction as xstore
+
+    t1 = datetime(2026, 8, 27, 7, 0, tzinfo=UTC)
+    t2 = datetime(2026, 8, 27, 9, 0, tzinfo=UTC)
+    t3 = datetime(2026, 8, 27, 10, 0, tzinfo=UTC)
+    md_b = DOC_MD + "\n\n<!-- doc b -->"
+    dh_b = sha256_hex(md_b.encode("utf-8"))
+    _seed_doc(pg)
+    _seed_doc(pg, dh=dh_b, markdown=md_b, uid="gh:x:30")
+    assert run(_settings(), pg, store, engine=FakeEngine([GOOD]), max_docs=1,
+               max_usd=5.0, only_doc=DH, now=lambda: t1).validated == 1
+    # a second document moves the attempt watermark past document A entirely
+    assert run(_settings(), pg, store, engine=FakeEngine([GOOD]), max_docs=1,
+               max_usd=5.0, only_doc=dh_b, now=lambda: t2).validated == 1
+
+    event = {
+        "review_key": x_review_key(t3, DH, "flag", 1), "document_hash": DH,
+        "model": "z-ai/glm-5.2:free", "prompt_version": PROMPT_VERSION,
+        "schema_version": "1", "validator_version": VALIDATOR_VERSION, "verb": "flag",
+        "payload": None, "actor": "human", "at": t3.isoformat(),
+    }
+    store.put(event["review_key"], json.dumps(event).encode())
+    xstore.record_review(pg, **event)  # the CLI verb's shape: archive, row, settle
+
+    def boom(op: str, key: str) -> None:
+        if op == "get":
+            raise RuntimeError("the archive went away mid-settle")
+
+    from jobhunter.l2.runner import settle as l2_settle
+
+    with pytest.raises(RuntimeError, match="mid-settle"):
+        l2_settle(pg, store=SlowStore(store, boom), dh=DH, globs=("z-ai/*",),
+                  updated_at=iso(t3))
+    rows = pg.execute("SELECT count(*) AS n FROM extraction_reviews").fetchone()
+    assert rows and rows["n"] == 1  # settle's boundary committed the decision
+    before = pg.execute(
+        "SELECT status FROM extractions WHERE document_hash=%s", (DH,)
+    ).fetchone()
+    assert before and before["status"] == "validated"  # ...and never folded it
+
+    summary = run(_settings(), pg, store, engine=FakeEngine([]), max_docs=0,
+                  max_usd=0.0, now=lambda: t3 + timedelta(hours=1))
+    assert summary.replayed == 0  # nothing was missing; the fold was
+    after = pg.execute(
+        "SELECT status FROM extractions WHERE document_hash=%s", (DH,)
+    ).fetchone()
+    assert after and after["status"] == "needs_review"
+
+
+def test_catch_up_leaves_a_settled_review_alone(pg: Conn, store: ArchiveStore) -> None:
+    """A decision its derived row already post-dates is not re-folded.
+
+    Re-folding every reviewed document on every run would keep refreshing
+    `updated_at`, and `oldest_review_at` — how long the queue has really been
+    waiting — is min(updated_at) over the rows awaiting a human.
+    """
+    from jobhunter.archive.keys import x_review_key
+    from jobhunter.l2.runner import settle as l2_settle
+    from jobhunter.store import extraction as xstore
+
+    t1 = datetime(2026, 8, 27, 7, 0, tzinfo=UTC)
+    t2 = datetime(2026, 8, 27, 8, 0, tzinfo=UTC)
+    t3 = datetime(2026, 8, 27, 8, 30, tzinfo=UTC)
+    md_b = DOC_MD + "\n\n<!-- doc b -->"
+    dh_b = sha256_hex(md_b.encode("utf-8"))
+    _seed_doc(pg)
+    _seed_doc(pg, dh=dh_b, markdown=md_b, uid="gh:x:31")
+    assert run(_settings(), pg, store, engine=FakeEngine([GOOD]), max_docs=1,
+               max_usd=5.0, only_doc=DH, now=lambda: t1).validated == 1
+    event = {
+        "review_key": x_review_key(t2, DH, "flag", 1), "document_hash": DH,
+        "model": "z-ai/glm-5.2:free", "prompt_version": PROMPT_VERSION,
+        "schema_version": "1", "validator_version": VALIDATOR_VERSION, "verb": "flag",
+        "payload": None, "actor": "human", "at": t2.isoformat(),
+    }
+    store.put(event["review_key"], json.dumps(event).encode())
+    xstore.record_review(pg, **event)
+    l2_settle(pg, store, DH, ("z-ai/*",), iso(t3))
+    pg.commit()
+    # a second document carries the attempt watermark past document A, so only
+    # the review scan could touch it from here on
+    assert run(_settings(), pg, store, engine=FakeEngine([GOOD]), max_docs=1, max_usd=5.0,
+               only_doc=dh_b, now=lambda: datetime(2026, 8, 27, 9, 0, tzinfo=UTC)).validated == 1
+    settled = pg.execute(
+        "SELECT status, updated_at FROM extractions WHERE document_hash=%s", (DH,)
+    ).fetchone()
+    assert settled and settled["status"] == "needs_review"
+    run(_settings(), pg, store, engine=FakeEngine([]), max_docs=0, max_usd=0.0,
+        now=lambda: datetime(2026, 8, 27, 10, 0, tzinfo=UTC))
+    again = pg.execute(
+        "SELECT status, updated_at FROM extractions WHERE document_hash=%s", (DH,)
+    ).fetchone()
+    assert again and again["updated_at"] == settled["updated_at"]  # untouched
