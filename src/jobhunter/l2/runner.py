@@ -752,7 +752,8 @@ def _extract_doc_inner(
         return None
     summary.docs_attempted += 1
     seq = session.do(lambda c: extraction.next_attempt_no(c, dh)) - 1
-    schema = emit_schema(bundle.schema_version)
+    schema = (bundle.engine_emit_schema() if bundle.engine_emit_schema is not None
+              else emit_schema(bundle.schema_version))
     # [A1] end the transaction those two lookups opened. Everything this
     # function does next is archive traffic — the over-budget branch PUTs its
     # attempt object without ever reaching the pre-call commit below — and a PUT
@@ -944,8 +945,9 @@ def _extract_doc_inner(
                 for f in report.findings
             ]
             if report.status == "fail":
+                _rf = bundle.render_finding
                 errors = [
-                    f"{f.check}:{f.code} at {f.path}"
+                    _rf(f) if _rf is not None else f"{f.check}:{f.code} at {f.path}"
                     for f in report.findings if f.severity == "error"
                 ]
                 archive_attempt(requested_model=model, observed_model=observed,
@@ -1067,7 +1069,8 @@ def _take_samples(
             for f in report.findings
         ]
         if report.status == "fail":
-            errors = [f"{f.check}:{f.code} at {f.path}"
+            _rf = bundle.render_finding
+            errors = [_rf(f) if _rf is not None else f"{f.check}:{f.code} at {f.path}"
                       for f in report.findings if f.severity == "error"]
             archive_attempt(outcome="attribution_failed", produced=errors,
                             findings=findings, **common)

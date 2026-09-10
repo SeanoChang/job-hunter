@@ -35,11 +35,12 @@ from jobhunter.l2.prompt import PROMPT_VERSION as _V1_PROMPT_VERSION
 from jobhunter.l2.prompt import TEMPLATE as _V1_TEMPLATE
 from jobhunter.l2.prompt import prompt_sha as _v1_prompt_sha
 from jobhunter.l2.prompt import render as _v1_render
-from jobhunter.l2.report import Report
+from jobhunter.l2.report import Finding, Report
 from jobhunter.l2.transforms import VALIDATOR_VERSION as _V1_VALIDATOR_VERSION
 from jobhunter.l2.v2 import serve as _v2_serve
 from jobhunter.l2.v2.assemble import AssembleError as _V2AssembleError
 from jobhunter.l2.v2.assemble import assemble as _assemble_v2
+from jobhunter.l2.v2.emit_guard import engine_emit_schema as _v2_engine_emit_schema
 from jobhunter.l2.v2.facts import VALIDATOR_VERSION as _V2_VALIDATOR_VERSION
 from jobhunter.l2.v2.prompt import PROMPT_VERSION as _V2_PROMPT_VERSION
 from jobhunter.l2.v2.prompt import TEMPLATE as _V2_TEMPLATE
@@ -75,6 +76,12 @@ class Bundle:
     profile_of: Callable[[dict[str, Any]], dict[str, Any]]
     mention_rows: Callable[[dict[str, Any]], list[tuple[str, str, str]]]
     # (mention, area_kind, importance)
+    # engine-facing emit schema, when tighter than the stored contract (the
+    # v2 kind-importance union); None means emit_schema(schema_version).
+    engine_emit_schema: Callable[[], dict[str, Any]] | None = None
+    # how a verify Finding renders into a retry error string; None means the
+    # bare v1 form "check:code at path" (frozen v1 attempt bytes depend on it).
+    render_finding: Callable[[Finding], str] | None = None
 
 
 def _v1_profile_of(record: dict[str, Any]) -> dict[str, Any]:
@@ -115,6 +122,16 @@ _V1 = Bundle(
     mention_rows=_v1_mention_rows,
 )
 
+def _v2_render_finding(f: Finding) -> str:
+    """Retry guidance the model can act on: the code plus its detail — 
+    'importance_unexpected (kind=employer_context, importance=required)' says
+    what to change; the bare code said nothing (first live v6 run, 240/240
+    attribution failures dominated by exactly this)."""
+    detail = ", ".join(f"{k}={v}" for k, v in sorted(f.detail.items()))
+    tail = f" ({detail})" if detail else ""
+    return f"{f.check}:{f.code} at {f.path}{tail}"
+
+
 def _v2_assemble(emit: dict[str, Any], markdown: str, **kwargs: Any) -> dict[str, Any]:
     """`l2.v2.assemble` behind the runner's failure vocabulary.
 
@@ -143,6 +160,8 @@ _V2 = Bundle(
     verify=_verify_v2,
     profile_of=_v2_serve.profile_of,
     mention_rows=_v2_serve.mention_rows,
+    engine_emit_schema=_v2_engine_emit_schema,
+    render_finding=_v2_render_finding,
 )
 
 _REGISTRY: dict[str, Bundle] = {_V1.name: _V1, _V2.name: _V2}
