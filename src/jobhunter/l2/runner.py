@@ -17,6 +17,14 @@ catch-up scan, the review verbs and `extract rebuild` all fold the same
 config-scoped event streams through it, and the stored profile always comes
 from the chosen attempt's archived record, never from caller context.
 
+Archive I/O never happens inside a transaction (spec amendment [A1]). A GET is
+a network round trip, and a managed Postgres kills a session that waits on one
+with a transaction open (SQLSTATE 25P03, canary run 33666006472) — the same
+kill the engine call already commits around. So `settle` closes the read
+transaction before it fetches archived records, and `_catch_up` scans the
+archive in committed chunks of `CATCH_UP_CHUNK` keys, holding neither a
+transaction nor the chunk's bytes across the next batch.
+
 Nothing here names a prompt, a schema or a validator any more: the six things
 that define an engine tuple arrive as a `Bundle` (`l2/bundles.py`), so the
 loop — ladder, breaker, caps, catch-up, k-sampling, settle — is the same code
@@ -31,6 +39,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from itertools import batched
 from typing import Any
 
 import psycopg
@@ -68,6 +77,10 @@ MAX_DOC_CHARS = 60_000
 CONTENT_ATTEMPTS = 3
 TRANSPORT_RETRIES = 3
 BREAKER_LIMIT = 5
+# Keys per catch-up batch ([A1]): the scan's transaction and its loaded bytes
+# both end at the batch boundary. A 7k-attempt replay held ~500MB when the
+# whole scan was materialised at once.
+CATCH_UP_CHUNK = 200
 
 
 def _pinned(bundle: Bundle) -> Bundle:
@@ -139,16 +152,25 @@ class _Journal:
         return extraction.record_review(conn, **event)
 
     def replay(self, conn: Conn) -> None:
-        """Re-apply onto a fresh connection, then re-settle only what was lost."""
+        """Re-apply onto a fresh connection, then re-settle everything it wrote.
+
+        The re-settle is unconditional, not limited to the rows that were
+        actually lost: since [A1] an event row can survive a kill its derived
+        row does not — `settle` commits the caller's pending insert at its
+        archive boundary, and the fold that follows dies with the connection —
+        so "the insert was a no-op" no longer implies "its `extractions` row is
+        current". Re-settling is a pure re-derivation of rows this run touched
+        anyway, and the fold is idempotent.
+        """
         touched: set[tuple[str, str, str, str]] = set()
         for attempt in self._attempts.values():
-            if extraction.record_attempt(conn, attempt, derived_error_detail(attempt)):
-                touched.add((attempt.document_hash, attempt.prompt_version,
-                             attempt.schema_version, attempt.validator_version))
+            extraction.record_attempt(conn, attempt, derived_error_detail(attempt))
+            touched.add((attempt.document_hash, attempt.prompt_version,
+                         attempt.schema_version, attempt.validator_version))
         for event in self._reviews.values():
-            if extraction.record_review(conn, **event):
-                touched.add((event["document_hash"], event["prompt_version"],
-                             event["schema_version"], event["validator_version"]))
+            extraction.record_review(conn, **event)
+            touched.add((event["document_hash"], event["prompt_version"],
+                         event["schema_version"], event["validator_version"]))
         updated_at = iso(self._now())
         for dh, pv, sv, vv in touched:
             # the derived row died with the attempt rows: without this a run can
@@ -303,6 +325,17 @@ def settle(
         conn, dh, prompt_version=prompt_version, schema_version=schema_version,
         validator_version=validator_version,
     )
+    # [A1] The transaction ends HERE, before a single archive read. Everything
+    # between this line and `upsert_state` is archive traffic — the agreement
+    # gate loads each ok sample's record, then the chosen attempt is fetched
+    # whole — and a managed Postgres kills a backend that sits idle in a
+    # transaction across a round trip (SQLSTATE 25P03, canary run 33666006472).
+    # The commit also lands whatever the caller had pending, which is safe for
+    # the one thing a caller ever holds here: an insert-only attempt or review
+    # row, already in the archive and idempotent on its key. The write below
+    # then opens a fresh transaction, so `settle`'s own row still commits
+    # atomically with the caller's per-document commit.
+    conn.commit()
 
     # The ONE gate every fold shares (review P0-1): live settlement loads each
     # ok sample's record from its archived attempt object; rebuild passes the
@@ -355,34 +388,50 @@ def _catch_up(conn: Conn, journal: _Journal, updated_at: str) -> int:
             f"{keys.X_ATTEMPTS_PREFIX}{stamp[0:4]}/{stamp[5:7]}/"
             f"{stamp[8:10]}T{stamp[11:19].replace(':', '')}Z"
         )
+    # [A1] the scan below is archive traffic: end the watermark read's
+    # transaction before the first listing page, and end each batch's with the
+    # batch. Chunking is what makes the direct `extraction.record_*` calls safe
+    # here — a committed row cannot be rolled back by a later reconnect, which
+    # is the whole reason this scan used to write through the journal, and
+    # keeping 7k replayed attempts in it cost ~500MB besides. A reconnect
+    # mid-scan re-runs `_catch_up` whole; the batches commit in key order and
+    # keys sort chronologically, so the new watermark lands before every batch
+    # that did not commit and the rescan finds them all again.
+    conn.commit()
     replayed = 0
     touched: set[tuple[str, str, str, str]] = set()
-    for key in store.list(keys.X_ATTEMPTS_PREFIX, start_after=start_after):
-        parsed = keys.parse_x_attempt_key(key)
-        if parsed is None:
-            continue
-        if mark is not None and parsed[0] < mark:
-            continue
-        attempt = from_bytes(store.get(key))
-        # through the journal: a reconnect later in this run must not roll the
-        # replay back into the same invisibility it just healed
-        if journal.record_attempt(conn, attempt):
-            replayed += 1
-            touched.add(
-                (attempt.document_hash, attempt.prompt_version, attempt.schema_version,
-                 attempt.validator_version)
-            )
+    for batch in batched(store.list(keys.X_ATTEMPTS_PREFIX, start_after=start_after),
+                         CATCH_UP_CHUNK):
+        loaded: list[Attempt] = []
+        for key in batch:
+            parsed = keys.parse_x_attempt_key(key)
+            if parsed is None:
+                continue
+            if mark is not None and parsed[0] < mark:
+                continue
+            loaded.append(from_bytes(store.get(key)))
+        for attempt in loaded:
+            if extraction.record_attempt(conn, attempt, derived_error_detail(attempt)):
+                replayed += 1
+                touched.add(
+                    (attempt.document_hash, attempt.prompt_version, attempt.schema_version,
+                     attempt.validator_version)
+                )
+        conn.commit()
+        loaded.clear()  # the batch's bytes go with its transaction
     # review events are archived BEFORE their DB row (archive-as-truth): a crash
     # between the two must not leave a human decision unapplied until a manual
     # rebuild. The prefix is tiny (human verbs), so a full idempotent scan is fine.
-    for key in store.list(keys.X_REVIEWS_PREFIX):
-        event = json.loads(store.get(key))
-        if journal.record_review(conn, event):
-            replayed += 1
-            touched.add(
-                (event["document_hash"], event["prompt_version"], event["schema_version"],
-                 event["validator_version"])
-            )
+    for review_batch in batched(store.list(keys.X_REVIEWS_PREFIX), CATCH_UP_CHUNK):
+        events = [json.loads(store.get(key)) for key in review_batch]
+        for event in events:
+            if extraction.record_review(conn, **event):
+                replayed += 1
+                touched.add(
+                    (event["document_hash"], event["prompt_version"], event["schema_version"],
+                     event["validator_version"])
+                )
+        conn.commit()
     for dh, pv, sv, vv in touched:
         settle(conn, store, dh, globs, updated_at,
                prompt_version=pv, schema_version=sv, validator_version=vv)
@@ -652,8 +701,9 @@ def _extract_doc_inner(
             # which a managed Postgres kills with SQLSTATE 25P03 (canary run
             # 33666006472). A bare commit ends the read transaction and is a no-op
             # when nothing is pending; committing attempts early is safe (insert-only
-            # + ON CONFLICT DO NOTHING) and the per-document settle still commits
-            # atomically at the caller's ~line 375.
+            # + ON CONFLICT DO NOTHING) — `settle`'s [A1] boundary lands the last one
+            # the same way — and settle's own row still commits atomically with this
+            # document's commit in the caller.
             session.do(lambda c: c.commit())
             try:
                 def _call(p: str = prompt, m: str = model) -> EngineResult:

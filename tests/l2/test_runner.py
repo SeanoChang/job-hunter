@@ -4,11 +4,13 @@ scripted fake engine. No network, no LLM."""
 import copy
 import json
 import time
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
 import pytest
+from psycopg.pq import TransactionStatus
 
 from jobhunter.archive import keys, open_store
 from jobhunter.archive.base import ArchiveStore
@@ -1045,3 +1047,145 @@ def test_parallel_respects_the_docs_cap(pg: Conn, store: ArchiveStore) -> None:
 
 def test_concurrency_default_is_serial() -> None:
     assert _settings().l2_concurrency == 1
+
+
+# --- [A1] archive I/O never holds a transaction open ------------------------
+# A managed Postgres kills a session that sits idle IN a transaction (SQLSTATE
+# 25P03, canary run 33666006472). Every archive read is a network round trip,
+# so a GET issued inside a transaction is that kill waiting to happen. The fix
+# is structural: the connection is transaction-idle whenever the archive is
+# read, in `settle` and in the catch-up scan alike.
+
+
+class SlowStore:
+    """The archive with a hook on every touch — where a real backend stalls.
+
+    `watch(op, key)` runs BEFORE the call is served, so it observes exactly what
+    the database connection was doing while the archive was slow.
+    """
+
+    def __init__(self, inner: ArchiveStore, watch: Callable[[str, str], None]) -> None:
+        self._inner = inner
+        self._watch = watch
+
+    def put(self, key: str, data: bytes) -> bool:
+        self._watch("put", key)
+        return self._inner.put(key, data)
+
+    def get(self, key: str) -> bytes:
+        self._watch("get", key)
+        return self._inner.get(key)
+
+    def exists(self, key: str) -> bool:
+        self._watch("exists", key)
+        return self._inner.exists(key)
+
+    def list(self, prefix: str, start_after: str | None = None) -> Iterator[str]:
+        for key in self._inner.list(prefix, start_after=start_after):
+            self._watch("list", key)  # a listing page is a round trip of its own
+            yield key
+
+
+ORPHAN_RECORD = {
+    "facts": {"boilerplate_spans": []},
+    "demand_profile": {"areas": [], "interview_evaluated": []},
+}
+
+
+def _seed_orphans(store: ArchiveStore, n: int) -> None:
+    """n attempt objects in the archive that never reached the database — the
+    crash window between the archive write and its row. The last one carries a
+    record, so the fold has something to settle."""
+    for i in range(1, n + 1):
+        at = datetime(2026, 8, 27, 7, 0, i, tzinfo=UTC)
+        ok = i == n
+        orphan = _attempt(
+            attempt_key=keys.x_attempt_key(at, DH, 1, i), document_hash=DH, attempt_no=i,
+            outcome="ok" if ok else "transport",
+            observed_model="z-ai/glm-5.2:free" if ok else None,
+            record=ORPHAN_RECORD if ok else None,
+            started_at=f"2026-08-27T07:00:{i:02d}Z",
+        )
+        store.put(orphan.attempt_key, to_bytes(orphan))
+
+
+def test_settle_archive_reads_are_transaction_idle(pg: Conn, store: ArchiveStore) -> None:
+    """`settle` loads the chosen attempt's record from the archive. That GET must
+    not run inside the transaction the attempt row was written in — nor may any
+    other archive touch the drain makes on the way there."""
+    _seed_doc(pg)
+    seen: list[tuple[str, str, TransactionStatus]] = []
+    slow = SlowStore(store, lambda op, key: seen.append((op, key, pg.info.transaction_status)))
+    summary = run(_settings(), pg, slow, engine=FakeEngine([GOOD]), max_docs=10, max_usd=5.0)
+    assert summary.validated == 1
+    assert [op for op, _, _ in seen].count("get") == 1  # the chosen attempt's record
+    assert [s for _, _, s in seen] == [TransactionStatus.IDLE] * len(seen)
+    row = _state_row(pg)
+    assert row and row["status"] == "validated"  # and the fold still wrote its row
+
+
+def test_catch_up_archive_reads_are_transaction_idle(
+    pg: Conn, store: ArchiveStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The catch-up scan reads the whole orphan window out of the archive — key
+    listings and object GETs both — and settles what it replays. None of that
+    traffic may hold a transaction open, and chunking it must not make a replay
+    land twice."""
+    from jobhunter.l2 import runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "CATCH_UP_CHUNK", 2)  # five orphans -> three chunks
+    _seed_doc(pg)
+    _seed_orphans(store, 5)
+    event = {
+        "review_key": keys.x_review_key(datetime(2026, 8, 27, 8, 0, tzinfo=UTC), DH, "flag", 1),
+        "document_hash": DH, "model": "z-ai/glm-5.2:free", "prompt_version": PROMPT_VERSION,
+        "schema_version": "1", "validator_version": VALIDATOR_VERSION, "verb": "flag",
+        "payload": None, "actor": "human", "at": "2026-08-27T08:00:00Z",
+    }
+    store.put(event["review_key"], json.dumps(event).encode())
+    seen: list[tuple[str, str, TransactionStatus]] = []
+    slow = SlowStore(store, lambda op, key: seen.append((op, key, pg.info.transaction_status)))
+    summary = run(_settings(), pg, slow, engine=FakeEngine([]), max_docs=10, max_usd=5.0)
+    assert summary.replayed == 6  # five attempts and the review event
+    assert [s for _, _, s in seen] == [TransactionStatus.IDLE] * len(seen)
+    gets = [k for op, k, _ in seen if op == "get" and k.startswith(keys.X_ATTEMPTS_PREFIX)]
+    assert len(gets) == 6  # five scanned orphans, plus settle's chosen attempt
+    row = _state_row(pg)
+    assert row and row["status"] == "needs_review"  # the flagged fold, settled once
+    again = run(_settings(), pg, slow, engine=FakeEngine([]), max_docs=10, max_usd=5.0)
+    assert again.replayed == 0  # chunked commits never make a replay observable twice
+
+
+def test_catch_up_commits_each_chunk_as_it_scans(
+    pg: Conn, store: ArchiveStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Chunking is not only a memory bound: each chunk COMMITS, so the scan holds
+    no transaction across the next chunk's archive reads. An observer connection
+    watches the replayed rows appear while the scan is still running."""
+    from jobhunter.l2 import runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "CATCH_UP_CHUNK", 2)
+    schema_row = pg.execute("SELECT current_schema() AS s").fetchone()
+    assert schema_row is not None
+    _seed_doc(pg)
+    _seed_orphans(store, 5)
+    committed: list[int] = []
+
+    def watch(op: str, key: str) -> None:
+        if op != "get" or not key.startswith(keys.X_ATTEMPTS_PREFIX):
+            return
+        pg.commit()  # a fresh snapshot: what another session can see right now
+        row = pg.execute("SELECT count(*) AS n FROM extraction_attempts").fetchone()
+        pg.commit()
+        committed.append(int(row["n"]) if row else -1)
+
+    runner_conn = db.connect(TEST_DSN, schema=str(schema_row["s"]))
+    try:
+        summary = run(_settings(), runner_conn, SlowStore(store, watch),
+                      engine=FakeEngine([]), max_docs=10, max_usd=5.0)
+    finally:
+        runner_conn.close()
+    assert summary.replayed == 5
+    # chunks of two: the third and fifth GETs see the earlier chunks already
+    # committed, which a single scan-wide transaction could never show
+    assert committed[:5] == [0, 0, 2, 2, 4]
