@@ -120,18 +120,27 @@ _CODE = (
 # (b) must carry a decimal tail ("210 300.00"), the only bare space-grouped
 # shape observed in the corpus. Sign- and code-led amounts keep the
 # unguarded _AMOUNT: "kr 850 000" and "USD 210 300" are unambiguous.
-# Only the SPACE alternative is guarded: "Level 1 100 000" is lexically a
-# legal space group, so bare space amounts need a non-word left edge and a
-# decimal tail. Ungrouped, dot-grouped and comma-grouped spellings after a
-# grade token are NOT ambiguous and stay validator/11-identical — the third
-# adversarial review showed guards there flip real ranges into false
-# ceiling point-values ("Level 4 100000 - 150000 USD" → 150000–150000).
+# BARE positions do not accept space-grouped amounts AT ALL (fourth
+# adversarial review): "Level 1 100 000" is lexically a legal space group,
+# and four rounds showed every guard produces a carve, a fusion, or a
+# validator/11 regression somewhere in the cross-product. Space groups are
+# supported only where a sign or leading code anchors the left edge
+# ("kr 850 000", "USD 210 300") — those go through _AMOUNT. Bare amounts
+# are validator/11's grammar exactly, so bare-context behavior cannot
+# regress by construction. A digit right-boundary keeps a bare match from
+# ending mid-space-group and carving it ("210 300" never yields 210).
+# The residual ambiguity is precisely: a bare EXACTLY-3-digit number right
+# after digit+space ("… 2 125 USD" vs the tail of "210 300") — refused, the
+# one deliberate null-over-guess trade (v11 parsed "Level 2 125 USD"). One
+# to two digits ("25 - 35 USD"), four or more ("100000"), K-suffixed
+# ("100K"), and comma/dot-grouped amounts are unambiguous and stay. The
+# right boundary (?! ?\d) keeps any bare match from ending mid-space-group
+# ("210" out of "210 300"), the left (?<![\d.,]) from starting mid-number.
 _AMOUNT_BARE = (
-    r"(\d{1,3}(?:,\d{3})+"
-    r"|(?<![\w.,])(?<!\w\s)\d{1,3}(?: \d{3})+(?=[.,]\d{1,2})"
-    r"|\d{1,3}(?:\.\d{3})+"
-    r"|\d+)"
-    r"(?:[.,]\d{1,2})?\s*(k)?"
+    r"(?<![\d.,])"
+    r"(\d{1,3}(?:,\d{3})+|\d{1,3}(?:\.\d{3})+|\d{4,}"
+    r"|\d{1,3}(?=\s?[kK]\b)|(?<!\d )\d{3}|\d{1,2})"
+    r"(?:\.\d{1,2})?(?! ?\d)\s*(k)?"
 )
 _MONEY_CODE = re.compile(
     _AMOUNT_BARE + _PERIOD_FRAG + r"\s*" + _CODE + r"?\s*" + _SEP + r"\s*"
