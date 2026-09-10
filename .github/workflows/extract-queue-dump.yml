@@ -6,8 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       count:
-        description: "How many queued documents to dump"
+        description: "How many documents to dump"
         default: "40"
+      pool:
+        description: "queue = never-extracted; quarantined = retry pool (open postings whose current-tuple row is quarantined)"
+        default: "queue"
 permissions:
   contents: read
 jobs:
@@ -26,6 +29,7 @@ jobs:
           JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
           JOB_HUNTER_L2_MODELS: ${{ vars.JOB_HUNTER_L2_MODELS }}
           COUNT: ${{ github.event.inputs.count }}
+          POOL: ${{ github.event.inputs.pool }}
         run: |
           uv run python - <<'EOF'
           import json, os
@@ -39,11 +43,33 @@ jobs:
 
           conn = db.connect(os.environ["JOB_HUNTER_DATABASE_URL"])
           globs = tuple(os.environ["JOB_HUNTER_L2_MODELS"].split(","))
-          docs = extraction.queue(
-              conn, prompt_version=PROMPT_VERSION, schema_version=SCHEMA_VERSION,
-              validator_version=VALIDATOR_VERSION, model_regex=globs_to_regex(globs),
-              normalizer_version=NORMALIZER_VERSION, limit=int(os.environ["COUNT"]),
-          )
+          if os.environ.get("POOL") == "quarantined":
+              # retry pool: open postings whose current-tuple row is quarantined.
+              # Archived responses cannot save these (mixed failures) — they
+              # need fresh generations, which the queue never re-offers.
+              with conn.cursor() as cur:
+                  cur.execute(
+                      """
+                      SELECT DISTINCT e.document_hash
+                      FROM extractions e
+                      JOIN documents d ON d.document_hash = e.document_hash
+                      JOIN postings p ON p.current_version_hash = d.version_hash
+                      WHERE e.status = 'quarantined' AND p.status = 'open'
+                        AND e.prompt_version = %s AND e.schema_version = %s
+                        AND e.validator_version = %s
+                      ORDER BY e.document_hash
+                      LIMIT %s
+                      """,
+                      (PROMPT_VERSION, SCHEMA_VERSION, VALIDATOR_VERSION,
+                       int(os.environ["COUNT"])),
+                  )
+                  docs = [r["document_hash"] for r in cur.fetchall()]
+          else:
+              docs = extraction.queue(
+                  conn, prompt_version=PROMPT_VERSION, schema_version=SCHEMA_VERSION,
+                  validator_version=VALIDATOR_VERSION, model_regex=globs_to_regex(globs),
+                  normalizer_version=NORMALIZER_VERSION, limit=int(os.environ["COUNT"]),
+              )
           with open("queue.jsonl", "w", encoding="utf-8") as fh:
               for dh in docs:
                   md = extraction.markdown_for(conn, dh, NORMALIZER_VERSION)
