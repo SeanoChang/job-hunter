@@ -220,3 +220,15 @@ def test_settings_reject_an_unknown_bundle_name() -> None:
     with pytest.raises(ConfigError) as excinfo:
         Settings.load(_env(JOB_HUNTER_L2_BUNDLE="v9"))
     assert "v1" in str(excinfo.value)  # the teaching error names what is valid
+
+
+def test_retired_v2_prompt_folds_under_the_schema_bundle() -> None:
+    # a bumped v2 prompt leaves archived (retired-prompt, schema-2) attempts;
+    # their record shape is the schema's — never fold them under v1 shapes
+    from jobhunter.l2.bundles import DEFAULT_BUNDLE
+    from jobhunter.l2.runner import _bundle_for
+
+    b = _bundle_for("demand-profile/v7", "2")
+    assert b.name == "v2"
+    assert _bundle_for("demand-profile/v5", "1").name == "v1"
+    assert _bundle_for(None, None).name == DEFAULT_BUNDLE

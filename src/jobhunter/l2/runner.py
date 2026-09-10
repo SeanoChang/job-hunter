@@ -69,7 +69,13 @@ from jobhunter.config import Settings
 from jobhunter.l2.agreement import cohort_hook
 from jobhunter.l2.assemble import AssembleError
 from jobhunter.l2.attempts import Attempt, derived_error_detail, from_bytes, to_bytes
-from jobhunter.l2.bundles import DEFAULT_BUNDLE, Bundle, get_bundle, get_bundle_for_tuple
+from jobhunter.l2.bundles import (
+    DEFAULT_BUNDLE,
+    Bundle,
+    get_bundle,
+    get_bundle_for_tuple,
+    registered,
+)
 from jobhunter.l2.engines import (
     Engine,
     EngineFatalError,
@@ -132,6 +138,14 @@ def _bundle_for(prompt_version: str | None, schema_version: str | None) -> Bundl
     if prompt_version is not None and schema_version is not None:
         with contextlib.suppress(KeyError):
             return get_bundle_for_tuple(prompt_version, schema_version)
+        # a retired prompt version (a bumped v2 prompt, say) still has a record
+        # SHAPE, and the shape is the schema's, not the prompt's: folding a
+        # schema-2 record under v1's projections raised KeyError('demand_profile')
+        # on the first mixed-archive catch-up. Match by schema before defaulting.
+        for name in registered():
+            candidate = get_bundle(name)
+            if candidate.schema_version == schema_version:
+                return candidate
     return _pinned(get_bundle(DEFAULT_BUNDLE))
 
 
