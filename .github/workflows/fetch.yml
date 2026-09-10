@@ -79,13 +79,18 @@ jobs:
           JOB_HUNTER_L2_MAX_DOCS: ${{ vars.JOB_HUNTER_L2_MAX_DOCS || '50' }}
           JOB_HUNTER_L2_MAX_USD: ${{ vars.JOB_HUNTER_L2_MAX_USD || '0' }}
           EXTRACT_MAX_DOCS: ${{ github.event.inputs.extract_max_docs }}
+          # the real extraction off-switch: JOB_HUNTER_L2_MAX_DOCS=0 fails Settings
+          # validation before collection runs (lost hour, run 34412983679) — this
+          # routes to --no-extract before job-hunter sync is even invoked, so
+          # collection keeps running hourly with zero attempt writes.
+          JOB_HUNTER_EXTRACT_IN_FETCH: ${{ vars.JOB_HUNTER_EXTRACT_IN_FETCH }}
         run: |
           # guards are runtime, not `if:` — the secrets context is not reliably
           # available in a step-level condition. Collection runs either way; an
           # unset key only turns extraction off for this run.
           args=()
-          if [ -z "${JOB_HUNTER_L2_API_KEY}" ]; then
-            echo "extraction skipped: no JOB_HUNTER_L2_API_KEY secret set"
+          if [ -z "${JOB_HUNTER_L2_API_KEY}" ] || [ "${JOB_HUNTER_EXTRACT_IN_FETCH:-true}" = "false" ]; then
+            echo "extraction skipped: toggled off or no key"
             args=(--no-extract)
           elif [ -n "${EXTRACT_MAX_DOCS}" ]; then
             args=(--extract-max-docs "${EXTRACT_MAX_DOCS}")

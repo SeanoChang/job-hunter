@@ -63,6 +63,32 @@ def _run_sync_step(tmp_path: Path, stdout: str, code: int) -> subprocess.Complet
     )
 
 
+def _run_sync_step_recording(
+    tmp_path: Path, argv_log: Path, *, stdout: str, code: int, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """`_run_sync_step`, but the stub `uv` also appends its argv to `argv_log` —
+    for tests that must see which flags the guard actually passed, not just
+    the exit code. `env` is merged over the minimal base (PATH + a blank
+    EXTRACT_MAX_DOCS), same override shape as the inline env in `_run_sync_step`."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "uv"
+    stub.write_text(
+        f'#!/usr/bin/env bash\necho "$@" >> "{argv_log}"\n'
+        f"cat <<'PAYLOAD'\n{stdout}\nPAYLOAD\nexit {code}\n"
+    )
+    stub.chmod(0o755)
+    body = tmp_path / "step.sh"
+    body.write_text(_step("sync")["run"], encoding="utf-8")
+    run_env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "EXTRACT_MAX_DOCS": ""}
+    run_env.update(env)
+    return subprocess.run(
+        ["bash", "-eo", "pipefail", str(body)],
+        cwd=tmp_path, text=True, capture_output=True, check=False,
+        env=run_env,
+    )
+
+
 @needs_shell
 @pytest.mark.parametrize("extract", [
     {"validated": 0, "throttled": True, "breaker_abort": False},  # free-tier daily cap
@@ -99,6 +125,32 @@ def test_an_unreadable_summary_leaves_the_exit_code_alone(
 def test_a_successful_sync_exits_zero(tmp_path: Path) -> None:
     envelope = _envelope({"validated": 3, "throttled": False, "breaker_abort": False})
     assert _run_sync_step(tmp_path, envelope, 0).returncode == 0
+
+
+@needs_shell
+def test_extract_toggle_off_passes_no_extract(tmp_path: Path) -> None:
+    """JOB_HUNTER_EXTRACT_IN_FETCH="false" is the real off-switch: unlike
+    JOB_HUNTER_L2_MAX_DOCS=0, it never reaches Settings validation because the
+    guard routes it to --no-extract before job-hunter sync is even invoked."""
+    argv_log = tmp_path / "argv.txt"
+    proc = _run_sync_step_recording(
+        tmp_path, argv_log, stdout=_envelope({"validated": 0}), code=0,
+        env={"JOB_HUNTER_L2_API_KEY": "k", "JOB_HUNTER_EXTRACT_IN_FETCH": "false"},
+    )
+    assert proc.returncode == 0
+    assert "--no-extract" in argv_log.read_text()
+
+
+@needs_shell
+def test_extract_toggle_unset_leaves_extraction_on_with_a_key_present(tmp_path: Path) -> None:
+    """The variable defaults open: unset must never silently disable extraction."""
+    argv_log = tmp_path / "argv.txt"
+    proc = _run_sync_step_recording(
+        tmp_path, argv_log, stdout=_envelope({"validated": 0}), code=0,
+        env={"JOB_HUNTER_L2_API_KEY": "k"},
+    )
+    assert proc.returncode == 0
+    assert "--no-extract" not in argv_log.read_text()
 
 
 def test_keepalive_fires_on_failed_scheduled_runs() -> None:
