@@ -87,8 +87,9 @@ b000004: Salary not disclosed.
 
 Its emit, abbreviated to the fields this example teaches — a statement with
 per-aspect evidence, a mention linked to that statement, a fact entry, and
-block accounting for every block:
+block accounting for every block — is schema-valid end to end:
 {
+  "source_assessment": {"usability": "usable", "evidence": null, "note": null},
   "statements": [
     {"id": "s1", "kind": "qualification", "subject": "candidate",
      "topic": "Python experience",
@@ -96,34 +97,56 @@ block accounting for every block:
      "importance": "required",
      "importance_evidence": [
        {"block_id": "b000002", "text": "required", "occurrence": 0}],
-     "polarity": "positive", "fact_ids": ["f1"]}
+     "polarity": "positive", "polarity_evidence": null,
+     "proficiency": null, "proficiency_evidence": null,
+     "condition_ids": [], "fact_ids": ["f1"], "unresolved": []}
   ],
+  "relations": {"groups": [], "conditions": [], "example_sets": []},
+  "facts": {
+    "presence": {
+      "experience": {"state": "stated", "evidence": null},
+      "compensation": {"state": "explicitly_absent", "evidence": [
+        {"block_id": "b000004", "text": null, "occurrence": null}]},
+      "quantities": {"state": "none_found", "evidence": null},
+      "dates": {"state": "none_found", "evidence": null}
+    },
+    "entries": [
+      {"id": "f1", "family": "experience", "statement_ids": ["s1"],
+       "condition_ids": [], "scope": null, "date_kind": null,
+       "component": null,
+       "evidence": {
+         "value": [{"block_id": "b000002", "text": "3 years", "occurrence": 0}],
+         "comparison": [
+           {"block_id": "b000002", "text": "Minimum", "occurrence": 0}],
+         "unit": null, "currency": null, "component": null,
+         "applicability": null}}
+    ]
+  },
   "mentions": [
     {"id": "m1", "surface": "Python",
      "evidence": {"block_id": "b000002", "text": "Python", "occurrence": 0},
      "statement_ids": ["s1"], "role": "direct"}
   ],
-  "facts": {
-    "presence": {
-      "compensation": {"state": "explicitly_absent",
-        "evidence": [{"block_id": "b000004", "text": null, "occurrence": null}]}
-    },
-    "entries": [
-      {"id": "f1", "family": "experience", "statement_ids": ["s1"],
-       "evidence": {
-         "value": [{"block_id": "b000002", "text": "3 years", "occurrence": 0}],
-         "comparison": [{"block_id": "b000002", "text": "Minimum", "occurrence": 0}]}}
-    ]
-  },
+  "areas": [],
   "block_accounting": [
-    {"block_id": "b000001", "disposition": "context", "ref_ids": []},
-    {"block_id": "b000002", "disposition": "statements", "ref_ids": ["s1"]},
-    {"block_id": "b000003", "disposition": "context", "ref_ids": []},
-    {"block_id": "b000004", "disposition": "facts", "ref_ids": []}
+    {"block_id": "b000001", "disposition": "context", "ref_ids": [],
+     "exclusion_reason": null, "evidence": null},
+    {"block_id": "b000002", "disposition": "statements", "ref_ids": ["s1"],
+     "exclusion_reason": null, "evidence": null},
+    {"block_id": "b000002", "disposition": "facts", "ref_ids": ["f1"],
+     "exclusion_reason": null, "evidence": null},
+    {"block_id": "b000003", "disposition": "context", "ref_ids": [],
+     "exclusion_reason": null, "evidence": null},
+    {"block_id": "b000004", "disposition": "context", "ref_ids": [],
+     "exclusion_reason": null, "evidence": null}
   ]
 }
 Note "Minimum" and "3 years" are separate anchors (the comparison grammar and
-the quantity), and the absent salary is a stated fact, not a dropped block.
+the quantity). b000004 yields no statement or fact entry of its own, so its
+accounting disposition is "context", never "facts" with an empty ref_ids —
+"statements"/"facts" dispositions always cite the ids they produced. The
+absent salary is still a stated fact, not a dropped block: it is captured by
+facts.presence.compensation above, cited as explicitly_absent.
 """
 
 TEMPLATE = (
@@ -135,12 +158,25 @@ TEMPLATE = (
     + "\n"
     + _FEW_SHOT
     + "\n"
-    + "{prior_errors_block}"
     + "DOCUMENT (numbered source blocks):\n"
     + "<<<SOURCE BLOCKS\n"
     + "{source_blocks}\n"
     + "SOURCE BLOCKS>>>\n"
+    + "{prior_errors_block}"
 )
+
+# TEMPLATE split once around its two placeholders, so `render` below never
+# re-scans already-substituted text for a placeholder token. A single
+# sequential `.replace()` chain would let a literal "{source_blocks}" inside
+# a prior-error message (RefBindError quotes up to 80 chars of block text —
+# attacker-controllable on a retry) expand a second time and duplicate the
+# whole document into what was meant to be an error excerpt. Concatenating
+# static, pre-split segments makes that impossible: each substituted value is
+# placed exactly once, by position, never re-parsed for markers. The retry
+# block also sits after the closing `SOURCE BLOCKS>>>` fence, mirroring v5,
+# so document-derived retry text never lands ahead of the untrusted document.
+_TEMPLATE_HEAD, _template_rest = TEMPLATE.split("{source_blocks}", 1)
+_TEMPLATE_MID, _TEMPLATE_TAIL = _template_rest.split("{prior_errors_block}", 1)
 
 
 def prompt_sha() -> str:
@@ -165,6 +201,9 @@ def _prior_errors_block(prior_errors: list[str]) -> str:
 def render(markdown: str, prior_errors: list[str]) -> str:
     source_blocks = "\n".join(f"{b.id}: {b.text}" for b in annotate(markdown))
     return (
-        TEMPLATE.replace("{prior_errors_block}", _prior_errors_block(prior_errors))
-        .replace("{source_blocks}", source_blocks)
+        _TEMPLATE_HEAD
+        + source_blocks
+        + _TEMPLATE_MID
+        + _prior_errors_block(prior_errors)
+        + _TEMPLATE_TAIL
     )
