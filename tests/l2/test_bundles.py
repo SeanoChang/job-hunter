@@ -19,10 +19,14 @@ import pytest
 from jobhunter.archive.base import ArchiveStore
 from jobhunter.config import ConfigError, Settings
 from jobhunter.l2 import prompt as prompt_mod
+from jobhunter.l2.assemble import AssembleError
 from jobhunter.l2.assemble import assemble as assemble_v1
-from jobhunter.l2.bundles import get_bundle, get_bundle_for_tuple
+from jobhunter.l2.bundles import get_bundle, get_bundle_for_tuple, registered
 from jobhunter.l2.runner import run
 from jobhunter.l2.transforms import VALIDATOR_VERSION
+from jobhunter.l2.v2 import prompt as prompt_v6
+from jobhunter.l2.v2 import serve
+from jobhunter.l2.v2.verify import verify as verify_v2
 from jobhunter.l2.verify import verify as verify_v1
 from tests.l2.test_runner import GOOD, FakeEngine, _seed_doc, _settings, store  # noqa: F401
 
@@ -146,19 +150,47 @@ def test_the_drain_writes_the_bundles_mention_rows(
     assert written and written == sorted(get_bundle("v1").mention_rows(row["profile"]))
 
 
-def test_v2_is_not_registered_yet() -> None:
-    with pytest.raises(KeyError) as excinfo:
-        get_bundle("v2")
-    assert "v2" in str(excinfo.value)
+def test_v2_bundle_is_the_v6_engine_tuple() -> None:
+    b = get_bundle("v2")
+    assert b.name == "v2"
+    assert (b.prompt_version, b.schema_version, b.validator_version) == (
+        "demand-profile/v6",
+        "2",
+        "10",
+    )
+    assert b.template == prompt_v6.TEMPLATE
+    assert b.prompt_sha() == prompt_v6.prompt_sha()
+    assert b.render is prompt_v6.render
+    assert b.verify is verify_v2
+    assert b.profile_of is serve.profile_of
+    assert b.mention_rows is serve.mention_rows
 
 
-def test_get_bundle_for_tuple_maps_the_v1_engine_tuple() -> None:
+def test_v2_assemble_speaks_the_runners_failure_vocabulary() -> None:
+    """The runner catches ONE AssembleError to decide `attribution_failed`; the
+    v2 adapter re-raises v2's as that one, errors intact."""
+    emit = {"source_assessment": {"usability": "usable", "evidence": None, "note": None},
+            "statements": [{"id": "s1", "kind": "qualification", "subject": "candidate",
+                            "topic": "t", "evidence": [{"block_id": "b000009", "text": None,
+                                                        "occurrence": None}],
+                            "importance": "required", "importance_evidence": None,
+                            "polarity": "positive", "polarity_evidence": None,
+                            "proficiency": None, "proficiency_evidence": None,
+                            "condition_ids": [], "fact_ids": [], "unresolved": []}]}
+    with pytest.raises(AssembleError) as excinfo:
+        get_bundle("v2").assemble(emit, "Requirements\nA degree.\n", document_hash="d" * 64,
+                                  observed_model="m", at="2026-09-10T00:00:00+00:00")
+    assert any("b000009" in e for e in excinfo.value.errors)
+
+
+def test_get_bundle_for_tuple_maps_both_engine_tuples() -> None:
     assert get_bundle_for_tuple("demand-profile/v5", "1") is get_bundle("v1")
-    # a historical or not-yet-registered tuple is a KeyError, never a silent v1
-    with pytest.raises(KeyError):
-        get_bundle_for_tuple("demand-profile/v6", "2")
+    assert get_bundle_for_tuple("demand-profile/v6", "2") is get_bundle("v2")
+    # a historical or unregistered tuple is a KeyError, never a silent v1
     with pytest.raises(KeyError):
         get_bundle_for_tuple("demand-profile/v4", "1")
+    with pytest.raises(KeyError):
+        get_bundle_for_tuple("demand-profile/v6", "1")
 
 
 def _env(**extra: str) -> dict[str, str]:
@@ -170,10 +202,18 @@ def test_settings_default_to_the_v1_bundle() -> None:
     assert Settings.load(_env(JOB_HUNTER_L2_BUNDLE="v1")).l2_bundle == "v1"
 
 
-def test_settings_reject_v2_until_the_bundle_is_wired() -> None:
-    with pytest.raises(ConfigError) as excinfo:
-        Settings.load(_env(JOB_HUNTER_L2_BUNDLE="v2"))
-    assert "v2" in str(excinfo.value)
+def test_settings_accept_the_wired_v2_bundle() -> None:
+    assert Settings.load(_env(JOB_HUNTER_L2_BUNDLE="v2")).l2_bundle == "v2"
+
+
+def test_config_knows_exactly_which_bundles_are_registered() -> None:
+    """`config.py` refuses a name the registry does not carry, and it holds that
+    list itself so loading settings stays free of the L2 stack. The two lists
+    drifting apart is either a startup crash or a name silently unreachable."""
+    from jobhunter import config
+
+    assert set(config._L2_BUNDLES_WIRED) == set(registered())
+    assert set(config._L2_BUNDLE_NAMES) >= set(registered())
 
 
 def test_settings_reject_an_unknown_bundle_name() -> None:

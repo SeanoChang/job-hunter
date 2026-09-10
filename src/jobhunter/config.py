@@ -72,7 +72,7 @@ def env_snapshot() -> dict[str, str]:
 # A name in the first list but not the second gets a teaching error, not a
 # stack trace at the first document.
 _L2_BUNDLE_NAMES = ("v1", "v2")
-_L2_BUNDLES_WIRED = ("v1",)
+_L2_BUNDLES_WIRED = ("v1", "v2")
 
 
 @dataclass(frozen=True, slots=True)

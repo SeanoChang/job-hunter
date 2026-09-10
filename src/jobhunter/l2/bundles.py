@@ -29,6 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from jobhunter.l2.assemble import AssembleError
 from jobhunter.l2.assemble import assemble as _assemble_v1
 from jobhunter.l2.prompt import PROMPT_VERSION as _V1_PROMPT_VERSION
 from jobhunter.l2.prompt import TEMPLATE as _V1_TEMPLATE
@@ -36,6 +37,15 @@ from jobhunter.l2.prompt import prompt_sha as _v1_prompt_sha
 from jobhunter.l2.prompt import render as _v1_render
 from jobhunter.l2.report import Report
 from jobhunter.l2.transforms import VALIDATOR_VERSION as _V1_VALIDATOR_VERSION
+from jobhunter.l2.v2 import serve as _v2_serve
+from jobhunter.l2.v2.assemble import AssembleError as _V2AssembleError
+from jobhunter.l2.v2.assemble import assemble as _assemble_v2
+from jobhunter.l2.v2.facts import VALIDATOR_VERSION as _V2_VALIDATOR_VERSION
+from jobhunter.l2.v2.prompt import PROMPT_VERSION as _V2_PROMPT_VERSION
+from jobhunter.l2.v2.prompt import TEMPLATE as _V2_TEMPLATE
+from jobhunter.l2.v2.prompt import prompt_sha as _v2_prompt_sha
+from jobhunter.l2.v2.prompt import render as _v2_render
+from jobhunter.l2.v2.verify import verify as _verify_v2
 from jobhunter.l2.verify import verify as _verify_v1
 from jobhunter.store.extraction import split_mention
 
@@ -105,7 +115,37 @@ _V1 = Bundle(
     mention_rows=_v1_mention_rows,
 )
 
-_REGISTRY: dict[str, Bundle] = {_V1.name: _V1}
+def _v2_assemble(emit: dict[str, Any], markdown: str, **kwargs: Any) -> dict[str, Any]:
+    """`l2.v2.assemble` behind the runner's failure vocabulary.
+
+    The keyword shape already matches (`document_hash`, `observed_model`, `at`,
+    `normalizer_version`); what does not match is the exception. Each contract
+    raises its own `AssembleError`, and the runner catches one class to decide
+    `attribution_failed` and to feed `.errors` into the next prompt. Re-raising
+    v2's as v1's here keeps that decision in one place instead of teaching the
+    loop a second exception per bundle — the whole point of the abstraction.
+    """
+    try:
+        return _assemble_v2(emit, markdown, **kwargs)
+    except _V2AssembleError as exc:
+        raise AssembleError(exc.errors) from exc
+
+
+_V2 = Bundle(
+    name="v2",
+    prompt_version=_V2_PROMPT_VERSION,
+    schema_version="2",
+    validator_version=_V2_VALIDATOR_VERSION,
+    template=_V2_TEMPLATE,
+    prompt_sha=_v2_prompt_sha,
+    render=_v2_render,
+    assemble=_v2_assemble,
+    verify=_verify_v2,
+    profile_of=_v2_serve.profile_of,
+    mention_rows=_v2_serve.mention_rows,
+)
+
+_REGISTRY: dict[str, Bundle] = {_V1.name: _V1, _V2.name: _V2}
 
 
 def registered() -> tuple[str, ...]:
