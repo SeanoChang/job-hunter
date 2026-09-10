@@ -432,6 +432,72 @@ def test_extract_show_unknown_prefix_is_not_found(xenv: Path) -> None:
     assert "no document matches" in json.loads(r.stdout)["error"]["message"]
 
 
+def test_extract_show_renders_a_v1_row_unchanged(
+    xenv: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    """Regression pin (T-20260910-JD35): the v2 branch must not touch this
+    output. `xenv` already seeds a document at `DH` over `tests.l2.conftest`'s
+    `DOC_MD`, which is exactly the text `minimal_record`'s quotes are cut from."""
+    from jobhunter.l2.prompt import PROMPT_VERSION
+    from jobhunter.l2.state import DerivedState
+    from jobhunter.l2.transforms import VALIDATOR_VERSION
+    from jobhunter.store import extraction
+    from tests.l2.conftest import minimal_record
+    from tests.l2.test_runner import DH
+
+    record = minimal_record()
+    profile = {"facts": record["facts"], "demand_profile": record["demand_profile"]}
+    extraction.upsert_state(
+        pg, document_hash=DH, model="test-model", prompt_version=PROMPT_VERSION,
+        schema_version="1", validator_version=VALIDATOR_VERSION,
+        state=DerivedState("validated", None), profile=profile,
+        updated_at="2026-09-10T00:00:00Z",
+    )
+    pg.commit()
+    r = runner.invoke(cli.app, ["extract", "show", DH, "-o", "table"])
+    assert r.exit_code == 0, r.stdout + r.stderr
+    assert "facts" in r.stdout and "0–24 months (total)" in r.stdout
+    assert "areas (1)  claims (2)" in r.stdout
+    assert "[technical] Backend engineering  — required" in r.stdout
+    assert "mentions: Python" in r.stdout
+    assert "statements" not in r.stdout and "quality" not in r.stdout
+
+
+def test_extract_show_renders_a_v2_row_without_keyerror(
+    xenv: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    """`extract show` gains a v2 branch (T-20260910-JD35): statements/facts/
+    quality instead of areas/claims, reading only through `serve.summary` and
+    each statement's own fields — never the v1 `demand_profile` walk."""
+    from jobhunter.l2.state import DerivedState
+    from jobhunter.l2.v2 import serve
+    from jobhunter.store import extraction
+    from tests.l2.test_runner_v2 import seed_case
+    from tests.l2.v2.test_serve import case_record
+
+    dh = seed_case(pg, "C01")
+    record = case_record("C01")
+    profile = serve.profile_of(record)
+    extraction.upsert_state(
+        pg, document_hash=dh, model="fixture-hand-authored",
+        prompt_version="demand-profile/v6", schema_version="2", validator_version="10",
+        state=DerivedState("validated", None), profile=profile,
+        mentions=serve.mention_rows(record), updated_at="2026-09-10T00:00:00Z",
+    )
+    pg.commit()
+    r = runner.invoke(cli.app, ["extract", "show", dh, "-o", "table"])
+    assert r.exit_code == 0, r.stdout + r.stderr
+    assert "statements (1)" in r.stdout
+    assert "[qualification]" in r.stdout
+    assert "quality" in r.stdout and "search_eligible" in r.stdout
+    assert "areas (" not in r.stdout  # never the v1 walk over this shape
+
+    rj = runner.invoke(cli.app, ["extract", "show", dh, "-o", "json"])
+    assert rj.exit_code == 0, rj.stdout + rj.stderr
+    data = json.loads(rj.stdout)["data"]
+    assert data["profile"]["schema"] == "2"
+
+
 def test_reject_requires_note(xenv: Path) -> None:
     from tests.l2.test_runner import DH
 
