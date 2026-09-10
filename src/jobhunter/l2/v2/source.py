@@ -53,6 +53,24 @@ def resolve(ref: dict[str, Any], blocks: dict[str, Block]) -> dict[str, Any]:
         )
     starts = find_occurrences(block.text, text)
     if not starts:
+        # parsing-rules/3: exact-unique re-anchor. The dominant live failure
+        # class is a verbatim quote carrying a neighbouring block's id (section
+        # headings cited against the statements under them). When the exact
+        # text occurs in EXACTLY one block document-wide, the reference binds
+        # there — deterministic, no normalization, no edit distance; anything
+        # ambiguous (0 or 2+ blocks) still refuses. The record stores the
+        # corrected block id: where the text actually is.
+        if occurrence == 0:
+            hits = [
+                (b, found)
+                for b in blocks.values()
+                if (found := find_occurrences(b.text, text))
+            ]
+            if len(hits) == 1 and len(hits[0][1]) == 1:
+                hit_block, found = hits[0]
+                s = hit_block.span[0] + found[0]
+                return {"block_id": hit_block.id, "text": text,
+                        "span": [s, s + len(text)], "occurrence": 0}
         raise RefBindError(f"{block.id}: not a literal substring: {text[:80]!r}")
     if not 0 <= occurrence < len(starts):
         raise RefBindError(

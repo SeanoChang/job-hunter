@@ -84,6 +84,31 @@ def _fact_entry_variants(entry: dict[str, Any]) -> list[dict[str, Any]]:
     return variants
 
 
+def _accounting_variants(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """excluded ⇒ exclusion_reason present; statements/facts ⇒ ref_ids
+    non-empty; context/unresolved ⇒ reason null (verify accounting checks)."""
+    null = {"type": "null"}
+    reasons = [r for r in entry["properties"]["exclusion_reason"]["enum"] if r is not None]
+    ref_ids = entry["properties"]["ref_ids"]
+    shapes = [
+        {"disposition": {"type": "string", "enum": ["excluded"]},
+         "exclusion_reason": {"type": "string", "enum": reasons},
+         "ref_ids": ref_ids},
+        {"disposition": {"type": "string", "enum": ["statements", "facts"]},
+         "exclusion_reason": null,
+         "ref_ids": dict(copy.deepcopy(ref_ids), minItems=1)},
+        {"disposition": {"type": "string", "enum": ["context", "unresolved"]},
+         "exclusion_reason": null,
+         "ref_ids": ref_ids},
+    ]
+    variants = []
+    for shape in shapes:
+        v = copy.deepcopy(entry)
+        v["properties"].update(copy.deepcopy(shape))
+        variants.append(v)
+    return variants
+
+
 def engine_emit_schema() -> dict[str, Any]:
     schema = copy.deepcopy(emit_schema("2"))
     schema["$defs"]["statement"] = {
@@ -91,5 +116,8 @@ def engine_emit_schema() -> dict[str, Any]:
     }
     schema["$defs"]["fact_entry"] = {
         "anyOf": _fact_entry_variants(schema["$defs"]["fact_entry"])
+    }
+    schema["$defs"]["accounting_entry"] = {
+        "anyOf": _accounting_variants(schema["$defs"]["accounting_entry"])
     }
     return schema
