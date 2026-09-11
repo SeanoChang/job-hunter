@@ -164,7 +164,9 @@ _V2 = Bundle(
     mention_rows=_v2_serve.mention_rows,
     engine_emit_schema=_v2_engine_emit_schema,
     render_finding=_v2_render_finding,
-    agreement_f1_min=0.70,
+    # stays at the field default 0.80: the 2026-09-11 analysis showed the
+    # borderline-F1 review cases include real importance/polarity conflicts,
+    # and recalibration without adjudicated examples only relabels the queue
 )
 
 _REGISTRY: dict[str, Bundle] = {_V1.name: _V1, _V2.name: _V2}

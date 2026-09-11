@@ -31,7 +31,9 @@ from jobhunter.l2.v2.source import (
 from jobhunter.l2.v2.types import Block
 from jobhunter.markdown import NORMALIZER_VERSION
 
-RULES_VERSION = "parsing-rules/5"  # /3 re-anchor · /4 derived presence · /5 typographic tiers
+# /3 re-anchor · /4 derived presence · /5 typo tiers · /6 emphasis fold and
+# code-owned single-occurrence selection
+RULES_VERSION = "parsing-rules/6"
 SCHEMA_VERSION = "2"
 PROMPT_VERSION = "demand-profile/v6"
 ALIAS_POLICY = "aliases/1"

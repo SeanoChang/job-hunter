@@ -23,7 +23,7 @@ from __future__ import annotations
 from jobhunter.hashing import sha256_hex
 from jobhunter.l2.v2.source import annotate
 
-PROMPT_VERSION = "demand-profile/v8"
+PROMPT_VERSION = "demand-profile/v9"
 
 _GUARD = """\
 You are extracting a demand profile from ONE job posting document, given to \
@@ -42,6 +42,11 @@ be copied verbatim from inside the single block whose ID it cites — never
 from a neighbouring block, never spanning blocks, never reworded. Use a
 whole-block reference when appropriate. Never calculate offsets or
 normalize quotations.
+
+Quotes carry the document's Markdown exactly: keep **bold**, _italic_,
+backticks, links and backslashes character for character inside the quoted
+text. Occurrence indexes are zero-based and count within the cited block
+only.
 
 A quote never crosses a block boundary: evidence that continues over
 several blocks becomes one reference per block, each quoting only its own

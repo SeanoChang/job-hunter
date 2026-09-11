@@ -39,7 +39,7 @@ Conn = psycopg.Connection[dict[str, Any]]
 CASES = pathlib.Path(__file__).parent / "v2" / "cases"
 GLOBS = ("z-ai/*",)
 MODEL = "z-ai/glm-5.2:free"
-V2_TUPLE = ("demand-profile/v8", "2", "14")
+V2_TUPLE = ("demand-profile/v9", "2", "15")
 
 
 def source(case: str) -> str:
@@ -114,7 +114,7 @@ def test_the_v2_prompt_and_schema_are_archived_write_once(
     seed_case(pg, "C01")
     run(v2_settings(), pg, store, engine=FakeEngine([result(emit_of("C01"))]),
         max_docs=10, max_usd=5.0)
-    assert store.exists(keys.x_prompt_key("demand-profile/v8"))
+    assert store.exists(keys.x_prompt_key("demand-profile/v9"))
     assert store.exists(keys.x_schema_key("2"))
     attempt = attempts_in(store)[0]
     assert attempt.outcome == "ok"
