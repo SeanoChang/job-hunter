@@ -39,7 +39,7 @@ Conn = psycopg.Connection[dict[str, Any]]
 CASES = pathlib.Path(__file__).parent / "v2" / "cases"
 GLOBS = ("z-ai/*",)
 MODEL = "z-ai/glm-5.2:free"
-V2_TUPLE = ("demand-profile/v8", "2", "13")
+V2_TUPLE = ("demand-profile/v8", "2", "14")
 
 
 def source(case: str) -> str:

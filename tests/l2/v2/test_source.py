@@ -84,3 +84,25 @@ def test_reanchor_never_fires_for_nonzero_occurrence() -> None:
     blocks = blocks_by_id(annotate(md))
     with pytest.raises(RefBindError):
         resolve({"block_id": "b000003", "text": "and", "occurrence": 1}, blocks)
+
+
+def test_typographic_tiers_bind_document_bytes() -> None:
+    # parsing-rules/5: the model normalizes typography; the document is truth
+    md = "# T\n\nWe’re committed to fair hiring.\n\nBody text."
+    blocks = blocks_by_id(annotate(md))
+    bound = resolve(
+        {"block_id": "b000002", "text": "We're committed to fair hiring.", "occurrence": 0},
+        blocks,
+    )
+    assert bound["text"] == "We’re committed to fair hiring."
+    assert md[bound["span"][0]:bound["span"][1]] == bound["text"]
+
+
+def test_lenient_mentions_bind_first_casefold_match() -> None:
+    md = "# Senior Engineer\n\nzendesk builds support software.\n\nzendesk is remote."
+    blocks = blocks_by_id(annotate(md))
+    with pytest.raises(RefBindError):  # strict path: ambiguous casefold
+        resolve({"block_id": "b000001", "text": "Zendesk", "occurrence": 0}, blocks)
+    bound = resolve({"block_id": "b000001", "text": "Zendesk", "occurrence": 0},
+                    blocks, lenient=True)
+    assert bound["block_id"] == "b000002" and bound["text"] == "zendesk"

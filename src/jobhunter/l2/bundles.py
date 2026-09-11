@@ -82,6 +82,8 @@ class Bundle:
     # how a verify Finding renders into a retry error string; None means the
     # bare v1 form "check:code at path" (frozen v1 attempt bytes depend on it).
     render_finding: Callable[[Finding], str] | None = None
+    # the agreement gate's F1 calibration for this bundle's claim granularity
+    agreement_f1_min: float = 0.80
 
 
 def _v1_profile_of(record: dict[str, Any]) -> dict[str, Any]:
@@ -162,6 +164,7 @@ _V2 = Bundle(
     mention_rows=_v2_serve.mention_rows,
     engine_emit_schema=_v2_engine_emit_schema,
     render_finding=_v2_render_finding,
+    agreement_f1_min=0.70,
 )
 
 _REGISTRY: dict[str, Bundle] = {_V1.name: _V1, _V2.name: _V2}

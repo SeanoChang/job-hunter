@@ -378,7 +378,10 @@ def settle(
         loaded = from_bytes(store.get(a.attempt_key))
         return active.profile_of(loaded.record) if loaded.record is not None else None
 
-    state = derive_state(attempts, reviews, globs, cohort_hook(_archived_record))
+    state = derive_state(
+        attempts, reviews, globs,
+        cohort_hook(_archived_record, f1_min=active.agreement_f1_min),
+    )
     chosen = {a.attempt_key: a for a in attempts}.get(state.chosen_attempt or "")
     model_col = (
         (chosen.observed_model if chosen else None)
@@ -1015,7 +1018,14 @@ def _take_samples(
     the outcome. A transport failure leaves that slot without a record — the
     agreement hook reads that as sample_failed. Returns "throttled" to abort
     the batch, else None (the caller settles)."""
-    for slot in (2, 3):
+    # one transport retry per slot: a codex flake leaves the slot without a
+    # record, the agreement hook reads that as sample_failed, and the whole
+    # cohort demotes to needs_review — the largest human-queue class on the
+    # 2026-09-11 quarantine set. A retried flake usually completes; a slot
+    # that fails transport twice stays empty and demotes honestly.
+    slots: list[tuple[int, bool]] = [(2, False), (3, False)]
+    while slots:
+        slot, retried = slots.pop(0)
         t0 = now()
         prompt = bundle.render(markdown, [])
         session.do(lambda c: c.commit())  # transaction-idle while the model runs
@@ -1035,6 +1045,8 @@ def _take_samples(
                             outcome="transport", raw_response=None, fed=[],
                             produced=[str(exc)], ladder_exhausted=False,
                             started_at=t0, sample_slot=slot)
+            if not retried:
+                slots.insert(0, (slot, True))
             continue
         except (EngineModelNotFound, EngineFatalError) as exc:
             archive_attempt(requested_model=model, observed_model=None,
