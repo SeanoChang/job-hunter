@@ -28,6 +28,8 @@ IMPORTANCE_MIN = 0.90
 
 def cohort_hook(
     records_of: Callable[[Any], Mapping[str, Any] | None],
+    *,
+    f1_min: float = F1_MIN,
 ) -> Callable[[list[Any], int], tuple[bool, str, dict[str, Any]]]:
     """The one agreement gate every fold shares (architecture review P0-1/P0-2:
     live settlement and rebuild replay must derive identically, and an
@@ -56,13 +58,13 @@ def cohort_hook(
                 "pair_f1": {},
                 "required_importance_agreement": None,
                 "negation_disagreements": 0,
-                "thresholds": {"jaccard": JACCARD_MIN, "f1": F1_MIN,
+                "thresholds": {"jaccard": JACCARD_MIN, "f1": f1_min,
                                "importance": IMPORTANCE_MIN},
                 "failures": ["sample_failed"],
                 "medoid": 0,
             }
             return (False, medoid_key, report)
-        result = agree([rec for _, rec in resolved])
+        result = agree([rec for _, rec in resolved], f1_min=f1_min)
         report = dict(result.report)
         report["k"] = slots_attempted
         if slots_attempted > len(resolved):
@@ -149,8 +151,13 @@ def _align(xs: list[_Claim], ys: list[_Claim]) -> list[tuple[int, int]]:
     return pairs
 
 
-def agree(samples: Sequence[Mapping[str, Any]]) -> AgreementResult:
-    """The §4.5 gate over k samples of one document, in slot order."""
+def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> AgreementResult:
+    """The §4.5 gate over k samples of one document, in slot order.
+
+    `f1_min` is the bundle's calibration: 0.80 for v1's coarse area/claim
+    sets; v2's deliberately finer statements vary more span-to-span while
+    agreeing semantically, so its bundle carries 0.70 (validator/14).
+    Negation stays zero-tolerance regardless."""
     if len(samples) < 2:
         raise ValueError("agreement needs at least two samples")
     claim_sets = [_claims(s) for s in samples]
@@ -180,7 +187,7 @@ def agree(samples: Sequence[Mapping[str, Any]]) -> AgreementResult:
     imp_agreement = (required_agree / required_pairs) if required_pairs else 1.0
 
     failures: list[str] = []
-    if mean_f1 < F1_MIN:
+    if mean_f1 < f1_min:
         failures.append("f1")
     if imp_agreement < IMPORTANCE_MIN:
         failures.append("importance")
@@ -200,7 +207,7 @@ def agree(samples: Sequence[Mapping[str, Any]]) -> AgreementResult:
         "pair_f1": {f"{a}-{b}": f1 for (a, b), f1 in sorted(pair_f1.items())},
         "required_importance_agreement": imp_agreement,
         "negation_disagreements": negation_splits,
-        "thresholds": {"jaccard": JACCARD_MIN, "f1": F1_MIN, "importance": IMPORTANCE_MIN},
+        "thresholds": {"jaccard": JACCARD_MIN, "f1": f1_min, "importance": IMPORTANCE_MIN},
         "failures": failures,
         "medoid": medoid,
     }

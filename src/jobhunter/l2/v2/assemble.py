@@ -31,7 +31,7 @@ from jobhunter.l2.v2.source import (
 from jobhunter.l2.v2.types import Block
 from jobhunter.markdown import NORMALIZER_VERSION
 
-RULES_VERSION = "parsing-rules/4"  # /3: exact-unique re-anchor; /4: presence derived from entries
+RULES_VERSION = "parsing-rules/5"  # /3 re-anchor · /4 derived presence · /5 typographic tiers
 SCHEMA_VERSION = "2"
 PROMPT_VERSION = "demand-profile/v6"
 ALIAS_POLICY = "aliases/1"
@@ -79,12 +79,12 @@ class _Binder:
         self.blocks = blocks
         self.errors: list[str] = []
 
-    def ref(self, path: str, value: Any) -> dict[str, Any] | None:
+    def ref(self, path: str, value: Any, *, lenient: bool = False) -> dict[str, Any] | None:
         if not isinstance(value, dict):
             self.errors.append(f"{path}: expected a reference object")
             return None
         try:
-            return resolve(value, self.blocks)
+            return resolve(value, self.blocks, lenient=lenient)
         except RefBindError as exc:
             self.errors.append(f"{path}: {exc.message}")
             return None
@@ -242,7 +242,7 @@ def _mention(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, Any
     return {
         "id": node.get("id"),
         "surface": surface,
-        "evidence": binder.ref(f"mentions[{index}].evidence", node.get("evidence")),
+        "evidence": binder.ref(f"mentions[{index}].evidence", node.get("evidence"), lenient=True),
         "statement_ids": list(node.get("statement_ids") or []),
         "role": node.get("role"),
         "normalized_key": normalize_key(surface if isinstance(surface, str) else ""),

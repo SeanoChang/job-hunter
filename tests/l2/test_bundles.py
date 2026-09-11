@@ -156,7 +156,7 @@ def test_v2_bundle_is_the_v6_engine_tuple() -> None:
     assert (b.prompt_version, b.schema_version, b.validator_version) == (
         "demand-profile/v8",
         "2",
-        "13",
+        "14",
     )
     assert b.template == prompt_v6.TEMPLATE
     assert b.prompt_sha() == prompt_v6.prompt_sha()
