@@ -106,3 +106,32 @@ def test_lenient_mentions_bind_first_casefold_match() -> None:
     bound = resolve({"block_id": "b000001", "text": "Zendesk", "occurrence": 0},
                     blocks, lenient=True)
     assert bound["block_id"] == "b000002" and bound["text"] == "zendesk"
+
+
+def test_emphasis_fold_binds_original_bytes() -> None:
+    # parsing-rules/6: quotes that dropped the document's markers still bind,
+    # and the span covers the original bytes, markers included
+    md = "# T\n\nbuilding and maintaining **Workday FIN Reporting & Analytics** at scale."
+    blocks = blocks_by_id(annotate(md))
+    bound = resolve(
+        {"block_id": "b000002",
+         "text": "building and maintaining Workday FIN Reporting & Analytics",
+         "occurrence": 0},
+        blocks,
+    )
+    # the span covers the document's bytes for the matched characters —
+    # interior markers included, trailing markers (after the last matched
+    # character) naturally excluded
+    assert bound["text"] == "building and maintaining **Workday FIN Reporting & Analytics"
+    assert md[bound["span"][0]:bound["span"][1]] == bound["text"]
+
+
+def test_single_occurrence_slip_is_owned_by_code() -> None:
+    # parsing-rules/6: a block with exactly one occurrence makes any emitted
+    # index a labeling slip; two occurrences still refuse a bad index
+    md = "# T\n\n3+ years of Go required.\n\nGo and Go again."
+    blocks = blocks_by_id(annotate(md))
+    bound = resolve({"block_id": "b000002", "text": "3+ years", "occurrence": 1}, blocks)
+    assert bound["occurrence"] == 0
+    with pytest.raises(RefBindError):
+        resolve({"block_id": "b000003", "text": "Go", "occurrence": 5}, blocks)

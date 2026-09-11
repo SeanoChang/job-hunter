@@ -13,9 +13,11 @@ from typing import Any
 
 # validator/13 (11/12 are v1's): casefolded mention grounding (aliases/1
 # consistency) and code-derived presence reconciliation in assemble.
-# validator/14: typographic-tier binding (parsing-rules/5), F1 gate 0.70
-# for v2 statement granularity, transport-retried sample slots.
-VALIDATOR_VERSION = "14"
+# validator/14: typographic-tier binding (parsing-rules/5), transport-retried
+# sample slots. validator/15: emphasis-fold binding and code-owned occurrence
+# (parsing-rules/6), sample content-repair budget; the v2 F1 gate returns to
+# 0.80 pending an adjudicated comparator calibration (2026-09-11 analysis).
+VALIDATOR_VERSION = "15"
 
 _CMP_PHRASES: list[tuple[str, str]] = [
     (r"at\s+least|a\s+minimum\s+of|minimum\s+of|minimum|no\s+less\s+than", "gte"),

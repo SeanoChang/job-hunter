@@ -9,8 +9,8 @@ def q(dimension, comparison, lo, hi, inc_lo, inc_hi, unit):
             "unit": unit}
 
 
-def test_validator_version_is_14() -> None:
-    assert VALIDATOR_VERSION == "14"
+def test_validator_version_is_15() -> None:
+    assert VALIDATOR_VERSION == "15"
 
 
 @pytest.mark.parametrize(

@@ -105,6 +105,8 @@ BREAKER_LIMIT = 5
 # both end at the batch boundary. A 7k-attempt replay held ~500MB when the
 # whole scan was materialised at once.
 CATCH_UP_CHUNK = 200
+# content attempts per k-sample slot (slot 1 keeps CONTENT_ATTEMPTS)
+SAMPLE_CONTENT_ATTEMPTS = 2
 
 
 def _pinned(bundle: Bundle) -> Bundle:
@@ -1023,11 +1025,16 @@ def _take_samples(
     # cohort demotes to needs_review — the largest human-queue class on the
     # 2026-09-11 quarantine set. A retried flake usually completes; a slot
     # that fails transport twice stays empty and demotes honestly.
-    slots: list[tuple[int, bool]] = [(2, False), (3, False)]
+    # bounded content repair for samples (2026-09-11 analysis): all 26 failed
+    # extra samples were attribution failures, and slots 2/3 got a single
+    # unrepaired shot while slot 1 had three fed-back attempts — hard documents
+    # were compared against fresh outputs and demoted as "incomplete". Each
+    # slot now gets SAMPLE_CONTENT_ATTEMPTS with the same error feedback.
+    slots: list[tuple[int, bool, int, list[str]]] = [(2, False, 1, []), (3, False, 1, [])]
     while slots:
-        slot, retried = slots.pop(0)
+        slot, retried, content_no, prior_errors = slots.pop(0)
         t0 = now()
-        prompt = bundle.render(markdown, [])
+        prompt = bundle.render(markdown, prior_errors)
         session.do(lambda c: c.commit())  # transaction-idle while the model runs
         try:
             def _call(p: str = prompt, m: str = model) -> EngineResult:
@@ -1046,7 +1053,7 @@ def _take_samples(
                             produced=[str(exc)], ladder_exhausted=False,
                             started_at=t0, sample_slot=slot)
             if not retried:
-                slots.insert(0, (slot, True))
+                slots.insert(0, (slot, True, content_no, prior_errors))
             continue
         except (EngineModelNotFound, EngineFatalError) as exc:
             archive_attempt(requested_model=model, observed_model=None,
@@ -1058,11 +1065,17 @@ def _take_samples(
         observed = result.observed_model
         common: dict[str, Any] = {
             "requested_model": model, "observed_model": observed,
-            "raw_response": result.raw_text, "fed": [], "ladder_exhausted": False,
+            "raw_response": result.raw_text, "fed": list(prior_errors),
+            "ladder_exhausted": False,
             "started_at": t0, "sample_slot": slot,
             "tokens": (result.input_tokens, result.output_tokens),
             "cost": result.cost_usd,
         }
+
+        def _content_retry(errors: list[str], *, _slot: int = slot,
+                           _retried: bool = retried, _n: int = content_no) -> None:
+            if _n < SAMPLE_CONTENT_ATTEMPTS:
+                slots.insert(0, (_slot, _retried, _n + 1, errors))
         if not model_matches(observed, settings.l2_models):
             archive_attempt(outcome="model_rejected",
                             produced=[f"observed model {observed!r} outside globs"],
@@ -1075,11 +1088,13 @@ def _take_samples(
                 raise ValueError("top level is not an object")
             emit = normalize_emit(emit, bundle.schema_version)
         except ValueError as exc:
-            archive_attempt(outcome="schema_invalid",
-                            produced=[f"response is not valid JSON: {exc}"], **common)
+            errors = [f"response is not valid JSON: {exc}"]
+            archive_attempt(outcome="schema_invalid", produced=errors, **common)
+            _content_retry(errors)
             continue
         if schema_errors := validate_emit(emit, bundle.schema_version):
             archive_attempt(outcome="schema_invalid", produced=schema_errors, **common)
+            _content_retry(schema_errors)
             continue
         try:
             record = bundle.assemble(emit, markdown, document_hash=dh,
@@ -1087,6 +1102,7 @@ def _take_samples(
                                      observed_model=observed, at=iso(t0))
         except AssembleError as exc:
             archive_attempt(outcome="attribution_failed", produced=exc.errors, **common)
+            _content_retry(exc.errors)
             continue
         report = bundle.verify(record, markdown)
         findings = [
@@ -1100,6 +1116,7 @@ def _take_samples(
                       for f in report.findings if f.severity == "error"]
             archive_attempt(outcome="attribution_failed", produced=errors,
                             findings=findings, **common)
+            _content_retry(errors)
             continue
         archive_attempt(outcome="ok", produced=[], findings=findings,
                         record=record, **common)

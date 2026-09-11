@@ -971,7 +971,9 @@ def test_sampling_failed_sample_demotes_to_needs_review(
     _seed_doc(pg)
     bad = EngineResult(raw_text="not json", observed_model="z-ai/glm-5.2:free",
                        input_tokens=4, output_tokens=1, cost_usd=0.0)
-    engine = FakeEngine([GOOD, bad, GOOD])
+    # the failing slot gets one repaired retry (SAMPLE_CONTENT_ATTEMPTS);
+    # demotion requires the retry to fail too
+    engine = FakeEngine([GOOD, bad, bad, GOOD])
     summary = run(_settings(JOB_HUNTER_L2_AUDIT_MOD="1"), pg, store, engine=engine,
                   max_docs=10, max_usd=5.0)
     row = _state_row(pg)

@@ -76,6 +76,49 @@ def _unique_global(blocks: dict[str, Block], text: str,
             "occurrence": 0}
 
 
+_EMPHASIS_CHARS = frozenset("*_")
+
+
+def _fold_with_map(s: str) -> tuple[str, list[int]]:
+    """parsing-rules/6: typo-fold + casefold with Markdown emphasis marks
+    dropped, keeping an index map back into the original string. Models strip
+    `**`/`_` from inside quotes; the document's bytes (markers included) are
+    what the bound span must cover."""
+    out: list[str] = []
+    idx: list[int] = []
+    for i, ch in enumerate(s):
+        if ch in _EMPHASIS_CHARS:
+            continue
+        out.append(_typo(ch).casefold())
+        idx.append(i)
+    return "".join(out), idx
+
+
+def _emphasis_unique(blocks: dict[str, Block], text: str,
+                     only: Block | None) -> dict[str, Any] | None:
+    """Unique match under the emphasis+typo+case fold — in one block when
+    `only` is given, else document-wide. Returns the ORIGINAL byte span."""
+    needle, _ = _fold_with_map(text)
+    if not needle:
+        return None
+    hits: list[tuple[Block, int, int]] = []
+    for b in ([only] if only is not None else list(blocks.values())):
+        hay, idx = _fold_with_map(b.text)
+        found = find_occurrences(hay, needle)
+        for pos in found:
+            start = idx[pos]
+            end = idx[pos + len(needle) - 1] + 1
+            hits.append((b, start, end))
+        if len(hits) > 1:
+            return None
+    if len(hits) != 1:
+        return None
+    block, start, end = hits[0]
+    return {"block_id": block.id, "text": block.text[start:end],
+            "span": [block.span[0] + start, block.span[0] + end],
+            "occurrence": 0}
+
+
 def _first_global(blocks: dict[str, Block], text: str) -> dict[str, Any] | None:
     """First typographic+casefold occurrence in document order — the lenient
     tier reserved for mention evidence, where grounding needs existence, not
@@ -133,15 +176,31 @@ def resolve(ref: dict[str, Any], blocks: dict[str, Block],
             bound = _unique_global(blocks, text, fold=True)
             if bound is not None:
                 return bound
+            # parsing-rules/6: the emphasis fold — quotes that dropped the
+            # document's **bold**/_italic_ markers; span covers the original
+            # bytes, markers included
+            bound = _emphasis_unique(blocks, text, only=block)
+            if bound is not None:
+                return bound
+            bound = _emphasis_unique(blocks, text, only=None)
+            if bound is not None:
+                return bound
             if lenient:
                 bound = _first_global(blocks, text)
                 if bound is not None:
                     return bound
         raise RefBindError(f"{block.id}: not a literal substring: {text[:80]!r}")
     if not 0 <= occurrence < len(starts):
-        raise RefBindError(
-            f"{block.id}: occurrence {occurrence} of {text[:80]!r}; block has {len(starts)}"
-        )
+        # parsing-rules/6: code owns occurrence selection when it is
+        # unambiguous — a block holding exactly one occurrence makes any
+        # emitted index a labeling slip, not a different referent
+        if len(starts) == 1:
+            occurrence = 0
+        else:
+            raise RefBindError(
+                f"{block.id}: occurrence {occurrence} of {text[:80]!r}; "
+                f"block has {len(starts)}"
+            )
     s = block.span[0] + starts[occurrence]
     return {"block_id": block.id, "text": text, "span": [s, s + len(text)],
             "occurrence": occurrence}
