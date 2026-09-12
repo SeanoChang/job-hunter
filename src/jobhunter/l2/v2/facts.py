@@ -23,7 +23,11 @@ from typing import Any
 # count gate `search_eligible` without demoting a structurally valid record.
 # Publication follows settlement: only a `validated` record can be eligible,
 # so a clean audit never publishes a candidate a reviewer parked or rejected.
-VALIDATOR_VERSION = "16"
+# validator/17: assemble rejects control characters (other than \n\t) in any
+# emitted string — codex smuggled a NUL into a statement topic (2026-09-12,
+# doc 3ad988f4) and the record crossed every check to die at the jsonb
+# boundary; now it is a content error the retry loop hands back to the model.
+VALIDATOR_VERSION = "17"
 
 _CMP_PHRASES: list[tuple[str, str]] = [
     (r"at\s+least|a\s+minimum\s+of|minimum\s+of|minimum|no\s+less\s+than", "gte"),

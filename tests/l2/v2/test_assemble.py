@@ -18,7 +18,7 @@ def test_assemble_binds_derives_and_validates() -> None:
                                    "inclusive_min": True, "inclusive_max": None,
                                    "unit": "month"}
     assert record["extraction"]["schema_version"] == "2"
-    assert record["extraction"]["validator_version"] == "16"
+    assert record["extraction"]["validator_version"] == "17"
     assert record["document"]["annotation_version"] == "blocks/1"
     assert record["extraction"]["candidate_hash"] == candidate_hash(record)
 
@@ -51,3 +51,24 @@ def test_all_binding_errors_collected() -> None:
     with pytest.raises(AssembleError) as exc:
         assemble(emit, MD, document_hash=DOC_HASH, observed_model="m", at=AT)
     assert len(exc.value.errors) == 2
+
+
+def test_a_control_character_in_any_emitted_string_is_a_content_error() -> None:
+    """validator/17: codex emitted "…at global\\u0000" into a statement topic
+    (2026-09-12 campaign, doc 3ad988f4); assemble accepted it and the record
+    crashed at the jsonb boundary (Postgres cannot store NUL in text). The
+    boundary that owns emit content is assemble: a control character other
+    than newline/tab in ANY emitted string is a content error, so the retry
+    loop hands it back to the model instead of the store finding it."""
+    emit = make_emit()
+    emit["statements"][0]["topic"] = "high-throughput services at global\x00"
+    with pytest.raises(AssembleError) as exc:
+        assemble(emit, MD, document_hash=DOC_HASH, observed_model="m", at=AT)
+    assert any("control character" in e and "topic" in e for e in exc.value.errors)
+
+
+def test_newlines_and_tabs_in_emitted_strings_stay_legal() -> None:
+    emit = make_emit()
+    emit["statements"][0]["topic"] = "line one\nline\ttwo"
+    record = assemble(emit, MD, document_hash=DOC_HASH, observed_model="m", at=AT)
+    assert record["statements"][0]["topic"] == "line one\nline\ttwo"

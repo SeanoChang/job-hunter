@@ -48,7 +48,7 @@ Conn = psycopg.Connection[dict[str, Any]]
 CASES = pathlib.Path(__file__).parent / "v2" / "cases"
 GLOBS = ("z-ai/*",)
 MODEL = "z-ai/glm-5.2:free"
-V2_TUPLE = ("demand-profile/v9", "2", "16")
+V2_TUPLE = ("demand-profile/v9", "2", "17")
 # C04's three certifications, as `profile_mentions` rows once an audit clears
 # the record: the importance is the linked STATEMENT's, not the area's.
 C04_ROWS = [

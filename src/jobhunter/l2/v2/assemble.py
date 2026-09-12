@@ -47,6 +47,26 @@ _PRESENCE_KEY = {"experience": "experience", "compensation": "compensation",
                  "quantity": "quantities", "date": "dates"}
 
 
+_LEGAL_CONTROLS = frozenset("\n\t")
+
+
+def _scan_control_chars(path: str, node: Any, errors: list[str]) -> None:
+    """Collect every emitted string carrying a control character other than
+    newline/tab. Document text cannot contain them (md/1 normalizes), so any
+    such byte is model-fabricated content no consumer downstream can store."""
+    if isinstance(node, str):
+        bad = sorted({c for c in node if ord(c) < 0x20 and c not in _LEGAL_CONTROLS})
+        if bad:
+            shown = ",".join(f"U+{ord(c):04X}" for c in bad)
+            errors.append(f"{path}: control character {shown} in emitted string")
+    elif isinstance(node, dict):
+        for k, v in node.items():
+            _scan_control_chars(f"{path}.{k}", v, errors)
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            _scan_control_chars(f"{path}[{i}]", v, errors)
+
+
 class AssembleError(Exception):
     def __init__(self, errors: list[str]) -> None:
         super().__init__(f"{len(errors)} resolution error(s)")
@@ -287,6 +307,12 @@ def assemble(
     Raises AssembleError carrying every binding failure at once.
     """
     binder = _Binder(blocks_by_id(annotate(markdown)))
+    # validator/17: emit strings must not smuggle control characters into the
+    # record — codex emitted "…at global<NUL>" into a topic (2026-09-12) and
+    # the NUL crossed assemble untouched, crashing only at the jsonb boundary
+    # (Postgres cannot store NUL in text). Rejected HERE so the content-retry
+    # loop hands the defect back to the model with its path.
+    _scan_control_chars("emit", emit, binder.errors)
     assessment = emit.get("source_assessment") or {}
     relations = emit.get("relations") or {}
     facts = emit.get("facts") or {}
