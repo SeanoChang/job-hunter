@@ -1,13 +1,12 @@
 name: fetch
-# Schedule removed 2026-09-10 (owner instruction: no scheduled workflows;
-# collection runs locally). Manual dispatch only.
+# Collection-only since 2026-09-11 (owner instruction): archive ATS payloads
+# to R2 and advance the Neon store — never L2. Extraction runs locally
+# (docs/runbooks/2026-09-09-local-codex-drain.md); the archive is truth and
+# extraction is recomputable from it at any time.
 on:
+  schedule:
+    - cron: "23 */6 * * *"
   workflow_dispatch:
-    inputs:
-      extract_max_docs:
-        description: "Documents to extract this run (0 skips extraction)"
-        required: false
-        default: ""
 
 concurrency:
   group: fetch
@@ -34,22 +33,14 @@ jobs:
       - run: uv python install 3.12
       - run: uv sync --frozen --no-dev
       # Secrets are scoped to the steps that need them, never job-wide.
-      # One `sync` runs the whole choreography in the CI-critical order: drain the
-      # manifests a previous run archived but could not ingest (so the watermark
-      # never advances past them), fetch every board, then extract within budget.
-      # No continue-on-error: sync already downgrades an extraction failure to
-      # data["extract"]["error"] and exits 0 — collection is irreplaceable, while
-      # extraction is recomputable from the archive at any time. It exits 6 only
-      # when collection itself failed or the extraction engine is stalled, and the
-      # script below sorts those two apart: a stall is a warning, collection is red.
-      # L2 extraction lives here rather than in a second cron: a separate schedule
-      # is a second thing that can die silently (durability doc §1). It takes its
-      # own advisory lock (job2), so it can never collide with ingestion's.
+      # One `sync --no-extract` runs collection in the CI-critical order: drain
+      # the manifests a previous run archived but could not ingest (so the
+      # watermark never advances past them), then fetch every board. Collection
+      # is irreplaceable; nothing here may be downgraded or skipped.
       - name: sync
         # Must track the job timeout above, less teardown margin: at 45 the step
         # was axed one millisecond after printing a fully green envelope
-        # (2026-09-06, run 34014403704) once 138 boards + the hourly extract
-        # pushed past it.
+        # (2026-09-06, run 34014403704) once 138 boards pushed past it.
         timeout-minutes: 100
         env:
           JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
@@ -58,73 +49,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
           JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
-          JOB_HUNTER_L2_ENGINE: openai-compat
-          JOB_HUNTER_L2_BASE_URL: ${{ vars.JOB_HUNTER_L2_BASE_URL || 'https://openrouter.ai/api/v1' }}
-          # the OpenAI platform key; JOB_HUNTER_L2_API_KEY holds the OpenRouter one
-          JOB_HUNTER_L2_API_KEY: ${{ secrets.JOB_HUNTER_L2_OPENAI_API_KEY }}
-          JOB_HUNTER_L2_MODEL_CANDIDATES: ${{ vars.JOB_HUNTER_L2_MODEL_CANDIDATES || 'z-ai/glm-5.2:free' }}
-          JOB_HUNTER_L2_MODELS: ${{ vars.JOB_HUNTER_L2_MODELS || 'z-ai/*' }}
-          # provider knobs merged into the request body (e.g. reasoning_effort,
-          # max_completion_tokens for OpenAI reasoning models)
-          JOB_HUNTER_L2_EXTRA_BODY: ${{ vars.JOB_HUNTER_L2_EXTRA_BODY }}
-          # OpenRouter reports usage.cost; direct providers do not, so the cost
-          # cap needs prices (USD per 1M tokens: in,out)
-          JOB_HUNTER_L2_PRICE: ${{ vars.JOB_HUNTER_L2_PRICE }}
-          # "false" turns off strict json_schema mode (OpenAI rejects our
-          # optional-property schema under strict; the validator stays the gate)
-          JOB_HUNTER_L2_SCHEMA_STRICT: ${{ vars.JOB_HUNTER_L2_SCHEMA_STRICT }}
-          # free tiers cap daily requests and the ladder can spend 3 calls per
-          # document, so the default stays well under 1,000 req/day
-          JOB_HUNTER_L2_MAX_DOCS: ${{ vars.JOB_HUNTER_L2_MAX_DOCS || '50' }}
-          JOB_HUNTER_L2_MAX_USD: ${{ vars.JOB_HUNTER_L2_MAX_USD || '0' }}
-          EXTRACT_MAX_DOCS: ${{ github.event.inputs.extract_max_docs }}
-          # the real extraction off-switch: JOB_HUNTER_L2_MAX_DOCS=0 fails Settings
-          # validation before collection runs (lost hour, run 34412983679) — this
-          # routes to --no-extract before job-hunter sync is even invoked, so
-          # collection keeps running hourly with zero attempt writes.
-          JOB_HUNTER_EXTRACT_IN_FETCH: ${{ vars.JOB_HUNTER_EXTRACT_IN_FETCH }}
-        run: |
-          # guards are runtime, not `if:` — the secrets context is not reliably
-          # available in a step-level condition. Collection runs either way; an
-          # unset key only turns extraction off for this run.
-          args=()
-          if [ -z "${JOB_HUNTER_L2_API_KEY}" ] || [ "${JOB_HUNTER_EXTRACT_IN_FETCH:-true}" = "false" ]; then
-            echo "extraction skipped: toggled off or no key"
-            args=(--no-extract)
-          elif [ -n "${EXTRACT_MAX_DOCS}" ]; then
-            args=(--extract-max-docs "${EXTRACT_MAX_DOCS}")
-          fi
-          code=0
-          uv run job-hunter sync "${args[@]}" | tee summary.json || code=$?
-          # sync exits 6 for two very different things. An extraction-only stall
-          # (free-tier daily cap → throttled, or the model breaker) is routine on an
-          # hourly cron and recomputable from the archive, so it must not fail the run
-          # that guards collection — the job the old extract step's continue-on-error
-          # did — nor skip the keepalive below. Collection failures (ingest gaps, fetch
-          # errors) still go red: their extract block carries skipped_reason, never
-          # these keys, and an unreadable summary leaves the exit code alone.
-          stalled=$(jq -r '(.data.extract.throttled // false) or (.data.extract.breaker_abort // false)' summary.json 2>/dev/null || true)
-          if [ "$code" -eq 6 ] && [ "$stalled" = "true" ]; then
-            echo "::warning::extraction stalled (throttled or breaker tripped); collection succeeded"
-            code=0
-          fi
-          exit "$code"
-      # Weekly consolidation rides the hourly schedule instead of its own cron
-      # (a second scheduler is a second thing that dies silently): the verb
-      # no-ops while the newest artifact is under a week old, so at most one
-      # run a week actually emits. Never fails the job that guards collection.
-      - name: consolidate
-        if: always()
-        continue-on-error: true
-        timeout-minutes: 5
-        env:
-          JOB_HUNTER_ARCHIVE_URL: ${{ vars.JOB_HUNTER_ARCHIVE_URL }}
-          AWS_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          JOB_HUNTER_DATABASE_URL: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
-        run: uv run job-hunter extract consolidate
+        run: uv run job-hunter sync --no-extract | tee summary.json
       - name: status
         if: always()
         env:
