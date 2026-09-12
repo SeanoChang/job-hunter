@@ -1,0 +1,39 @@
+# Dump canonical documents (version_hash, normalizer_version, document_hash,
+# markdown) for an explicit hash list, as an artifact. Read-only against the
+# store; used to recover sources for documents whose postings closed before
+# the local corpus existed (local extraction needs the md/1 text).
+name: docs-dump
+on:
+  workflow_dispatch:
+    inputs:
+      hashes:
+        description: "Comma-separated document hashes"
+        required: true
+permissions:
+  contents: read
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: dump
+        env:
+          DSN: ${{ secrets.JOB_HUNTER_DATABASE_URL }}
+          HASHES: ${{ github.event.inputs.hashes }}
+        run: |
+          # the hash list arrives as one comma-separated line; quote each for SQL
+          in_list=$(printf '%s' "$HASHES" | tr -d ' ' | tr ',' '\n' \
+            | grep -E '^[0-9a-f]{64}$' | sed "s/.*/'&'/" | paste -sd, -)
+          [ -n "$in_list" ] || { echo "no valid hashes"; exit 2; }
+          psql "$DSN" -P pager=off -t -A -c "
+            SELECT row_to_json(t) FROM (
+              SELECT version_hash, normalizer_version, document_hash, markdown
+              FROM jobhunter.documents
+              WHERE document_hash IN ($in_list)
+            ) t;" > documents.jsonl
+          wc -l documents.jsonl
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: documents-${{ github.run_id }}
+          path: documents.jsonl
+          retention-days: 3
