@@ -46,12 +46,17 @@ the scan inserted it.
 Nothing here names a prompt, a schema or a validator any more: the six things
 that define an engine tuple arrive as a `Bundle` (`l2/bundles.py`), so the
 loop — ladder, breaker, caps, catch-up, k-sampling, settle — is the same code
-whichever contract is being extracted under.
+whichever contract is being extracted under. A bundle that carries a semantic
+audit phase (spec §4) gets one more step in the same shape: `_audit_candidate`
+runs after the samples and BEFORE `settle`, archives its artifact under the
+candidate attempt it audited, and settlement reads it back out of the archive.
+A bundle without one (v1) skips the step and folds exactly as it always has.
 """
 
 from __future__ import annotations
 
 import contextlib
+import gzip
 import json
 import threading
 from collections.abc import Callable
@@ -86,7 +91,14 @@ from jobhunter.l2.engines import (
 )
 from jobhunter.l2.prompt import PROMPT_VERSION
 from jobhunter.l2.schemas import emit_schema, normalize_emit, validate_emit
-from jobhunter.l2.state import DerivedState, derive_state, globs_to_regex, model_matches
+from jobhunter.l2.state import (
+    AuditView,
+    DerivedState,
+    Review,
+    derive_state,
+    globs_to_regex,
+    model_matches,
+)
 from jobhunter.l2.transforms import VALIDATOR_VERSION
 from jobhunter.markdown import NORMALIZER_VERSION
 from jobhunter.store import db, extraction
@@ -328,6 +340,155 @@ def _ensure_write_once(store: ArchiveStore, bundle: Bundle) -> None:
         )
 
 
+@dataclass(frozen=True)
+class _ArchivedAudit:
+    """One archived `semantic-audit/v1` artifact, as `state.AuditView` sees it."""
+
+    semantics: str
+    completeness: str
+    blocking: int
+
+
+#: what a dimension may say in an artifact; anything else reads as `error`
+_AUDIT_DIMENSIONS = ("no_findings", "findings", "error")
+
+
+def _audit_bytes(artifact: dict[str, Any]) -> bytes:
+    return gzip.compress(
+        json.dumps(artifact, ensure_ascii=False, sort_keys=True).encode("utf-8"), mtime=0
+    )
+
+
+def _audit_hook(store: ArchiveStore) -> Callable[[str], AuditView | None]:
+    """Settlement's probe into the audit phase's output (spec §5).
+
+    A derived key and one `exists`, never a table: the artifact lives at
+    `x_audit_key(candidate_attempt)`, so the live drain, the catch-up scan and
+    `extract rebuild` read the same answer for the same candidate, no migration
+    exists to go wrong, and replaying an audited archive costs zero model calls.
+
+    Nothing an artifact can say makes a missing or damaged audit a pass: an
+    absent key is `None` (`not_checked` in the fold), and a dimension this
+    reader does not recognise — a truncated write, a future vocabulary, a
+    field that never made it — is `error` (spec §4: invalid audit output
+    yields `audit_error`, not a pass).
+    """
+
+    def hook(attempt_key: str) -> AuditView | None:
+        key = keys.x_audit_key(attempt_key)
+        if not store.exists(key):
+            return None
+        artifact = json.loads(gzip.decompress(store.get(key)))
+        artifact = artifact if isinstance(artifact, dict) else {}
+        blocking = artifact.get("blocking")
+        return _ArchivedAudit(
+            semantics=_dimension(artifact.get("semantics")),
+            completeness=_dimension(artifact.get("completeness")),
+            blocking=blocking if isinstance(blocking, int) and blocking is not True else 0,
+        )
+
+    return hook
+
+
+def _dimension(value: Any) -> str:
+    return str(value) if value in _AUDIT_DIMENSIONS else "error"
+
+
+def _settled(record: dict[str, Any], state: DerivedState) -> dict[str, Any]:
+    """The chosen candidate's record, carrying the verdict this fold reached.
+
+    The stored profile has to describe the record AFTER settlement: the audit
+    phase owns `semantics`/`completeness`, the cohort owns `sampling`, the
+    review stream owns `human_review` and the lifecycle, and eligibility is
+    derived from all of them at once. None of that exists when `assemble` seals
+    a candidate — every one of them is an output of THIS fold — so it travels
+    to the bundle's projections as data, under one reserved key.
+
+    Data, and not a second projection argument, because only the bundle knows
+    whether its contract has a quality object at all: v1 has none and its
+    projections never look for the key, v2 re-derives its seven dimensions from
+    it (`l2/v2/serve.SETTLEMENT`, read by `serve.quality_of`). The copy is
+    shallow and the key is consumed by the projections, so neither the archived
+    record nor the stored blob ever carries it.
+    """
+    return {
+        **record,
+        # the name is `l2/v2/serve.SETTLEMENT`; spelled literally here so the
+        # generic loop keeps importing no contract-specific module
+        "settlement": {
+            "lifecycle": state.status,
+            "sampling": state.sampling,
+            "semantics": state.semantics,
+            "completeness": state.completeness,
+            # blocking findings PLUS blocking unresolved questions: spec §6
+            # gates on "no blocking findings or blocking unresolved fields"
+            "blocking": state.blocking,
+            "human_review": state.human_review,
+        },
+    }
+
+
+def _fold(
+    conn: Conn,
+    store: ArchiveStore,
+    dh: str,
+    globs: tuple[str, ...],
+    active: Bundle,
+    prompt_version: str,
+    schema_version: str,
+    validator_version: str,
+) -> tuple[list[Attempt], list[Review], DerivedState]:
+    """This document's events under one engine tuple, folded through the one
+    shared gate — and the [A1] boundary that ends the read transaction.
+
+    `settle` and the audit phase both derive through here, which is what makes
+    the candidate the runner audits the candidate settlement publishes: one
+    agreement implementation, one policy, called twice over the same events.
+    """
+    attempts = extraction.attempts_for(
+        conn, dh, prompt_version=prompt_version, schema_version=schema_version,
+        validator_version=validator_version,
+    )
+    reviews = extraction.reviews_for(
+        conn, dh, prompt_version=prompt_version, schema_version=schema_version,
+        validator_version=validator_version,
+    )
+    # [A1] The transaction ends HERE, before a single archive read. Everything
+    # between this line and `settle`'s `upsert_state` is archive traffic — the
+    # agreement gate loads each ok sample's record, the audit probe checks one
+    # key, then the chosen attempt is fetched whole — and a managed Postgres
+    # kills a backend that sits idle in a transaction across a round trip
+    # (SQLSTATE 25P03, canary run 33666006472).
+    # The commit also lands whatever the caller had pending: an insert-only
+    # attempt or review row, already in the archive and idempotent on its key.
+    # `upsert_state` then opens a fresh transaction, so `settle`'s own row
+    # still commits atomically with the caller's per-document commit — but the
+    # caller's row and this fold are no longer one transaction, and a death in
+    # between leaves the event committed and its derived row stale. Nothing
+    # here can close that gap (one connection cannot both hold the caller's
+    # write and be transaction-idle), so `_catch_up` heals it instead, on both
+    # sides: the attempt scan folds every tuple in its watermark window, and
+    # the review scan folds every decision its derived row does not post-date.
+    conn.commit()
+
+    # The ONE gate every fold shares (review P0-1): live settlement loads each
+    # ok sample's record from its archived attempt object; rebuild passes the
+    # same hook over its in-memory re-judged records.
+    def _archived_record(a: Attempt) -> dict[str, Any] | None:
+        loaded = from_bytes(store.get(a.attempt_key))
+        return active.profile_of(loaded.record) if loaded.record is not None else None
+
+    state = derive_state(
+        attempts, reviews, globs,
+        cohort_hook(_archived_record, f1_min=active.agreement_f1_min),
+        # a bundle with no audit phase folds with no probe at all, which is
+        # validator/15 byte for byte — the v1 corpus never touches the archive
+        # for an artifact its contract cannot produce
+        _audit_hook(store) if active.audit_version is not None else None,
+    )
+    return attempts, reviews, state
+
+
 def settle(
     conn: Conn,
     store: ArchiveStore,
@@ -348,41 +509,8 @@ def settle(
     validator_version = (
         active.validator_version if validator_version is None else validator_version
     )
-    attempts = extraction.attempts_for(
-        conn, dh, prompt_version=prompt_version, schema_version=schema_version,
-        validator_version=validator_version,
-    )
-    reviews = extraction.reviews_for(
-        conn, dh, prompt_version=prompt_version, schema_version=schema_version,
-        validator_version=validator_version,
-    )
-    # [A1] The transaction ends HERE, before a single archive read. Everything
-    # between this line and `upsert_state` is archive traffic — the agreement
-    # gate loads each ok sample's record, then the chosen attempt is fetched
-    # whole — and a managed Postgres kills a backend that sits idle in a
-    # transaction across a round trip (SQLSTATE 25P03, canary run 33666006472).
-    # The commit also lands whatever the caller had pending: an insert-only
-    # attempt or review row, already in the archive and idempotent on its key.
-    # The write below then opens a fresh transaction, so `settle`'s own row
-    # still commits atomically with the caller's per-document commit — but the
-    # caller's row and this fold are no longer one transaction, and a death in
-    # between leaves the event committed and its derived row stale. Nothing
-    # here can close that gap (one connection cannot both hold the caller's
-    # write and be transaction-idle), so `_catch_up` heals it instead, on both
-    # sides: the attempt scan folds every tuple in its watermark window, and
-    # the review scan folds every decision its derived row does not post-date.
-    conn.commit()
-
-    # The ONE gate every fold shares (review P0-1): live settlement loads each
-    # ok sample's record from its archived attempt object; rebuild passes the
-    # same hook over its in-memory re-judged records.
-    def _archived_record(a: Attempt) -> dict[str, Any] | None:
-        loaded = from_bytes(store.get(a.attempt_key))
-        return active.profile_of(loaded.record) if loaded.record is not None else None
-
-    state = derive_state(
-        attempts, reviews, globs,
-        cohort_hook(_archived_record, f1_min=active.agreement_f1_min),
+    attempts, reviews, state = _fold(
+        conn, store, dh, globs, active, prompt_version, schema_version, validator_version
     )
     chosen = {a.attempt_key: a for a in attempts}.get(state.chosen_attempt or "")
     model_col = (
@@ -395,13 +523,17 @@ def settle(
     mentions: list[tuple[str, str, str]] | None = None
     if state.status in ("validated", "needs_review") and state.chosen_attempt:
         # the profile is the CHOSEN attempt's archived record — never whatever
-        # record the caller happened to hold (a later ok attempt, or nothing)
+        # record the caller happened to hold (a later ok attempt, or nothing) —
+        # and it is projected UNDER this fold's verdict, so what is stored is
+        # the record as settlement leaves it, audit dimensions included
         chosen_obj = from_bytes(store.get(state.chosen_attempt))
         if chosen_obj.record is not None:
-            profile = active.profile_of(chosen_obj.record)
-            # the aggregate's rows come from the same record and the same
-            # bundle as the blob, so the two can never describe different shapes
-            mentions = active.mention_rows(chosen_obj.record)
+            settled = _settled(chosen_obj.record, state)
+            profile = active.profile_of(settled)
+            # the aggregate's rows come from the same record, the same verdict
+            # and the same bundle as the blob, so the two can never disagree
+            # about what is eligible
+            mentions = active.mention_rows(settled)
     extraction.upsert_state(
         conn, document_hash=dh, model=model_col, prompt_version=prompt_version,
         schema_version=schema_version, validator_version=validator_version,
@@ -742,6 +874,152 @@ def _extract_doc(
         return result
 
 
+def _audit_candidate(
+    settings: Settings,
+    session: _Session,
+    journal: _Journal,
+    engine: Engine,
+    dh: str,
+    markdown: str,
+    summary: ExtractSummary,
+    now: Callable[[], datetime],
+    bundle: Bundle,
+    gate: threading.RLock | None,
+) -> None:
+    """The `semantic-audit/v1` phase: one full-source audit of the candidate
+    settlement is about to publish (spec §4, §5.5).
+
+    It runs after the samples and BEFORE `settle`, because spec §6 forbids an
+    automated phase promoting a state that has already been published — the
+    lifecycle-boundary defect class the 2026-09-11 analysis named. So the
+    document is settled once, already audited, and nothing intermediate is
+    published on the way.
+
+    The candidate is chosen by the same fold settlement will run, so the audited
+    candidate and the published one cannot diverge. The artifact is archived
+    before any derived row exists ([A1], archive-as-truth): a crash after the
+    PUT replays the audit for free, a crash before it re-audits, and neither
+    leaves a verdict nothing backs.
+
+    Nothing here can block settlement or fabricate a pass. A transport failure
+    (one retry), a refusal, unparseable JSON, a judge that rejected the audit —
+    all of them archive an `audit_error` artifact, which the settlement policy
+    reads as `error` on both dimensions: never eligible, never a demotion of an
+    otherwise valid record.
+    """
+    if (
+        bundle.audit_version is None
+        or bundle.audit_render is None
+        or bundle.audit_emit_schema is None
+        or bundle.audit_judge is None
+    ):
+        return  # this tuple has no audit phase (v1): nothing to run, nothing to read
+    store = journal.store
+    _, _, state = session.do(
+        lambda c: _fold(
+            c, store, dh, settings.l2_models, bundle, bundle.prompt_version,
+            bundle.schema_version, bundle.validator_version,
+        )
+    )
+    # Only a settled candidate is auditable: a quarantined or pending document
+    # has none, and a human-rejected one is terminal (spec §6) — auditing it
+    # could not change anything and would only spend the operator's budget.
+    if state.chosen_attempt is None or state.status not in ("validated", "needs_review"):
+        return
+    key = keys.x_audit_key(state.chosen_attempt)
+    if store.exists(key):
+        return  # write-once: a resumed or re-queued document is audited once
+    candidate = from_bytes(store.get(state.chosen_attempt))
+    record = candidate.record
+    if record is None:
+        return  # an attempt with no record cannot be the medoid; belt and braces
+    candidate_hash = str((record.get("extraction") or {}).get("candidate_hash") or "")
+    model = candidate.requested_model  # the rung that actually answered
+    schema = bundle.audit_emit_schema()
+    prompt = bundle.audit_render(markdown, candidate_hash, record)
+
+    t0 = now()
+    errors: list[str] = []
+    result: EngineResult | None = None
+    # one transport retry, like a sample slot: a codex flake would otherwise
+    # leave a clean candidate looking unaudited for the life of the tuple
+    for attempt_i in range(2):
+        try:
+
+            def _call(p: str = prompt, m: str = model) -> EngineResult:
+                return engine.complete(p, schema, m)
+
+            result = _ungated(gate, _call)
+            break
+        except EngineTransportError as exc:  # EngineThrottled is one of these
+            errors.append(str(exc))
+            if attempt_i == 1:
+                break
+        except (EngineModelNotFound, EngineFatalError) as exc:
+            # no rung ladder here: the audit is a quality gate, not a candidate,
+            # and a document whose audit could not run settles ineligible rather
+            # than not at all. The extraction path still raises on the next
+            # document, so a dead provider stops the run there, not here.
+            errors.append(f"{type(exc).__name__}: {exc}")
+            break
+
+    outcome: Any = None
+    if result is not None:
+        summary.spend_usd += result.cost_usd or 0.0
+        if not model_matches(result.observed_model, settings.l2_models):
+            # `observed_model` gates everything (spec §4.1): a substituted model
+            # clearing records is exactly what the glob exists to prevent, and
+            # an unknown auditor is an error, never a pass.
+            errors.append(f"observed model {result.observed_model!r} outside globs")
+        else:
+            try:
+                emit = json.loads(result.raw_text)
+                if not isinstance(emit, dict):
+                    raise ValueError("top level is not an object")
+            except ValueError as exc:
+                errors.append(f"response is not valid JSON: {exc}")
+            else:
+                try:
+                    outcome = bundle.audit_judge(emit, record, markdown, candidate_hash)
+                except Exception as exc:
+                    # Every validity defect the judge found, verbatim: the class
+                    # name travels too, so a bug in this path is legible in the
+                    # artifact instead of hiding inside an `audit_error`.
+                    errors.append(f"{type(exc).__name__}: {exc}")
+
+    artifact: dict[str, Any] = {
+        "audit_version": bundle.audit_version,
+        "outcome": "ok" if outcome is not None else "audit_error",
+        "attempt_key": state.chosen_attempt,
+        "document_hash": dh,
+        "candidate_hash": candidate_hash,
+        "prompt_version": bundle.prompt_version,
+        "schema_version": bundle.schema_version,
+        "validator_version": bundle.validator_version,
+        "run_id": summary.run_id,
+        "cli_version": __version__,
+        "requested_engine": engine.name,
+        "requested_model": model,
+        "observed_model": result.observed_model if result is not None else None,
+        "input_tokens": result.input_tokens if result is not None else None,
+        "output_tokens": result.output_tokens if result is not None else None,
+        "cost_usd": result.cost_usd if result is not None else None,
+        "started_at": iso(t0),
+        "finished_at": iso(now()),
+        "raw_response": result.raw_text if result is not None else None,
+        "errors": errors,
+        # the three settlement reads, plus everything a human or a repair round
+        # needs to act on the verdict
+        "semantics": outcome.semantics if outcome is not None else "error",
+        "completeness": outcome.completeness if outcome is not None else "error",
+        "blocking": outcome.blocking if outcome is not None else 0,
+        "warnings": outcome.warnings if outcome is not None else 0,
+        "findings": outcome.findings if outcome is not None else [],
+        "unresolved": outcome.unresolved if outcome is not None else [],
+    }
+    store.put(key, _audit_bytes(artifact))
+
+
 def _ungated[T](gate: threading.RLock | None, fn: Callable[[], T]) -> T:
     """Run an engine call with the gate released; everything else stays gated."""
     if gate is None:
@@ -813,6 +1091,16 @@ def _extract_doc_inner(
         return attempt
 
     def settle_and_disposition() -> tuple[str, int]:
+        # The audit phase belongs HERE, between the last extraction attempt and
+        # the single settlement this document gets (spec §5.6: archive every
+        # phase artifact, then "settle once ... Do not publish an intermediate
+        # candidate during audit"). Every path that settles goes through this
+        # function, so every path that publishes a candidate audits it first —
+        # including the ones that never sampled. A document with no candidate
+        # (over budget, quarantined) costs nothing: the phase folds, sees no
+        # chosen attempt and returns before any engine call.
+        _audit_candidate(settings, session, journal, engine, dh, markdown,
+                         summary, now, bundle, gate)
         state = session.do(
             lambda c: settle(c, store, dh, settings.l2_models, iso(now()), bundle=bundle)
         )

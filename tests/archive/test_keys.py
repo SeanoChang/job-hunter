@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from jobhunter.archive.keys import (
     attempt_key,
     attempts_prefix,
@@ -71,3 +73,45 @@ def test_x_prompt_schema_review_keys() -> None:
     )
     later = keys.x_review_key(at, "ab" * 32, "accept", 2)
     assert keys.x_review_key(at, "ab" * 32, "flag", 1) < later  # key order == fold order
+
+
+def test_x_audit_key_is_derived_from_the_attempt_it_audited() -> None:
+    """`semantic-audit/v1` needs no table: settle probes the key the audited
+    candidate's attempt key maps to, so live, catch-up and replay all find the
+    same artifact (plan Architecture)."""
+    from jobhunter.archive import keys
+
+    at = datetime(2026, 8, 27, 6, 12, 4, tzinfo=UTC)
+    attempt = keys.x_attempt_key(at, "9f3ab" + "0" * 59, 1, 2)
+    audit = keys.x_audit_key(attempt)
+    assert audit == "extractions/audits/2026/08/27T061204Z-9f3ab0000000-s1a2.json.gz"
+    # a separate namespace: an audit artifact must never be listed, folded or
+    # counted as an extraction attempt (spec §5: the phases are distinct)
+    assert not audit.startswith(keys.X_ATTEMPTS_PREFIX)
+    assert keys.parse_x_attempt_key(audit) is None
+    # one audit per candidate: distinct attempts never share an audit key
+    other = keys.x_audit_key(keys.x_attempt_key(at, "9f3ab" + "0" * 59, 2, 2))
+    assert other != audit
+    assert keys.x_audit_key(attempt) == audit  # deterministic
+
+
+def test_x_audit_key_rejects_non_attempt_keys() -> None:
+    """Never silently map garbage: a derived key that is not one-to-one with a
+    real attempt would let settle read some other document's audit."""
+    from jobhunter.archive import keys
+
+    at = datetime(2026, 8, 27, 6, 12, 4, tzinfo=UTC)
+    attempt = keys.x_attempt_key(at, "9f3ab" + "0" * 59, 1, 2)
+    bad = [
+        "",
+        "blobs/sha256/ab/x.gz",
+        attempt_key("greenhouse", "anthropic", at),  # a FETCH attempt, not an extraction
+        keys.x_review_key(at, "ab" * 32, "flag", 1),
+        keys.x_prompt_key("demand-profile/v9"),
+        "extractions/attempts/garbage.json.gz",
+        "extractions/attempts/2026/08/27T061204Z-9f3ab0000000-s1a2.json",  # ungzipped
+        keys.x_audit_key(attempt),  # an audit key is not an attempt key
+    ]
+    for key in bad:
+        with pytest.raises(ValueError):
+            keys.x_audit_key(key)

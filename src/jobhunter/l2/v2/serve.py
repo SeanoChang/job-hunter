@@ -21,6 +21,13 @@ Two rules run through all four:
   frozen validator version; a summary that re-parsed text would be a second,
   unversioned grammar.
 
+The one exception to "nothing is derived here" is quality, and it is not an
+exception at all: `quality_of` re-runs the frozen `quality.assess` policy over
+the dimensions `runner.settle` attaches to the chosen candidate under
+`SETTLEMENT`. Four of the seven dimensions only exist after a document's whole
+event stream is folded, so the record reaching the projections carries them and
+both projections read the same answer.
+
 Pure like every other `l2/v2` module: no I/O, no environment, no store imports.
 """
 
@@ -29,9 +36,20 @@ from __future__ import annotations
 from typing import Any
 
 from jobhunter.l2.v2.project import mention_rows as _project_rows
+from jobhunter.l2.v2.quality import assess
 from jobhunter.l2.v2.types import PROFICIENCY
 
 SCHEMA_VERSION = "2"
+
+#: The reserved record key `runner.settle` attaches its verdict under, and the
+#: only thing in this module that knows settlement happened (spec §6).
+#: Assembly cannot fill the audit, sampling and review dimensions — they are
+#: outputs of the fold over a document's whole event stream, which happens long
+#: after a candidate is sealed — so the fold hands them to the bundle's
+#: projections as data. A record without the key projects the quality it was
+#: assembled with, which is what the archived candidate, the agreement gate and
+#: a stored blob re-projected through `profile_of` all carry.
+SETTLEMENT = "settlement"
 
 #: `pulse.MAX_MENTIONS`, restated rather than imported: `pulse` reaches into the
 #: store and importing it here would end this module's purity. The two are pinned
@@ -43,6 +61,45 @@ MAX_MENTIONS = 8
 #: importance by contract (spec §3), and the column is NOT NULL; `contextual` is
 #: v1's existing word for "named by the posting, not demanded by it".
 NO_IMPORTANCE = "contextual"
+
+
+def quality_of(record: dict[str, Any]) -> dict[str, Any]:
+    """The record's quality object as of settlement (spec §6).
+
+    Four of the seven dimensions are not knowable at assembly: `semantics` and
+    `completeness` are the `semantic-audit/v1` phase's answer, `sampling` is the
+    cohort's, `human_review` is the review stream's, and `search_eligible` is
+    derived from all of them together with the settled lifecycle. `assemble`
+    therefore seals a candidate with the two it does know — the source
+    assessment and the evidence verdict — and leaves the rest `not_checked`,
+    which no offline phase can clear.
+
+    `runner.settle` supplies the rest under `SETTLEMENT` once its fold has them,
+    and this re-derives the object through the same frozen policy that wrote the
+    first one. Nothing here decides anything: `blocking` is the audit's own
+    count (blocking findings plus blocking unresolved questions, which gate
+    identically), and every value is passed through to `quality.assess`.
+
+    Defensive about the record it is given, like every other reader of a stored
+    blob: an unrecognised value reaches `assess` unchanged and fails its
+    whitelist there, never here.
+    """
+    quality = record.get("quality")
+    quality = quality if isinstance(quality, dict) else {}
+    settlement = record.get(SETTLEMENT)
+    if not isinstance(settlement, dict):
+        return quality
+    blocking = settlement.get("blocking")
+    return assess(
+        source=str(quality.get("source")),
+        evidence=str(quality.get("evidence")),
+        semantics=str(settlement.get("semantics", "not_checked")),
+        completeness=str(settlement.get("completeness", "not_checked")),
+        sampling=str(settlement.get("sampling", "not_requested")),
+        human_review=str(settlement.get("human_review", "none")),
+        blocking_findings=blocking if isinstance(blocking, int) and blocking is not True else 0,
+        lifecycle=str(settlement.get("lifecycle") or "pending"),
+    )
 
 
 def profile_of(record: dict[str, Any]) -> dict[str, Any]:
@@ -60,6 +117,12 @@ def profile_of(record: dict[str, Any]) -> dict[str, Any]:
 
     `demand_profile` is the claim index below, and it is here because this same
     function is what `runner.settle` feeds to the cross-sample agreement gate.
+
+    The stored `quality` is the SETTLED one (`quality_of`): the blob is what the
+    read surface answers from, and a blob claiming `not_checked` for a record an
+    audit cleared would make every reader recompute the policy for itself. The
+    reserved settlement key is consumed here and never stored — the blob's keys
+    are these six.
     """
     return {
         "schema": SCHEMA_VERSION,
@@ -67,7 +130,7 @@ def profile_of(record: dict[str, Any]) -> dict[str, Any]:
         "relations": record["relations"],
         "facts": record["facts"],
         "mentions": record["mentions"],
-        "quality": record["quality"],
+        "quality": quality_of(record),
         "demand_profile": claim_index(record),
     }
 
@@ -174,12 +237,16 @@ def mention_rows(record: dict[str, Any]) -> list[tuple[str, str, str]]:
     document spells them and are never re-split: v2 mentions are atomic by
     contract, so v1's `split_mention` decoration-stripping has nothing to do.
 
-    A record that is not `search_eligible` yields no rows at all. Every offline
-    record is ineligible today — `quality.assess` leaves the two audit
-    dimensions `not_checked` until the auditor lands — so v2 populates the
-    profile blob well before it populates the aggregate. That asymmetry is the
-    policy, not an oversight: the blob describes one document and says how sure
-    it is, while the aggregate is a corpus-wide assertion about who demands what.
+    A record that is not `search_eligible` yields no rows at all, and the
+    eligibility read here is the SETTLED one (`quality_of`) — the same object
+    `profile_of` stores, so the blob and the aggregate can never describe
+    different records. An offline record is still ineligible: `assemble` leaves
+    the two audit dimensions `not_checked`, and only a completed
+    `semantic-audit/v1` phase, folded in by `runner.settle`, clears them. So v2
+    populates the profile blob well before it populates the aggregate. That
+    asymmetry is the policy, not an oversight: the blob describes one document
+    and says how sure it is, while the aggregate is a corpus-wide assertion
+    about who demands what.
 
     What the three columns cannot carry, they drop: a mention's ROLE, an
     alternative route, an applicability condition and a negative polarity all
@@ -210,7 +277,7 @@ def mention_rows(record: dict[str, Any]) -> list[tuple[str, str, str]]:
     """
     rows: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str, str]] = set()
-    for projected in _project_rows(record):
+    for projected in _project_rows({**record, "quality": quality_of(record)}):
         row = (
             projected["surface"],
             projected["kind"],

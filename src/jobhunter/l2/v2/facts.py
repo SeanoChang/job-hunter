@@ -17,7 +17,13 @@ from typing import Any
 # sample slots. validator/15: emphasis-fold binding and code-owned occurrence
 # (parsing-rules/6), sample content-repair budget; the v2 F1 gate returns to
 # 0.80 pending an adjudicated comparator calibration (2026-09-11 analysis).
-VALIDATOR_VERSION = "15"
+# validator/16: settlement reads `semantic-audit/v1`. A complete cohort that
+# disagrees but whose audited medoid carries no blocking findings settles
+# `validated` with sampling `adjudicated`; the audit dimensions and blocking
+# count gate `search_eligible` without demoting a structurally valid record.
+# Publication follows settlement: only a `validated` record can be eligible,
+# so a clean audit never publishes a candidate a reviewer parked or rejected.
+VALIDATOR_VERSION = "16"
 
 _CMP_PHRASES: list[tuple[str, str]] = [
     (r"at\s+least|a\s+minimum\s+of|minimum\s+of|minimum|no\s+less\s+than", "gte"),

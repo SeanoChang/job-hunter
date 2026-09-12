@@ -8,7 +8,10 @@ behind the `profile_mentions` aggregate. v1 hardwired all six into `runner.py`;
 the v2 contract changes every one of them while the loop around them (ladder,
 breaker, caps, catch-up, k-sampling, settle) stays exactly as it is. So the six
 travel together as a `Bundle` the runner is handed, and the loop stops naming
-any of them.
+any of them. A bundle may also carry a semantic audit phase (spec §4): its
+version, prompt renderer, emit schema and judge, all four or none — v1 has
+none, and `audit_version is None` is what tells the runner and settlement that
+this tuple has no audit to run or read.
 
 A bundle is data, never state: it is passed as a parameter, because the runner
 is re-entrant across threads (the parallel drain) and across tests. Its
@@ -40,6 +43,10 @@ from jobhunter.l2.transforms import VALIDATOR_VERSION as _V1_VALIDATOR_VERSION
 from jobhunter.l2.v2 import serve as _v2_serve
 from jobhunter.l2.v2.assemble import AssembleError as _V2AssembleError
 from jobhunter.l2.v2.assemble import assemble as _assemble_v2
+from jobhunter.l2.v2.audit import AUDIT_VERSION as _V2_AUDIT_VERSION
+from jobhunter.l2.v2.audit import emit_schema as _v2_audit_emit_schema
+from jobhunter.l2.v2.audit import judge as _v2_audit_judge
+from jobhunter.l2.v2.audit import render as _v2_audit_render
 from jobhunter.l2.v2.emit_guard import engine_emit_schema as _v2_engine_emit_schema
 from jobhunter.l2.v2.facts import VALIDATOR_VERSION as _V2_VALIDATOR_VERSION
 from jobhunter.l2.v2.prompt import PROMPT_VERSION as _V2_PROMPT_VERSION
@@ -58,7 +65,7 @@ BUNDLE_NAMES = ("v1", "v2")
 
 @dataclass(frozen=True)
 class Bundle:
-    """One engine tuple: identity, prompt, and the four pure functions around it.
+    """One engine tuple: identity, prompt, and the pure functions around it.
 
     The callables are plain instance attributes, so `bundle.render(...)` calls
     the wrapped function itself — no descriptor binding, no `self`.
@@ -84,6 +91,18 @@ class Bundle:
     render_finding: Callable[[Finding], str] | None = None
     # the agreement gate's F1 calibration for this bundle's claim granularity
     agreement_f1_min: float = 0.80
+    # --- the semantic audit phase (spec §4 Auditor) -------------------------
+    # `audit_version is None` means this tuple has NO audit phase: the runner
+    # skips it and settlement folds without an audit probe, which is v1's
+    # behaviour. A bundle that sets the version sets all four, because the
+    # phase is prompt + schema + judge together, exactly like extraction.
+    audit_version: str | None = None
+    # (markdown, candidate_hash, record) -> the audit prompt
+    audit_render: Callable[[str, str, dict[str, Any]], str] | None = None
+    audit_emit_schema: Callable[[], dict[str, Any]] | None = None
+    # (emit, record, markdown, candidate_hash) -> AuditOutcome; raises on any
+    # validity defect, which the caller archives as an audit error
+    audit_judge: Callable[[dict[str, Any], dict[str, Any], str, str], Any] | None = None
 
 
 def _v1_profile_of(record: dict[str, Any]) -> dict[str, Any]:
@@ -164,6 +183,10 @@ _V2 = Bundle(
     mention_rows=_v2_serve.mention_rows,
     engine_emit_schema=_v2_engine_emit_schema,
     render_finding=_v2_render_finding,
+    audit_version=_V2_AUDIT_VERSION,
+    audit_render=_v2_audit_render,
+    audit_emit_schema=_v2_audit_emit_schema,
+    audit_judge=_v2_audit_judge,
     # stays at the field default 0.80: the 2026-09-11 analysis showed the
     # borderline-F1 review cases include real importance/polarity conflicts,
     # and recalibration without adjudicated examples only relabels the queue

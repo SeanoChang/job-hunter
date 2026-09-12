@@ -94,6 +94,32 @@ def parse_x_attempt_key(key: str) -> tuple[datetime, str, int, int] | None:
     return at, dochash12, int(slot), int(no)
 
 
+# The semantic audit (spec §4) is a phase of its own: its artifact is keyed by
+# the candidate attempt it audited, in a separate namespace. Deriving the key
+# instead of recording it is what lets settlement fold identically live, in the
+# catch-up scan and in replay — one `exists` probe, no table, no migration.
+X_AUDITS_PREFIX = "extractions/audits/"
+
+
+def x_audit_key(attempt_key: str) -> str:
+    """The audit artifact for one extraction attempt's candidate.
+
+    `extractions/attempts/<stamp>-<doc12>-s<slot>a<no>.json.gz`
+    -> `extractions/audits/<stamp>-<doc12>-s<slot>a<no>.json.gz`
+
+    One-to-one with the attempt, and never under `X_ATTEMPTS_PREFIX`: spec §5
+    keeps the phases distinct, so an audit artifact must not be listed, folded
+    or counted as an extraction sample. A key that is not an extraction attempt
+    raises — mapping garbage would point settlement at another document's audit.
+    """
+    if parse_x_attempt_key(attempt_key) is None:
+        raise ValueError(
+            f"not an extraction attempt key: {attempt_key!r}; an audit artifact is keyed "
+            "by the candidate attempt it audited"
+        )
+    return X_AUDITS_PREFIX + attempt_key[len(X_ATTEMPTS_PREFIX) :]
+
+
 X_CONSOLIDATION_PREFIX = "extractions/consolidation/"
 
 

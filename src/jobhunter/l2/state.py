@@ -8,6 +8,12 @@ clears only what preceded it, and a later successful attempt re-validates.
 Callers must pass attempts/reviews already filtered to one config
 (prompt/schema/validator versions) — events from another config are a
 different extraction identity and must never contaminate the fold.
+
+Two hooks keep it pure while still deciding on archived evidence: the
+agreement gate (`agreement.cohort_hook`) and, under a bundle with an audit
+phase, the `semantic-audit/v1` probe. Both are injected, both are applied in
+event order, and a fold given neither is validator/15 exactly — which is what
+the v1 corpus keeps getting.
 """
 
 from __future__ import annotations
@@ -16,7 +22,7 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from jobhunter.l2.attempts import Attempt
 
@@ -53,6 +59,19 @@ class DerivedState:
     # config, and the agreement report when the gate ran (k >= 2 ok slots).
     k: int = 1
     agreement: dict[str, Any] | None = None
+    # The v2 quality dimensions this fold owns (spec §6, validator/16). They
+    # describe the CHOSEN candidate and are the audit half of `quality.assess`;
+    # a fold with no `audit_hook` leaves them at the unchecked defaults, which
+    # is why nothing a v1 run produces can be eligible.
+    sampling: str = "not_requested"  # not_requested|complete|adjudicated|incomplete|disagreement
+    semantics: str = "not_checked"  # no_findings | findings | not_checked | error
+    completeness: str = "not_checked"
+    blocking: int = 0  # blocking findings + blocking unresolved questions
+    # The human disposition the review events leave on record (spec §6). It is
+    # derived here, with the status, so settlement cannot publish as unreviewed
+    # a candidate a human rejected; `status` itself is what keeps a *parked*
+    # record out of the aggregates (see `quality.assess`'s `lifecycle`).
+    human_review: str = "none"  # none | accepted | rejected
 
 
 def _ts(value: str) -> datetime:
@@ -67,11 +86,56 @@ def _ts(value: str) -> datetime:
 AgreementHook = Callable[[list[Attempt], int], tuple[bool, str, dict[str, Any]]]
 
 
+class AuditView(Protocol):
+    """What settlement needs from one archived `semantic-audit/v1` artifact.
+
+    Read-only and structural: `v2.audit.AuditOutcome` satisfies it as-is, and
+    so does whatever minimal object the loader builds for an `audit_error`
+    artifact (dimensions `error`). Keeping it a protocol is what stops this
+    module — the shared fold — from importing a version-specific contract.
+    """
+
+    @property
+    def semantics(self) -> str: ...  # no_findings | findings | error
+
+    @property
+    def completeness(self) -> str: ...
+
+    @property
+    def blocking(self) -> int: ...
+
+
+# The audit probe settle injects: an attempt key -> that candidate's archived
+# audit, or None when no artifact exists (the phase never ran, or this bundle
+# has no audit phase at all). Pure `derive_state` stays I/O-free; the hook
+# does the `exists`/`get`, and the fold applies the verdict IN EVENT ORDER so
+# a later human review lands on the settled status exactly as replay re-derives
+# it. No hook means validator/15 behaviour, unchanged.
+AuditHook = Callable[[str], AuditView | None]
+
+
+def _audit_clean(audit: AuditView | None) -> bool:
+    """A completed audit that found nothing blocking on either dimension.
+
+    Absent (`None`) and `error` are not passes (spec §4), and a warning-only
+    audit is not clean either: `findings` on a dimension gates eligibility on
+    its own, so only `no_findings`/`no_findings` with zero blocking items can
+    adjudicate a disagreement.
+    """
+    return (
+        audit is not None
+        and audit.semantics == "no_findings"
+        and audit.completeness == "no_findings"
+        and audit.blocking == 0
+    )
+
+
 def derive_state(
     attempts: Sequence[Attempt],
     reviews: Sequence[Review],
     accepted_globs: Sequence[str],
     agreement_of: AgreementHook | None = None,
+    audit_hook: AuditHook | None = None,
 ) -> DerivedState:
     events: list[tuple[datetime, int, str, Attempt | Review]] = []
     for a in attempts:
@@ -83,9 +147,21 @@ def derive_state(
     status: str | None = None
     chosen: str | None = None
     agreement: dict[str, Any] | None = None
+    sampling = "not_requested"
+    human_review = "none"
     ok_in_glob: list[Attempt] = []
     slots_attempted: set[int] = set()
     ruled = False  # a review verdict has spoken; later samples never override it
+
+    audits: dict[str, AuditView | None] = {}  # one probe per candidate, memoized
+
+    def audit_of(attempt_key: str) -> AuditView | None:
+        if audit_hook is None:
+            return None
+        if attempt_key not in audits:
+            audits[attempt_key] = audit_hook(attempt_key)
+        return audits[attempt_key]
+
     for _, _, _, event in sorted(events, key=lambda e: (e[0], e[1], e[2])):
         if isinstance(event, Attempt):
             slots_attempted.add(event.sample_slot)
@@ -118,6 +194,24 @@ def derive_state(
                 status = "validated" if passed else "needs_review"
                 chosen = medoid_key
                 agreement = report
+                # The sampling dimension (spec §6) is a fact about the cohort,
+                # so it is derived with or without an audit hook.
+                if passed:
+                    sampling = "complete"
+                elif "sample_failed" in (report.get("failures") or []):
+                    sampling = "incomplete"  # attempted slots the gate could not use
+                else:
+                    sampling = "disagreement"
+                    # validator/16 adjudication: the cohort is COMPLETE and
+                    # disagrees, and a full-source audit of the medoid found
+                    # nothing. The audit outranks sampling variance (spec §6:
+                    # "Sampling is not a substitute for semantic audit"), so
+                    # the document settles instead of parking for review. An
+                    # incomplete cohort is never adjudicated — there is no
+                    # cohort to outrank — and a ruled record is never touched
+                    # (this whole branch runs only while `not ruled`).
+                    if _audit_clean(audit_of(medoid_key)):
+                        status, sampling = "validated", "adjudicated"
             if event.outcome == "over_budget":
                 if status is None:
                     status = "quarantined"
@@ -131,17 +225,47 @@ def derive_state(
                 # a retry starts a FRESH cohort (review P0-2): old slot
                 # successes and their agreement never carry into the re-run
                 status, chosen, agreement = None, None, None
+                sampling = "not_requested"
+                human_review = "none"
                 ok_in_glob.clear()
                 slots_attempted.clear()
                 ruled = False
             elif event.verb == "reject" and status is not None:
                 status = "rejected"
+                human_review = "rejected"
                 ruled = True
             elif event.verb in ("flag", "refute") and status == "validated":
+                # The record is parked, not rejected: `human_review` stays as
+                # it stands (spec §6 knows none/accepted/rejected only) and it
+                # is the `needs_review` status that takes it out of the
+                # aggregates — `quality.assess` gates on the lifecycle.
                 status = "needs_review"
                 ruled = True
-            elif event.verb == "accept" and status == "needs_review":
+                if sampling == "adjudicated":
+                    # a reviewer (or the refuter) reopened an adjudication:
+                    # what remains on record is the disagreement it settled,
+                    # never a claim that the audit still carries the cohort
+                    sampling = "disagreement"
+            elif event.verb == "accept" and (
+                status == "needs_review"
+                # validator/16: the audit probe is TIMELESS — `audit_of` answers
+                # the same whenever the artifact was written — so an audit
+                # archived after this accept was filed retroactively adjudicates
+                # the disagreement the operator was ruling on, and the fold
+                # reads `validated` here where the human saw `needs_review`.
+                # Honour the ruling anyway: dropping it would leave
+                # `human_review` at "none" with nothing `ruled`, and the next
+                # automated sample would demote the very record a human
+                # validated (spec §6: a human accept is bound to the candidate,
+                # and a ruling is final against later samples). An adjudicated
+                # `validated` is the only status an artifact can move a review
+                # onto, so this is also the only arm that needs it: a cohort
+                # that agreed on its own reads an accept exactly as
+                # validator/15 does — not at all.
+                or (status == "validated" and sampling == "adjudicated")
+            ):
                 status = "validated"
+                human_review = "accepted"
                 ruled = True
             # accept from quarantined/pending, flag on pending: ignored
 
@@ -150,5 +274,23 @@ def derive_state(
     # fold ends pending or quarantined-without-an-ok.
     k = max(len(slots_attempted), 1)
     if status in ("validated", "needs_review", "rejected"):
-        return DerivedState(status, chosen, k=k, agreement=agreement)
-    return DerivedState(status, None, k=k, agreement=agreement)
+        # The settled candidate's audit, reported whatever the verdict: an
+        # unsampled (k=1) document is audited too, so eligibility never
+        # requires sampling, and a parked one still shows why. Absent means
+        # `not_checked` — the phase never ran, which is never a pass.
+        audit = audit_of(chosen) if chosen is not None else None
+        return DerivedState(
+            status,
+            chosen,
+            k=k,
+            agreement=agreement,
+            sampling=sampling,
+            semantics=audit.semantics if audit is not None else "not_checked",
+            completeness=audit.completeness if audit is not None else "not_checked",
+            blocking=audit.blocking if audit is not None else 0,
+            human_review=human_review,
+        )
+    return DerivedState(
+        status, None, k=k, agreement=agreement, sampling=sampling,
+        human_review=human_review,
+    )

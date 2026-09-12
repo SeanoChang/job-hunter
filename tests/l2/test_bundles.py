@@ -156,7 +156,7 @@ def test_v2_bundle_is_the_v6_engine_tuple() -> None:
     assert (b.prompt_version, b.schema_version, b.validator_version) == (
         "demand-profile/v9",
         "2",
-        "15",
+        "16",
     )
     assert b.template == prompt_v6.TEMPLATE
     assert b.prompt_sha() == prompt_v6.prompt_sha()
@@ -181,6 +181,39 @@ def test_v2_assemble_speaks_the_runners_failure_vocabulary() -> None:
         get_bundle("v2").assemble(emit, "Requirements\nA degree.\n", document_hash="d" * 64,
                                   observed_model="m", at="2026-09-10T00:00:00+00:00")
     assert any("b000009" in e for e in excinfo.value.errors)
+
+
+def test_the_audit_seam_defaults_to_no_audit_phase() -> None:
+    """`audit_version is None` is the signal that a bundle has no audit phase.
+    v1 must keep all four fields None, so a v1 run cannot acquire an audit — or
+    a v2 settlement policy — by accident."""
+    b = get_bundle("v1")
+    assert (b.audit_version, b.audit_render, b.audit_emit_schema, b.audit_judge) == (
+        None,
+        None,
+        None,
+        None,
+    )
+
+
+def test_v2_registers_the_semantic_audit_phase() -> None:
+    """The v2 bundle carries `semantic-audit/v1`'s three pure functions, so the
+    runner's audit phase names none of them — the same discipline as prompt,
+    assemble and verify. The exact objects, not lookalikes."""
+    from jobhunter.l2.v2 import audit
+
+    b = get_bundle("v2")
+    assert b.audit_version == audit.AUDIT_VERSION == "semantic-audit/v1"
+    assert b.audit_render is audit.render
+    assert b.audit_emit_schema is audit.emit_schema
+    assert b.audit_judge is audit.judge
+
+
+def test_the_validator_bump_keeps_the_replay_tuple() -> None:
+    """Replay keys on (prompt, schema) alone, so 15 -> 16 re-queues the corpus
+    under a fresh validator without orphaning the archived v2 attempts."""
+    b = get_bundle_for_tuple("demand-profile/v9", "2")
+    assert b is get_bundle("v2") and b.validator_version == "16"
 
 
 def test_get_bundle_for_tuple_maps_both_engine_tuples() -> None:
