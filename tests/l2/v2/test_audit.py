@@ -70,7 +70,7 @@ def _judge(record: dict[str, Any], markdown: str, **over: Any) -> AuditOutcome:
 
 
 def test_version_and_template_sha() -> None:
-    assert AUDIT_VERSION == "semantic-audit/v1"
+    assert AUDIT_VERSION == "semantic-audit/v2"
     assert template_sha() == sha256_hex(TEMPLATE.encode("utf-8"))
 
 
@@ -543,3 +543,57 @@ def test_the_module_imports_nothing_with_side_effects() -> None:
         "__future__", "dataclasses", "json", "typing",
         "jobhunter.hashing", "jobhunter.l2.v2.source", "jobhunter.l2.v2.types",
     }, imported
+
+
+# --- semantic-audit/v2 omission triage --------------------------------------
+
+# MD plus one legal-boilerplate line: b000003 in this document
+_BOILER_MD = MD + "Zed Inc. is an equal opportunity employer and values diversity.\n"
+
+
+def test_an_omission_against_a_captured_statement_is_a_granularity_warning(
+    v2_record: dict[str, Any],
+) -> None:
+    """The auditor citing a statement id concedes the proposition WAS captured;
+    the complaint is quote granularity (the 3-doc smoke's dominant class:
+    'omits the fast-paced context' against a captured qualification). Warning,
+    so completeness stays clear and the record can still be eligible."""
+    out = _judge(v2_record, _BOILER_MD, findings=[_finding("omission", targets=["s1"],
+        evidence={"block_id": "b000002", "text": None, "occurrence": None})])
+    assert (out.blocking, out.warnings) == (0, 1)
+    assert out.completeness == "no_findings"
+    assert out.findings[0]["severity"] == "warning"
+
+
+def test_an_omission_citing_a_boilerplate_block_is_a_warning(
+    v2_record: dict[str, Any],
+) -> None:
+    """Legal/EEO/privacy/anti-fraud boilerplate is outside the extraction
+    contract's omission scope (the v1 omission scan draws the same line);
+    classification is code-owned and lexical, never the candidate's own
+    `excluded` accounting — that self-certification is what bad_exclusion
+    audits."""
+    out = _judge(v2_record, _BOILER_MD, findings=[_finding("omission", targets=[],
+        evidence={"block_id": "b000003", "text": None, "occurrence": None})])
+    assert (out.blocking, out.warnings) == (0, 1)
+    assert out.completeness == "no_findings"
+
+
+def test_an_omission_of_an_uncaptured_content_block_stays_blocking(
+    v2_record: dict[str, Any],
+) -> None:
+    """The real class: a whole demand-content block (an uncaptured duty, a
+    compensation-structure clause) the candidate never touched."""
+    out = _judge(v2_record, _BOILER_MD, findings=[_finding("omission", targets=[],
+        evidence={"block_id": "b000002", "text": None, "occurrence": None})])
+    assert (out.blocking, out.warnings) == (1, 0)
+    assert out.completeness == "findings"
+
+
+def test_triage_never_lowers_a_non_omission_code(v2_record: dict[str, Any]) -> None:
+    """bad_exclusion over a boilerplate block stays blocking: 'a relevant
+    clause dropped as boilerplate' is exactly what that code exists to say,
+    and triage only ever lowers `omission`."""
+    out = _judge(v2_record, _BOILER_MD, findings=[_finding("bad_exclusion", targets=[],
+        evidence={"block_id": "b000003", "text": None, "occurrence": None})])
+    assert (out.blocking, out.warnings) == (1, 0)

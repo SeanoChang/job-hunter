@@ -45,7 +45,15 @@ from jobhunter.hashing import sha256_hex
 from jobhunter.l2.v2.source import RefBindError, annotate, blocks_by_id, resolve
 from jobhunter.l2.v2.types import Block
 
-AUDIT_VERSION = "semantic-audit/v1"
+# version history (bump, never edit in place):
+#   v1: the spec §4 contract as written — every omission blocking
+#   v2: omission triage after the 2026-09-12 3-doc smoke fired 18/7/9 blocking
+#       findings per document, mostly sub-clause granularity against captured
+#       statements and legal/EEO/privacy/anti-fraud boilerplate: an omission
+#       targeting a captured candidate object is a granularity warning, an
+#       omission whose cited block is code-classified boilerplate is a
+#       warning, and the template gains the omission-scope paragraph
+AUDIT_VERSION = "semantic-audit/v2"
 
 # The closed finding vocabulary (spec §4: "Codes cover source insufficiency,
 # omission, unsupported statement, importance, polarity/subject, relationship,
@@ -67,7 +75,9 @@ CODES = (
 # spec §4: "Wrong importance/polarity, changed alternatives, lost obligations,
 # numerical misinterpretation, missing named mentions, and bad exclusions are
 # blocking. Display wording differences and semantically redundant duplicates
-# are warnings." One warning code, therefore; everything else gates.
+# are warnings." One warning code in the base map, therefore; everything else
+# gates. `omission` alone is triaged DOWN by `_severity` (semantic-audit/v2):
+# the base entry is its ceiling, never its floor.
 SEVERITY: dict[str, str] = {
     "omission": "blocking",
     "source_insufficiency": "blocking",
@@ -101,6 +111,67 @@ DIMENSION: dict[str, str] = {
 # point at in the candidate, so the source citation is mandatory instead.
 _EVIDENCE_REQUIRED = frozenset({"omission", "source_insufficiency"})
 
+# semantic-audit/v2 omission triage, code-owned. The candidate's own
+# `excluded` accounting is deliberately NOT consulted — trusting it would let
+# the extractor self-certify the very exclusions `bad_exclusion` exists to
+# audit. Instead: legal/EEO/privacy/benefits/anti-fraud boilerplate is
+# recognized lexically, on the CITED BLOCK's full text (casefolded substring
+# match). Kept tight: a phrase belongs here only when a block containing it is
+# boilerplate essentially always; decision-relevant lookalikes (visa
+# sponsorship, background-check requirements, clearance) stay out.
+_BOILERPLATE_MARKERS = (
+    "equal opportunity employer",
+    "equal employment opportunity",
+    "affirmative action",
+    "without regard to race",
+    "sexual orientation, gender identity",
+    "protected veteran",
+    "reasonable accommodation",
+    "privacy statement",
+    "privacy notice",
+    "privacy policy",
+    "candidate privacy",
+    "e-verify",
+    "recruiting fee",
+    "recruitment fee",
+    "fraudulent",
+    "phishing",
+    "will never ask",
+    "fair chance",
+    "arrest and conviction",
+)
+
+
+def _boilerplate(text: str) -> bool:
+    folded = text.casefold()
+    return any(marker in folded for marker in _BOILERPLATE_MARKERS)
+
+
+def _severity(
+    code: str,
+    targets: list[str],
+    evidence: dict[str, Any] | None,
+    blocks: dict[str, Block],
+) -> str:
+    """`SEVERITY[code]`, with the semantic-audit/v2 omission triage on top.
+
+    An `omission` is blocking only when it reports genuinely uncaptured
+    demand content: (1) a target naming a captured candidate object (any
+    non-block id) means the auditor itself located the proposition in the
+    candidate, so the complaint is quote granularity — a warning; (2) a cited
+    block whose text is code-classified boilerplate is outside the extraction
+    contract's omission scope — a warning. Triage only ever lowers; no code
+    is raised above its base severity.
+    """
+    base = SEVERITY[code]
+    if code != "omission" or base != "blocking":
+        return base
+    if any(t not in blocks for t in targets):
+        return "warning"
+    if evidence is not None and _boilerplate(blocks[evidence["block_id"]].text):
+        return "warning"
+    return base
+
 # code-owned bookkeeping the auditor must not see: `quality` is the verdict
 # this audit feeds (circular), and `extraction` names the model that produced
 # the candidate — spec §5 keeps audit and extraction identities apart.
@@ -129,6 +200,22 @@ A missing statement needs a source citation, not a fabricated claim ID.
 A disputed interpretation needs the candidate target and supporting source.
 When nothing is found, return an empty findings list. This is not certification.
 Do not issue accept/promote/retry commands or rewrite the candidate.
+"""
+
+# semantic-audit/v2: the omission scope the code-owned triage enforces, told
+# to the model up front so blocking findings arrive pre-scoped instead of
+# being demoted after the fact. Appended AFTER the spec-verbatim auditor
+# text, never edited into it.
+_SCOPE = """\
+Omission scope: report an omission only for decision-relevant demand content
+the candidate never captured — qualifications, responsibilities, employment
+constraints (attendance, travel, language, authorization, sponsorship,
+clearance, schedule), compensation, and hiring policy that constrains the
+applicant. Legal, EEO, privacy, benefits and anti-fraud boilerplate is not an
+omission; a RELEVANT clause wrongly excluded as boilerplate is bad_exclusion.
+When the candidate holds a statement for the proposition but its quote covers
+less of the sentence than you would have chosen, that is granularity, not a
+missing statement: cite the statement id in targets so it is triaged as such.
 """
 
 _EMIT_FORMAT_NOTE = """\
@@ -174,6 +261,8 @@ TEMPLATE = (
     _GUARD
     + "\n"
     + _AUDITOR
+    + "\n"
+    + _SCOPE
     + "\n"
     + _EMIT_FORMAT_NOTE
     + "\n"
@@ -423,12 +512,15 @@ def _finding(
     if not isinstance(explanation, str) or not explanation.strip():
         errors.append(f"{path}.explanation: expected a non-empty explanation")
         explanation = ""
+    # evidence binds first: the omission triage reads the RESOLVED block (a
+    # re-anchored citation must be triaged where the text actually is)
+    evidence = _evidence(path, code, node.get("evidence"), blocks, errors)
     return {
         "code": code,
-        "severity": SEVERITY[code],
+        "severity": _severity(code, targets, evidence, blocks),
         "dimension": DIMENSION[code],
         "targets": targets,
-        "evidence": _evidence(path, code, node.get("evidence"), blocks, errors),
+        "evidence": evidence,
         "explanation": explanation,
     }
 
