@@ -91,6 +91,13 @@ class Bundle:
     render_finding: Callable[[Finding], str] | None = None
     # the agreement gate's F1 calibration for this bundle's claim granularity
     agreement_f1_min: float = 0.80
+    # prior validator versions whose archived attempts fold under THIS tuple:
+    # versions that changed settlement policy only, leaving assembly and
+    # binding byte-identical, so a replayed corpus's attempt rows (kept at
+    # their archived identity) still feed a live fold. Without this, every
+    # live settle of a replayed document reads zero attempts and no-ops —
+    # the 2026-09-14 stranded-repair defect (2,001 docs).
+    compat_validators: tuple[str, ...] = ()
     # --- the semantic audit phase (spec §4 Auditor) -------------------------
     # `audit_version is None` means this tuple has NO audit phase: the runner
     # skips it and settlement folds without an audit probe, which is v1's
@@ -184,6 +191,9 @@ _V2 = Bundle(
     engine_emit_schema=_v2_engine_emit_schema,
     render_finding=_v2_render_finding,
     audit_version=_V2_AUDIT_VERSION,
+    # 17 -> 18 changed settlement (dispute-set adjudication) only; assembly,
+    # binding and the emit contract are byte-identical, so 17 attempts fold
+    compat_validators=("17",),
     audit_render=_v2_audit_render,
     audit_emit_schema=_v2_audit_emit_schema,
     audit_judge=_v2_audit_judge,

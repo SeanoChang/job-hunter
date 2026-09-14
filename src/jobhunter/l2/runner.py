@@ -1044,6 +1044,17 @@ def _fold(
         conn, dh, prompt_version=prompt_version, schema_version=schema_version,
         validator_version=validator_version,
     )
+    # a replayed corpus keeps attempt rows at their ARCHIVED validator while
+    # its derived rows live at the active one; fold the compat versions in
+    # (event order restored below) or the live path and the rebuild disagree
+    # about the same document — the invariant both exist to share
+    if validator_version == active.validator_version:
+        for compat in active.compat_validators:
+            attempts += extraction.attempts_for(
+                conn, dh, prompt_version=prompt_version, schema_version=schema_version,
+                validator_version=compat,
+            )
+        attempts.sort(key=lambda a: (a.started_at, a.attempt_no))
     reviews = extraction.reviews_for(
         conn, dh, prompt_version=prompt_version, schema_version=schema_version,
         validator_version=validator_version,

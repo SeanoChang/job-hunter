@@ -1698,3 +1698,24 @@ def test_every_phase_artifact_is_archived_before_the_extractions_row(
                             scripted(polarity_audit, clean_audit), repair=polarity_repair)
     run(v2_settings(), pg, Watched(store), engine=engine, max_docs=10, max_usd=5.0)
     assert order == ["audit", "repair", "repaired-audit", "extractions-row"]
+
+
+
+def test_live_settle_folds_attempts_from_compat_validators(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """The rebuild replays archived validator-17 attempts under 18 but keeps
+    the attempt rows at their archived identity; the live fold must read those
+    compat attempts or every later settle of a replayed doc is a silent no-op
+    (found live 2026-09-14: 2,001 docs stranded — repair artifacts archived,
+    rows frozen at their pre-repair content, updated_at still the rebuild's).
+    """
+    dh = seed_case(pg, "C01")
+    run(v2_settings(), pg, store, engine=AuditingEngine([result(emit_of("C01"))], clean_audit),
+        max_docs=10, max_usd=5.0)
+    # the replayed-corpus shape: attempts at the archived tuple, row at 18
+    pg.execute("UPDATE extraction_attempts SET validator_version='17' WHERE document_hash=%s",
+               (dh,))
+    pg.commit()
+    state = settle(pg, store, dh, GLOBS, "2026-09-14T09:00:00Z", bundle=get_bundle("v2"))
+    assert state.status == "validated"
