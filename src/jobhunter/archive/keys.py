@@ -120,6 +120,32 @@ def x_audit_key(attempt_key: str) -> str:
     return X_AUDITS_PREFIX + attempt_key[len(X_ATTEMPTS_PREFIX) :]
 
 
+# The bounded repair round (spec §4 Repair) is the third phase, and it gets the
+# third namespace for the audit's reasons: one artifact per candidate attempt,
+# derived rather than recorded, and never listed as an extraction.
+X_REPAIRS_PREFIX = "extractions/repairs/"
+
+
+def x_repair_key(attempt_key: str) -> str:
+    """The `semantic-repair/v1` artifact for one extraction attempt's candidate.
+
+    `extractions/attempts/<stamp>-<doc12>-s<slot>a<no>.json.gz`
+    -> `extractions/repairs/<stamp>-<doc12>-s<slot>a<no>.json.gz`
+
+    Write-once, and that is the one-round cap itself (spec §5: one repair round
+    per candidate): a key that already exists is a round already taken, whatever
+    it produced. A key that is not an extraction attempt raises — a repaired
+    candidate belongs to exactly one base candidate, and mapping garbage would
+    attach it to another document's.
+    """
+    if parse_x_attempt_key(attempt_key) is None:
+        raise ValueError(
+            f"not an extraction attempt key: {attempt_key!r}; a repair artifact is keyed "
+            "by the candidate attempt it repaired"
+        )
+    return X_REPAIRS_PREFIX + attempt_key[len(X_ATTEMPTS_PREFIX) :]
+
+
 X_CONSOLIDATION_PREFIX = "extractions/consolidation/"
 
 

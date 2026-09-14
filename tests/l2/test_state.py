@@ -1,10 +1,18 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
 
-from jobhunter.l2.agreement import cohort_hook
-from jobhunter.l2.state import DerivedState, Review, derive_state
+from jobhunter.l2.agreement import Dispute, cohort_hook
+from jobhunter.l2.state import (
+    GATE_DIMENSION_CODES,
+    DerivedState,
+    Review,
+    audit_touches_dispute,
+    derive_state,
+)
 from jobhunter.l2.v2.quality import assess
+from tests.l2.test_agreement import sample, statement
 from tests.l2.test_attempts import _attempt
 
 GLOBS = ["z-ai/glm-5.2*", "nvidia/*"]
@@ -228,12 +236,16 @@ WARNING_ONLY = _Audit("findings", "no_findings", 0)  # wording_redundancy only
 AUDIT_ERROR = _Audit("error", "error", 0)
 
 
-def _cohort(passed: bool, failures: tuple[str, ...] = ()):
-    """The agreement gate, scripted: the comparator is tested in test_agreement."""
+def _cohort(passed: bool, failures: tuple[str, ...] = (), dispute=None):
+    """The agreement gate, scripted: the comparator is tested in test_agreement.
+
+    `dispute` defaults to None — a hook that reports no dispute set is exactly
+    validator/16, and every row of the POLICY table below is still that.
+    """
 
     def hook(ok_attempts, slots_attempted):
         report = {"k": slots_attempted, "failures": list(failures), "mean_f1": None}
-        return (passed, ok_attempts[0].attempt_key, report)
+        return (passed, ok_attempts[0].attempt_key, report, dispute)
 
     return hook
 
@@ -291,8 +303,11 @@ POLICY = [
      "needs_review", "disagreement", "error", "error", 0, False),
     ("fail+absent", 2, False, ("importance",), None,
      "needs_review", "disagreement", "not_checked", "not_checked", 0, False),
+    # validator/18 moved this cell: an incomplete cohort whose medoid audits
+    # clean everywhere is adjudicated, because the audit is a whole-record
+    # check and the missing samples had nothing to add to it
     ("incomplete+clean", 2, False, ("sample_failed",), CLEAN,
-     "needs_review", "incomplete", "no_findings", "no_findings", 0, False),
+     "validated", "adjudicated", "no_findings", "no_findings", 0, True),
     ("incomplete+absent", 2, False, ("f1", "sample_failed"), None,
      "needs_review", "incomplete", "not_checked", "not_checked", 0, False),
     ("unsampled+clean", 1, True, (), CLEAN,
@@ -411,7 +426,7 @@ def test_an_audit_credits_only_the_candidate_it_audited() -> None:
 
     def moving_medoid(ok_attempts, slots_attempted):
         medoid = ok_attempts[0] if slots_attempted < 3 else ok_attempts[-1]
-        return (False, medoid.attempt_key, {"k": slots_attempted, "failures": ["f1"]})
+        return (False, medoid.attempt_key, {"k": slots_attempted, "failures": ["f1"]}, None)
 
     at_k2 = derive_state(events[:2], [], GLOBS, moving_medoid, audited.get)
     assert at_k2.status == "validated" and at_k2.sampling == "adjudicated"
@@ -472,7 +487,9 @@ def test_an_accept_filed_before_the_audit_artifact_is_still_a_ruling() -> None:
 
     def moving_medoid(ok_attempts, slots_attempted):
         medoid = ok_attempts[0] if slots_attempted < 3 else ok_attempts[-1]
-        return (False, medoid.attempt_key, {"k": slots_attempted, "failures": ["negation"]})
+        return (
+            False, medoid.attempt_key, {"k": slots_attempted, "failures": ["negation"]}, None
+        )
 
     # the counterfactual: with no artifact the accept lands on `needs_review`,
     # rules the record and stands against the late sample
@@ -566,3 +583,282 @@ def test_the_human_disposition_is_part_of_the_fold() -> None:
         events, [Review("retry", "2026-08-27T06:12:08Z", key="r1")], GLOBS, passing, audit
     )
     assert retried.human_review == "none"  # a fresh cohort carries no disposition
+
+
+# --- validator/18: scoped and incomplete-cohort adjudication ----------------
+# The plan's Policy section is normative
+# (docs/superpowers/plans/2026-09-13-repair-and-scoped-adjudication.md). Rule 3
+# is here (the gate/dimension map); rules 1 and 2 — the dispute set itself —
+# are in test_agreement.py, and the refutation fixtures at the bottom of this
+# file run the real gate, the real dispute set and this policy together.
+
+
+@dataclass(frozen=True)
+class _DetailedAudit:
+    """What `v2.audit.AuditOutcome` shows the fold: the dimensions and blocking
+    count `_Audit` carries, plus the two lists validator/18 scopes against."""
+
+    semantics: str
+    completeness: str
+    blocking: int
+    findings: list[dict[str, Any]] = field(default_factory=list)
+    unresolved: list[dict[str, Any]] = field(default_factory=list)
+
+
+def finding(
+    code: str, *targets: str, severity: str = "blocking", block: str | None = None
+) -> dict[str, Any]:
+    return {
+        "code": code,
+        "severity": severity,
+        "dimension": "semantics",
+        "targets": list(targets),
+        "evidence": None if block is None else {"block_id": block, "text": "x", "span": [0, 1]},
+        "explanation": "e",
+    }
+
+
+DISPUTE = Dispute(frozenset({"s9"}), frozenset({"b9"}))
+
+
+def test_the_gate_dimension_map_is_the_policy_table() -> None:
+    assert GATE_DIMENSION_CODES == {
+        "importance": ("importance",),
+        "negation": ("polarity_subject",),
+        "f1": ("omission", "unsupported_statement", "relationship"),
+    }
+
+
+@pytest.mark.parametrize("gate", sorted(GATE_DIMENSION_CODES))
+def test_a_failed_gate_makes_its_own_dimension_touch_the_dispute(gate: str) -> None:
+    """Rule 3: a finding in the failed gate's dimension restates the cohort's
+    disagreement whatever it points at — the dispute set cannot name a
+    disagreement about the MEANING of text both samples cited."""
+    for code in GATE_DIMENSION_CODES[gate]:
+        off_dispute = [finding(code, "s1")]
+        assert audit_touches_dispute(off_dispute, DISPUTE, [gate]) is True
+        assert audit_touches_dispute(off_dispute, DISPUTE, []) is False
+        other = [g for g in GATE_DIMENSION_CODES if g != gate]
+        assert audit_touches_dispute(off_dispute, DISPUTE, other) is False
+
+
+def test_a_blocking_finding_on_a_disputed_target_touches() -> None:
+    # a statement id in the medoid's namespace, and a block id from rule 2 —
+    # the finding's code is in no failed gate's dimension either time
+    assert audit_touches_dispute([finding("mention_linkage", "s9")], DISPUTE, ["f1"]) is True
+    assert audit_touches_dispute([finding("bad_exclusion", "b9")], DISPUTE, ["f1"]) is True
+    assert audit_touches_dispute([finding("mention_linkage", "s1")], DISPUTE, ["f1"]) is False
+
+
+def test_a_cited_block_counts_as_a_target() -> None:
+    """An omission cites the source it says is missing; that citation is what
+    the finding is about, so a disputed block reached through `evidence` is a
+    touch exactly as a disputed block in `targets` is."""
+    assert audit_touches_dispute(
+        [finding("bad_exclusion", "b1", block="b9")], DISPUTE, []
+    ) is True
+    assert audit_touches_dispute(
+        [finding("bad_exclusion", "b1", block="b1")], DISPUTE, []
+    ) is False
+
+
+def test_a_blocking_finding_that_points_at_nothing_touches() -> None:
+    assert audit_touches_dispute([finding("unsupported_statement")], DISPUTE, []) is True
+
+
+def test_warnings_never_touch_the_dispute() -> None:
+    assert audit_touches_dispute(
+        [finding("omission", "s9", severity="warning")], DISPUTE, ["f1"]
+    ) is False
+    assert audit_touches_dispute([], DISPUTE, ["f1", "negation", "importance"]) is False
+
+
+def test_an_unscoped_dispute_is_touched_by_every_blocking_finding() -> None:
+    unscoped = Dispute(frozenset(), frozenset(), scoped=False)
+    assert audit_touches_dispute([finding("mention_linkage", "s1")], unscoped, []) is True
+    assert audit_touches_dispute(
+        [finding("mention_linkage", "s1", severity="warning")], unscoped, []
+    ) is False
+
+
+# (id, cohort failures, dispute, audit, status, sampling, eligible)
+SCOPED = [
+    # the audit found nothing at all: validator/16's row, unchanged
+    ("clean", ("f1",), DISPUTE, _DetailedAudit("no_findings", "no_findings", 0),
+     "validated", "adjudicated", True),
+    # blocking, but off the dispute and out of the failed gate's dimension: the
+    # cohort's disagreement is cleared and the finding still gates eligibility
+    ("off-dispute", ("f1",), DISPUTE,
+     _DetailedAudit("findings", "no_findings", 1, [finding("mention_linkage", "s1")]),
+     "validated", "adjudicated", False),
+    ("on-dispute", ("f1",), DISPUTE,
+     _DetailedAudit("findings", "no_findings", 1, [finding("mention_linkage", "s9")]),
+     "needs_review", "disagreement", False),
+    ("on-gate-dimension", ("negation",), DISPUTE,
+     _DetailedAudit("findings", "no_findings", 1, [finding("polarity_subject", "s1")]),
+     "needs_review", "disagreement", False),
+    ("warning-only", ("f1",), DISPUTE,
+     _DetailedAudit("findings", "no_findings", 0,
+                    [finding("wording_redundancy", "s9", severity="warning")]),
+     "validated", "adjudicated", False),
+    # an unresolved question is a blocking item with no code: it clears only
+    # where it names something, and only off the dispute
+    ("unresolved-off-dispute", ("f1",), DISPUTE,
+     _DetailedAudit("no_findings", "no_findings", 1, [], [{"question": "q?",
+                                                           "targets": ["s1"]}]),
+     "validated", "adjudicated", False),
+    ("unresolved-on-dispute", ("f1",), DISPUTE,
+     _DetailedAudit("no_findings", "no_findings", 1, [], [{"question": "q?",
+                                                           "targets": ["s9"]}]),
+     "needs_review", "disagreement", False),
+    ("unresolved-unscoped", ("f1",), DISPUTE,
+     _DetailedAudit("no_findings", "no_findings", 1, [], [{"question": "q?", "targets": []}]),
+     "needs_review", "disagreement", False),
+    # the artifact's own count and its lists disagree: something is not visible
+    # here, and an invisible blocking item can never be shown to be off-dispute
+    ("uncountable", ("f1",), DISPUTE,
+     _DetailedAudit("findings", "no_findings", 3, [finding("mention_linkage", "s1")]),
+     "needs_review", "disagreement", False),
+    ("error", ("f1",), DISPUTE, _DetailedAudit("error", "error", 0),
+     "needs_review", "disagreement", False),
+    ("absent", ("f1",), DISPUTE, None, "needs_review", "disagreement", False),
+    # no dispute set reported: validator/16's whole-record rule is all there is
+    ("no-dispute-clean", ("f1",), None, _DetailedAudit("no_findings", "no_findings", 0),
+     "validated", "adjudicated", True),
+    ("no-dispute-blocking", ("f1",), None,
+     _DetailedAudit("findings", "no_findings", 1, [finding("mention_linkage", "s1")]),
+     "needs_review", "disagreement", False),
+    # an incomplete cohort adjudicates only on a whole-record clean audit:
+    # there is no cohort to scope a dispute against
+    ("incomplete-clean", ("sample_failed",), None,
+     _DetailedAudit("no_findings", "no_findings", 0), "validated", "adjudicated", True),
+    ("incomplete-off-dispute", ("sample_failed",), DISPUTE,
+     _DetailedAudit("findings", "no_findings", 1, [finding("mention_linkage", "s1")]),
+     "needs_review", "incomplete", False),
+    ("incomplete-warning", ("sample_failed",), None,
+     _DetailedAudit("findings", "no_findings", 0,
+                    [finding("wording_redundancy", "s1", severity="warning")]),
+     "needs_review", "incomplete", False),
+    ("incomplete-and-disagreeing", ("f1", "sample_failed"), DISPUTE,
+     _DetailedAudit("findings", "no_findings", 1, [finding("mention_linkage", "s1")]),
+     "needs_review", "incomplete", False),
+    ("incomplete-absent", ("sample_failed",), None, None,
+     "needs_review", "incomplete", False),
+]
+
+
+@pytest.mark.parametrize("row", SCOPED, ids=[r[0] for r in SCOPED])
+def test_the_validator_18_settlement_policy_table(row) -> None:
+    _id, failures, dispute, audit, status, sampling, eligible = row
+    events = [_slot(1, 1), _slot(2, 2)]
+    state = derive_state(
+        events, [], GLOBS, _cohort(False, failures, dispute), _audits(audit)
+    )
+    assert (state.status, state.sampling) == (status, sampling)
+    assert _eligible(state) is eligible
+    assert state.chosen_attempt == events[0].attempt_key
+
+
+def test_a_legacy_audit_view_can_never_be_scoped() -> None:
+    """`_Audit` is the three-field view the archive reader builds today. It
+    cannot enumerate its findings, so its blocking count stands on its own and
+    the fold stays at validator/16 — a reader that grows the lists is what
+    turns scoped adjudication on, never a missing field read as "no findings"."""
+    events = [_slot(1, 1), _slot(2, 2)]
+    cohort = _cohort(False, ("f1",), DISPUTE)
+    state = derive_state(events, [], GLOBS, cohort, _audits(BLOCKING_FINDING))
+    assert (state.status, state.sampling) == ("needs_review", "disagreement")
+    clean = derive_state(events, [], GLOBS, cohort, _audits(CLEAN))
+    assert (clean.status, clean.sampling) == ("validated", "adjudicated")
+
+
+def test_a_reopened_incomplete_adjudication_goes_back_to_incomplete() -> None:
+    """What the reviewer reopened is what goes back on record: an incomplete
+    cohort is not a disagreement, and a flag must not relabel it as one."""
+    events = [_slot(1, 1), _slot(2, 2)]
+    cohort = _cohort(False, ("sample_failed",))
+    settled = derive_state(events, [], GLOBS, cohort, _audits(CLEAN))
+    assert (settled.status, settled.sampling) == ("validated", "adjudicated")
+    reopened = derive_state(
+        events, [Review("flag", "2026-08-27T06:12:08Z", key="r1")], GLOBS,
+        cohort, _audits(CLEAN),
+    )
+    assert (reopened.status, reopened.sampling) == ("needs_review", "incomplete")
+    assert _eligible(reopened) is False
+
+
+# --- the five refutation shapes (2026-09-13 adversarial verification) --------
+# Naive statement-id overlap between finder samples false-cleared 4 of 9 docs.
+# Each row below is one refuted shape, run through the REAL agreement gate and
+# the REAL dispute set over v2 samples — only the audit is scripted.
+
+
+def _v2_cohort(medoid, sibling, audit):
+    events = [_slot(1, 1, record=medoid), _slot(2, 2, record=sibling)]
+    return derive_state(events, [], GLOBS, HOOK, _audits(audit))
+
+
+def _blocking(*findings: dict[str, Any]):
+    return _DetailedAudit("findings", "no_findings", len(findings), list(findings))
+
+
+def test_0df0f921_a_finding_on_an_unaligned_medoid_statement_is_not_clearable() -> None:
+    """The finder's targets overlap the medoid statement no sibling aligns —
+    the dispute in the medoid's own namespace, which cross-sample id matching
+    never produced."""
+    medoid = sample(statement("m_a", (0, 100)), statement("m_b", (200, 300), block="b2"))
+    sibling = sample(statement("s_a", (0, 100)))
+    parked = _v2_cohort(medoid, sibling, _blocking(finding("mention_linkage", "m_b")))
+    assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
+    cleared = _v2_cohort(medoid, sibling, _blocking(finding("mention_linkage", "m_a")))
+    assert (cleared.status, cleared.sampling) == ("validated", "adjudicated")
+
+
+def test_9d59cb88_an_omission_on_a_sibling_only_block_is_not_clearable() -> None:
+    """Every medoid statement aligns, so a statement-id dispute set is empty
+    and naive matching clears the doc. What the samples split on is a block the
+    medoid never cited, and the finding points straight at it."""
+    medoid = sample(statement("m_a", (0, 100), block="b1"))
+    sibling = sample(
+        statement("s_a", (0, 100), block="b1"), statement("s_b", (400, 500), block="b7")
+    )
+    parked = _v2_cohort(medoid, sibling, _blocking(finding("bad_exclusion", "b7")))
+    assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
+    cleared = _v2_cohort(medoid, sibling, _blocking(finding("bad_exclusion", "b1")))
+    assert (cleared.status, cleared.sampling) == ("validated", "adjudicated")
+
+
+def test_7b354fd4_a_shared_id_string_is_not_agreement() -> None:
+    """Both samples name a statement `s1`. They are different statements about
+    different text, and the medoid's is the one in dispute."""
+    medoid = sample(statement("s1", (0, 100), block="b1"), statement("s2", (200, 300)))
+    sibling = sample(statement("s1", (200, 300)), statement("s2", (900, 1000), block="b9"))
+    parked = _v2_cohort(medoid, sibling, _blocking(finding("importance", "s1")))
+    assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
+    cleared = _v2_cohort(medoid, sibling, _blocking(finding("importance", "s2")))
+    assert (cleared.status, cleared.sampling) == ("validated", "adjudicated")
+
+
+def test_27c9a9af_an_importance_split_is_carried_by_the_gate_dimension() -> None:
+    """Both samples cite the same text and disagree about what it demands: the
+    dispute set is empty by construction, and only rule 3 stands between the
+    cohort and a false clear."""
+    medoid = sample(statement("m_a", (0, 100), importance="required"))
+    sibling = sample(statement("s_a", (0, 100), importance="preferred"))
+    parked = _v2_cohort(medoid, sibling, _blocking(finding("importance", "m_a")))
+    assert parked.agreement and parked.agreement["failures"] == ["importance"]
+    assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
+    # a finding in another dimension over an empty dispute is off-dispute
+    cleared = _v2_cohort(medoid, sibling, _blocking(finding("mention_linkage", "m_a")))
+    assert (cleared.status, cleared.sampling) == ("validated", "adjudicated")
+
+
+def test_7f4303c2_an_omission_restating_an_f1_split_is_not_clearable() -> None:
+    """The omission cites a block the medoid DOES cite, so no disputed id
+    appears in it — but the cohort failed on statement-set F1 and `omission` is
+    exactly that failure's dimension."""
+    medoid = sample(statement("m_a", (0, 100), block="b1"), statement("m_b", (200, 300)))
+    sibling = sample(statement("s_a", (0, 100), block="b1"))
+    parked = _v2_cohort(medoid, sibling, _blocking(finding("omission", "b1")))
+    assert parked.agreement and parked.agreement["failures"] == ["f1"]
+    assert (parked.status, parked.sampling) == ("needs_review", "disagreement")

@@ -12,6 +12,11 @@ archive object backs.
 The thresholds here are part of VALIDATOR_VERSION: wiring this gate into the
 runner, or changing any constant, bumps it (a $0 archive replay).
 
+A failing gate also produces a DISPUTE SET (validator/18): the medoid
+statements no sibling aligns, plus the source blocks a sibling cites and the
+medoid never does. It is what settlement scopes audit findings against, and it
+is computed here because this is where the alignment lives.
+
 Pure: no I/O, no LLM, no store imports.
 """
 
@@ -30,7 +35,7 @@ def cohort_hook(
     records_of: Callable[[Any], Mapping[str, Any] | None],
     *,
     f1_min: float = F1_MIN,
-) -> Callable[[list[Any], int], tuple[bool, str, dict[str, Any]]]:
+) -> Callable[[list[Any], int], tuple[bool, str, dict[str, Any], Dispute | None]]:
     """The one agreement gate every fold shares (architecture review P0-1/P0-2:
     live settlement and rebuild replay must derive identically, and an
     incomplete cohort must never certify).
@@ -40,9 +45,18 @@ def cohort_hook(
     slot (the slot's first ok wins); fewer than two resolvable records means
     the audit never completed, which is itself a failure (`sample_failed`), as
     is any attempted slot beyond the resolvable ones.
+
+    The fourth return value is the cohort's dispute set (validator/18), and it
+    travels here rather than in the report because the report is JSON that
+    reaches the store: the dispute is policy input, not a published dimension.
+    It is `None` when nothing is in dispute to scope — a cohort that agreed, or
+    one too incomplete to compare — and the records it is computed from are the
+    ones this hook already loaded, so settlement never reads the archive twice.
     """
 
-    def hook(ok_attempts: list[Any], slots_attempted: int) -> tuple[bool, str, dict[str, Any]]:
+    def hook(
+        ok_attempts: list[Any], slots_attempted: int
+    ) -> tuple[bool, str, dict[str, Any], Dispute | None]:
         by_slot: dict[int, Any] = {}
         for a in ok_attempts:
             by_slot.setdefault(a.sample_slot, a)
@@ -63,14 +77,22 @@ def cohort_hook(
                 "failures": ["sample_failed"],
                 "medoid": 0,
             }
-            return (False, medoid_key, report)
-        result = agree([rec for _, rec in resolved], f1_min=f1_min)
+            return (False, medoid_key, report, None)
+        records = [rec for _, rec in resolved]
+        result = agree(records, f1_min=f1_min)
         report = dict(result.report)
         report["k"] = slots_attempted
         if slots_attempted > len(resolved):
             report["failures"] = [*report["failures"], "sample_failed"]
         medoid_slot = resolved[result.medoid][0]
-        return (not report["failures"], by_slot[medoid_slot].attempt_key, report)
+        passed = not report["failures"]
+        dispute = None
+        if not passed:
+            dispute = dispute_set(
+                records[result.medoid],
+                [rec for i, rec in enumerate(records) if i != result.medoid],
+            )
+        return (passed, by_slot[medoid_slot].attempt_key, report, dispute)
 
     return hook
 
@@ -87,6 +109,10 @@ class _Claim:
     span: tuple[int, int] | None
     importance: str | None
     negated: bool
+    # the id of the object this claim belongs to, in ITS OWN sample's namespace
+    # (v2's claim index areas are keyed by statement id; a v1 area has no id).
+    # Alignment never reads it — it exists so a disagreement can be named.
+    owner: str | None = None
 
 
 def _claims(profile: Mapping[str, Any]) -> list[_Claim]:
@@ -96,6 +122,7 @@ def _claims(profile: Mapping[str, Any]) -> list[_Claim]:
     for area in areas if isinstance(areas, list) else []:
         if not isinstance(area, Mapping):
             continue
+        owner = area.get("id")
         for c in area.get("claims") or []:
             if not isinstance(c, Mapping):
                 continue
@@ -115,9 +142,91 @@ def _claims(profile: Mapping[str, Any]) -> list[_Claim]:
                     span=span,
                     importance=imp if isinstance(imp, str) else None,
                     negated=bool(c.get("negated")),
+                    owner=owner if isinstance(owner, str) else None,
                 )
             )
     return out
+
+
+@dataclass(frozen=True, slots=True)
+class Dispute:
+    """What a disagreeing cohort disagrees ABOUT, as ids settlement can match.
+
+    `statement_ids` are the MEDOID's — statement ids (and the claim index's
+    unlinked fact-entry ids) are minted per sample and mean nothing across
+    samples, so a dispute is only ever expressed in the namespace of the one
+    candidate the audit actually ran on. `block_ids` are the exception that
+    proves it: block ids come from annotating the shared document (`blocks/1`),
+    so they are the one handle both samples use for the same thing.
+
+    `scoped` is False when some disagreement could not be named at all — a
+    claim index with no ids (v1's areas). An unnameable dispute is not an empty
+    one: nothing may be cleared against it.
+    """
+
+    statement_ids: frozenset[str] = frozenset()
+    block_ids: frozenset[str] = frozenset()
+    scoped: bool = True
+
+
+def _cited_blocks(record: Mapping[str, Any]) -> set[str]:
+    """Every block id this sample's STATEMENTS cite.
+
+    Statement evidence only, on both sides of rule 2, so the comparison is
+    symmetric: a block reached only through a mention, a fact aspect or an
+    importance citation is not a statement's claim on the source.
+    """
+    statements = record.get("statements")
+    blocks: set[str] = set()
+    for statement in statements if isinstance(statements, list) else []:
+        if not isinstance(statement, Mapping):
+            continue
+        for refs in statement.get("evidence") or []:
+            if isinstance(refs, Mapping) and isinstance(refs.get("block_id"), str):
+                blocks.add(refs["block_id"])
+    return blocks
+
+
+def dispute_set(
+    medoid_record: Mapping[str, Any], sibling_records: Sequence[Mapping[str, Any]]
+) -> Dispute:
+    """The cohort's disagreement, in the medoid's id namespace (validator/18).
+
+    Rule 1: align each sibling's claims to the medoid's with the same greedy
+    span-overlap alignment the gate scores, and take every medoid claim left
+    unaligned in ANY pair — an object one sibling matched and another did not
+    is still in dispute.
+    Rule 2: every block a sibling statement cites that no medoid statement
+    cites. This is the omission side of a statement-set F1 split, where the
+    medoid's own ids can name nothing because the medoid is what is missing.
+
+    The 2026-09-13 adversarial verification refuted the cheaper method — naive
+    statement-id overlap between samples — at 4 false clears in 9 documents.
+    Both defects it found are structural: ids repeat across samples without
+    meaning the same thing, and the omission side of a disagreement has no
+    medoid id at all. Hence alignment, not id matching, and blocks alongside
+    statements.
+
+    Pure and threshold-free: the gate owns the thresholds, this owns the names.
+    """
+    medoid_claims = _claims(medoid_record)
+    disputed: set[str] = set()
+    scoped = True
+    for sibling in sibling_records:
+        aligned = {i for i, _ in _align(medoid_claims, _claims(sibling))}
+        for i, claim in enumerate(medoid_claims):
+            if i in aligned:
+                continue
+            if claim.owner is None:
+                scoped = False
+            else:
+                disputed.add(claim.owner)
+    sibling_blocks: set[str] = set()
+    for sibling in sibling_records:
+        sibling_blocks |= _cited_blocks(sibling)
+    return Dispute(
+        frozenset(disputed), frozenset(sibling_blocks - _cited_blocks(medoid_record)), scoped
+    )
 
 
 def _jaccard(a: tuple[int, int], b: tuple[int, int]) -> float:

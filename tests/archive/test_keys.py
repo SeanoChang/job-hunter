@@ -95,6 +95,35 @@ def test_x_audit_key_is_derived_from_the_attempt_it_audited() -> None:
     assert keys.x_audit_key(attempt) == audit  # deterministic
 
 
+def test_x_repair_key_sits_beside_the_audit_of_the_same_candidate() -> None:
+    """`semantic-repair/v1` is a phase of its own (spec §5: the archived
+    extract/audit/repair phases are distinct), so its artifact takes its own
+    namespace and is derived from the candidate attempt it repaired — the one
+    thing live settlement, the catch-up scan and replay all hold."""
+    from jobhunter.archive import keys
+
+    at = datetime(2026, 8, 27, 6, 12, 4, tzinfo=UTC)
+    attempt = keys.x_attempt_key(at, "9f3ab" + "0" * 59, 1, 2)
+    repair = keys.x_repair_key(attempt)
+    assert repair == "extractions/repairs/2026/08/27T061204Z-9f3ab0000000-s1a2.json.gz"
+    assert repair != keys.x_audit_key(attempt)
+    # never an attempt: a repaired candidate is not an extraction sample
+    assert not repair.startswith(keys.X_ATTEMPTS_PREFIX)
+    assert keys.parse_x_attempt_key(repair) is None
+    assert keys.x_repair_key(attempt) == repair  # deterministic
+
+
+def test_x_repair_key_rejects_non_attempt_keys() -> None:
+    from jobhunter.archive import keys
+
+    at = datetime(2026, 8, 27, 6, 12, 4, tzinfo=UTC)
+    attempt = keys.x_attempt_key(at, "9f3ab" + "0" * 59, 1, 2)
+    for key in ("", "blobs/sha256/ab/x.gz", keys.x_audit_key(attempt),
+                keys.x_repair_key(attempt), "extractions/attempts/garbage.json.gz"):
+        with pytest.raises(ValueError):
+            keys.x_repair_key(key)
+
+
 def test_x_audit_key_rejects_non_attempt_keys() -> None:
     """Never silently map garbage: a derived key that is not one-to-one with a
     real attempt would let settle read some other document's audit."""

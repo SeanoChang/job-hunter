@@ -158,3 +158,128 @@ def test_rebuild_preserves_the_cohort_verdict(
         live["agreement"]["failures"]
     assert replayed["chosen_attempt"] == live["chosen_attempt"]
     assert replayed["profile"] == live["profile"]
+
+
+# --- bundle-aware replay (the re-settle campaign, validator/18) -------------
+
+
+def test_rebuild_replays_a_v2_document_with_its_audit_and_repair(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """Replay folds each archived tuple under the bundle that CLAIMS it.
+
+    A schema-2 record has no v1 shapes to fold through — no `demand_profile`
+    key, no v1 grammar behind its facts — so a replay that assumed v1 could not
+    reproduce the v2 surface at all. Under its own bundle it reproduces all of
+    it: the audit artifact and the repair the archive holds, the repaired
+    candidate in `extractions.profile`, and its mentions in the aggregate.
+    """
+    from tests.l2 import test_runner_v2 as v2
+
+    v2.seed_case(pg, "C04")
+    engine = v2.AuditingEngine([v2.result(v2.polarity_split_c04())],
+                               v2.scripted(v2.polarity_audit, v2.clean_audit),
+                               repair=v2.polarity_repair)
+    run(v2.v2_settings(), pg, store, engine=engine, max_docs=10, max_usd=5.0)
+    pg.commit()
+    assert v2.mention_rows_in(pg) == v2.C04_ROWS
+    before = _dump(pg)
+    assert before["extractions"][0]["profile"]["quality"]["search_eligible"] is True
+
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+    assert _dump(pg) == before
+    assert v2.mention_rows_in(pg) == v2.C04_ROWS
+
+
+def test_rebuild_settles_validator_17_attempts_under_the_current_policy(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """The re-settle campaign, without one extraction call: a validator-17
+    attempt replays under validator 18, its candidate re-derives identically, and
+    the audit the archive already holds — joined by the CANDIDATE HASH it names,
+    never by an attempt key — is the verdict it settles with."""
+    from datetime import UTC, datetime
+
+    from jobhunter.archive import keys
+    from jobhunter.l2.attempts import to_bytes
+    from jobhunter.l2.v2.assemble import assemble, candidate_hash
+    from tests.l2 import test_runner_v2 as v2
+    from tests.l2.test_attempts import _attempt
+
+    markdown = v2.source("C04")
+    dh = v2.seed_case(pg, "C04")
+    record = assemble(v2.emit_of("C04"), markdown, document_hash=dh,
+                      observed_model=v2.MODEL, at="2026-09-12T06:12:04Z")
+    # the candidate as validator 17 sealed it, hash and all
+    record["extraction"]["validator_version"] = "17"
+    record["extraction"]["candidate_hash"] = candidate_hash(record)
+    started = datetime(2026, 9, 12, 6, 12, 4, tzinfo=UTC)
+    attempt = _attempt(
+        attempt_key=keys.x_attempt_key(started, dh, 1, 1), document_hash=dh,
+        prompt_version=v2.V2_TUPLE[0], schema_version="2", validator_version="17",
+        requested_model=v2.MODEL, observed_model=v2.MODEL, record=record,
+        raw_response=json.dumps(v2.emit_of("C04")),
+        started_at="2026-09-12T06:12:04Z", finished_at="2026-09-12T06:12:09Z",
+    )
+    store.put(attempt.attempt_key, to_bytes(attempt))
+    v2.archive_audit(store, attempt.attempt_key,
+                     candidate_hash=record["extraction"]["candidate_hash"])
+
+    attempts, _ = rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+    assert attempts == 1
+    row = pg.execute("SELECT * FROM extractions").fetchone()
+    assert row is not None
+    assert (row["prompt_version"], row["schema_version"], row["validator_version"]) \
+        == v2.V2_TUPLE
+    assert row["status"] == "validated" and row["chosen_attempt"] == attempt.attempt_key
+    quality = row["profile"]["quality"]
+    assert (quality["semantics"], quality["completeness"]) == ("no_findings", "no_findings")
+    assert quality["search_eligible"] is True  # the carried audit is what clears it
+    assert v2.mention_rows_in(pg) == v2.C04_ROWS
+    prov = pg.execute("SELECT validator_version FROM extraction_attempts").fetchone()
+    assert prov is not None and prov["validator_version"] == "17"  # provenance untouched
+
+
+def test_rebuild_drops_an_audit_that_does_not_describe_the_replayed_candidate(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """The join is the candidate hash, and that is what makes it safe: when
+    today's validators re-judge an archived response into a DIFFERENT candidate,
+    the audit of the old one is not the new one's verdict. A record nothing
+    audited is `not_checked`, never a pass — and never eligible."""
+    from datetime import UTC, datetime
+
+    from jobhunter.archive import keys
+    from jobhunter.l2.attempts import to_bytes
+    from jobhunter.l2.v2.assemble import assemble
+    from tests.l2 import test_runner_v2 as v2
+    from tests.l2.test_attempts import _attempt
+
+    markdown = v2.source("C04")
+    dh = v2.seed_case(pg, "C04")
+    audited = assemble(v2.emit_of("C04"), markdown, document_hash=dh,
+                       observed_model=v2.MODEL, at="2026-09-12T06:12:04Z")
+    started = datetime(2026, 9, 12, 6, 12, 4, tzinfo=UTC)
+    attempt = _attempt(
+        attempt_key=keys.x_attempt_key(started, dh, 1, 1), document_hash=dh,
+        prompt_version=v2.V2_TUPLE[0], schema_version="2",
+        validator_version=v2.V2_TUPLE[2],
+        requested_model=v2.MODEL, observed_model=v2.MODEL, record=audited,
+        # what the re-judge produces is not what was audited
+        raw_response=json.dumps(v2.polarity_split_c04()),
+        started_at="2026-09-12T06:12:04Z", finished_at="2026-09-12T06:12:09Z",
+    )
+    store.put(attempt.attempt_key, to_bytes(attempt))
+    v2.archive_audit(store, attempt.attempt_key,
+                     candidate_hash=audited["extraction"]["candidate_hash"])
+
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+    row = pg.execute("SELECT * FROM extractions").fetchone()
+    assert row is not None and row["status"] == "validated"
+    quality = row["profile"]["quality"]
+    assert (quality["semantics"], quality["completeness"]) == ("not_checked", "not_checked")
+    assert quality["search_eligible"] is False
+    assert v2.mention_rows_in(pg) == []

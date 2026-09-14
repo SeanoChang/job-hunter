@@ -14,16 +14,23 @@ agreement gate (`agreement.cohort_hook`) and, under a bundle with an audit
 phase, the `semantic-audit/v1` probe. Both are injected, both are applied in
 event order, and a fold given neither is validator/15 exactly — which is what
 the v1 corpus keeps getting.
+
+The gate also hands over the cohort's DISPUTE SET, and validator/18's policy
+is what this module does with it: a disagreement whose audit found nothing
+blocking on what the samples split over settles instead of parking, while
+those same findings go on gating eligibility. `GATE_DIMENSION_CODES` and
+`audit_touches_dispute` are that policy's whole vocabulary.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
+from jobhunter.l2.agreement import Dispute
 from jobhunter.l2.attempts import Attempt
 
 
@@ -79,11 +86,16 @@ def _ts(value: str) -> datetime:
 
 
 # The agreement gate settle() injects: (in-glob ok attempts in slot order,
-# count of distinct slots attempted) -> (passed, medoid attempt key, report).
-# Pure derive_state stays LLM- and I/O-free; the hook loads the archived
-# records it needs, and the fold applies its verdict IN EVENT ORDER so a
-# later human accept lands on needs_review exactly as replay re-derives it.
-AgreementHook = Callable[[list[Attempt], int], tuple[bool, str, dict[str, Any]]]
+# count of distinct slots attempted) -> (passed, medoid attempt key, report,
+# dispute set). Pure derive_state stays LLM- and I/O-free; the hook loads the
+# archived records it needs, and the fold applies its verdict IN EVENT ORDER so
+# a later human accept lands on needs_review exactly as replay re-derives it.
+# The dispute set (validator/18) comes from the same loaded records, so scoping
+# a disagreement costs no second read; `None` means the cohort reported none,
+# and the fold then asks validator/16's whole-record question instead.
+AgreementHook = Callable[
+    [list[Attempt], int], tuple[bool, str, dict[str, Any], Dispute | None]
+]
 
 
 class AuditView(Protocol):
@@ -103,6 +115,76 @@ class AuditView(Protocol):
 
     @property
     def blocking(self) -> int: ...
+
+
+@runtime_checkable
+class AuditDetail(Protocol):
+    """The half of an audit artifact validator/18 needs to SCOPE it.
+
+    Separate from `AuditView` and tested with `isinstance`, because the two
+    readers differ: `v2.audit.AuditOutcome` carries both lists, while a reader
+    that only ever needed the dimensions and a count does not. A view without
+    them is not a view with none — it is a view that cannot show them, and the
+    fold must fall back to the whole-record rule rather than read absence as
+    "no findings" and clear a disagreement on missing evidence.
+    """
+
+    @property
+    def findings(self) -> Sequence[Mapping[str, Any]]: ...
+
+    @property
+    def unresolved(self) -> Sequence[Mapping[str, Any]]: ...
+
+
+#: Rule 3 of the validator/18 policy: which finding codes restate which failed
+#: gate. A cohort that split on importance and an auditor reporting a wrong
+#: importance are the same disagreement, whatever object each of them points
+#: at — the dispute set cannot name a disagreement about the MEANING of text
+#: both samples cited, so the gate's own dimension has to.
+GATE_DIMENSION_CODES: dict[str, tuple[str, ...]] = {
+    "importance": ("importance",),
+    "negation": ("polarity_subject",),
+    "f1": ("omission", "unsupported_statement", "relationship"),
+}
+
+#: what a dimension may say once its audit completed; `error` is never a pass
+_AUDITED = ("no_findings", "findings")
+
+
+def _ids_of(node: Mapping[str, Any]) -> set[str]:
+    """Every id a finding or question points at: its targets plus the block its
+    citation resolved to. The citation counts because an omission's whole
+    subject is the source it cites — `targets` may hold nothing else."""
+    targets = node.get("targets")
+    ids = {t for t in targets if isinstance(t, str)} if isinstance(targets, list) else set()
+    evidence = node.get("evidence")
+    if isinstance(evidence, Mapping) and isinstance(evidence.get("block_id"), str):
+        ids.add(evidence["block_id"])
+    return ids
+
+
+def audit_touches_dispute(
+    findings: Sequence[Mapping[str, Any]], dispute: Dispute, failed_gates: Sequence[str]
+) -> bool:
+    """Does any BLOCKING finding land on what the cohort disagreed about?
+
+    Three ways in, any of which is a touch: the finding's code is the failed
+    gate's own dimension (rule 3); one of the ids it points at is disputed; or
+    it points at nothing this policy can place, which is not the same as
+    pointing somewhere harmless. Warnings never gate — spec §4 calls display
+    wording and redundant duplicates warnings precisely so they do not — and an
+    unscoped dispute (`scoped=False`) is touched by every blocking finding.
+    """
+    codes = {code for gate in failed_gates for code in GATE_DIMENSION_CODES.get(gate, ())}
+    for f in findings:
+        if f.get("severity") == "warning":
+            continue
+        if not dispute.scoped or f.get("code") in codes:
+            return True
+        ids = _ids_of(f)
+        if not ids or ids & dispute.statement_ids or ids & dispute.block_ids:
+            return True
+    return False
 
 
 # The audit probe settle injects: an attempt key -> that candidate's archived
@@ -130,6 +212,44 @@ def _audit_clean(audit: AuditView | None) -> bool:
     )
 
 
+def _audit_scoped_clear(
+    audit: AuditView | None, dispute: Dispute | None, failed_gates: Sequence[str]
+) -> bool:
+    """validator/18: a completed audit whose blocking items are all OFF the
+    cohort's dispute — the question `_audit_clean` asks of a whole record,
+    asked only where the samples actually split.
+
+    Every blocking item has to be accounted for before any of them can be
+    placed: the artifact's own `blocking` count is authoritative, so a count
+    the visible lists cannot reproduce (a view that does not carry them, an
+    unresolved question, a truncated write) means something blocking is
+    invisible here, and an invisible item can never be shown to be off-dispute.
+    Unresolved questions are then judged like findings but with no code to map:
+    one that names a disputed id — or names nothing — keeps the document.
+    """
+    if audit is None or dispute is None:
+        return False
+    if audit.semantics not in _AUDITED or audit.completeness not in _AUDITED:
+        return False
+    if not isinstance(audit, AuditDetail):
+        return False
+    findings = [f for f in audit.findings if isinstance(f, Mapping)]
+    unresolved = [q for q in audit.unresolved if isinstance(q, Mapping)]
+    blocking = [f for f in findings if f.get("severity") != "warning"]
+    if audit.blocking != len(blocking) + len(unresolved):
+        return False
+    if any(_question_touches(q, dispute) for q in unresolved):
+        return False
+    return not audit_touches_dispute(blocking, dispute, failed_gates)
+
+
+def _question_touches(question: Mapping[str, Any], dispute: Dispute) -> bool:
+    if not dispute.scoped:
+        return True
+    ids = _ids_of(question)
+    return not ids or bool(ids & dispute.statement_ids or ids & dispute.block_ids)
+
+
 def derive_state(
     attempts: Sequence[Attempt],
     reviews: Sequence[Review],
@@ -148,6 +268,9 @@ def derive_state(
     chosen: str | None = None
     agreement: dict[str, Any] | None = None
     sampling = "not_requested"
+    # what an adjudicated `sampling` was before the audit carried it, so a
+    # reviewer who reopens the record gets the cohort's own verdict back
+    adjudicated_from = "disagreement"
     human_review = "none"
     ok_in_glob: list[Attempt] = []
     slots_attempted: set[int] = set()
@@ -188,30 +311,48 @@ def derive_state(
                 and len(slots_attempted) >= 2
                 and status in ("validated", "needs_review")
             ):
-                passed, medoid_key, report = agreement_of(
+                passed, medoid_key, report, dispute = agreement_of(
                     ok_in_glob, len(slots_attempted)
                 )
                 status = "validated" if passed else "needs_review"
                 chosen = medoid_key
                 agreement = report
+                failures = report.get("failures") or []
                 # The sampling dimension (spec §6) is a fact about the cohort,
                 # so it is derived with or without an audit hook.
                 if passed:
                     sampling = "complete"
-                elif "sample_failed" in (report.get("failures") or []):
-                    sampling = "incomplete"  # attempted slots the gate could not use
+                elif "sample_failed" in failures:
+                    # An incomplete cohort has no comparison to scope against —
+                    # the samples that would have disagreed do not exist — so
+                    # validator/18 adjudicates it only on the conservative
+                    # whole-record question: an audit of the medoid that found
+                    # nothing blocking ANYWHERE. This arm takes precedence when
+                    # a cohort is both incomplete and disagreeing, which is the
+                    # stricter of the two tests.
+                    sampling = "incomplete"
+                    if _audit_clean(audit_of(medoid_key)):
+                        status, sampling = "validated", "adjudicated"
+                        adjudicated_from = "incomplete"
                 else:
-                    sampling = "disagreement"
                     # validator/16 adjudication: the cohort is COMPLETE and
                     # disagrees, and a full-source audit of the medoid found
                     # nothing. The audit outranks sampling variance (spec §6:
                     # "Sampling is not a substitute for semantic audit"), so
-                    # the document settles instead of parking for review. An
-                    # incomplete cohort is never adjudicated — there is no
-                    # cohort to outrank — and a ruled record is never touched
-                    # (this whole branch runs only while `not ruled`).
-                    if _audit_clean(audit_of(medoid_key)):
+                    # the document settles instead of parking for review. A
+                    # ruled record is never touched (this whole branch runs
+                    # only while `not ruled`).
+                    # validator/18 adds the scoped question underneath it: an
+                    # audit that found blocking work to do, none of it on what
+                    # the samples split over, adjudicates the DISAGREEMENT just
+                    # as well — and its findings go on gating `search_eligible`
+                    # through `blocking`, exactly as for a cohort that agreed.
+                    sampling = "disagreement"
+                    audit = audit_of(medoid_key)
+                    gates = [f for f in failures if f != "sample_failed"]
+                    if _audit_clean(audit) or _audit_scoped_clear(audit, dispute, gates):
                         status, sampling = "validated", "adjudicated"
+                        adjudicated_from = "disagreement"
             if event.outcome == "over_budget":
                 if status is None:
                     status = "quarantined"
@@ -226,6 +367,7 @@ def derive_state(
                 # successes and their agreement never carry into the re-run
                 status, chosen, agreement = None, None, None
                 sampling = "not_requested"
+                adjudicated_from = "disagreement"
                 human_review = "none"
                 ok_in_glob.clear()
                 slots_attempted.clear()
@@ -243,9 +385,10 @@ def derive_state(
                 ruled = True
                 if sampling == "adjudicated":
                     # a reviewer (or the refuter) reopened an adjudication:
-                    # what remains on record is the disagreement it settled,
+                    # what remains on record is the cohort verdict it settled —
+                    # a disagreement, or an incomplete cohort (validator/18) —
                     # never a claim that the audit still carries the cohort
-                    sampling = "disagreement"
+                    sampling = adjudicated_from
             elif event.verb == "accept" and (
                 status == "needs_review"
                 # validator/16: the audit probe is TIMELESS — `audit_of` answers

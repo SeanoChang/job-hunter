@@ -27,7 +27,19 @@ from typing import Any
 # emitted string — codex smuggled a NUL into a statement topic (2026-09-12,
 # doc 3ad988f4) and the record crossed every check to die at the jsonb
 # boundary; now it is a content error the retry loop hands back to the model.
-VALIDATOR_VERSION = "17"
+# validator/18: settlement gets the DISPUTE SET (`agreement.dispute_set`) and
+# adjudicates against it. A complete cohort that disagrees settles `validated`
+# /`adjudicated` when its audit's blocking items all land off what the samples
+# split over — the medoid statements no sibling aligns, the blocks only a
+# sibling cites, and the finding codes of the failed gate's own dimension
+# (`state.GATE_DIMENSION_CODES`). An INCOMPLETE cohort adjudicates only on the
+# whole-record question validator/16 asked, and a reopened adjudication goes
+# back to the cohort verdict it settled. Off-dispute findings keep gating
+# `search_eligible` exactly as they do for a cohort that agreed: adjudication
+# moves the lifecycle, never the eligibility rules. The method is the
+# 2026-09-13 adversarial verifier's — naive statement-id overlap between
+# samples was refuted there at 4 false clears in 9 documents.
+VALIDATOR_VERSION = "18"
 
 _CMP_PHRASES: list[tuple[str, str]] = [
     (r"at\s+least|a\s+minimum\s+of|minimum\s+of|minimum|no\s+less\s+than", "gte"),
