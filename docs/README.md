@@ -25,6 +25,10 @@ dispositions of the 2026-08-17 external review:
 
 ## Architecture reviews
 
+- `2026-09-14-review-quarantine-failure-analysis.md` — **current analysis,
+  advisory**: full-coverage failure-pattern analysis of the 475 docs stuck
+  under the v2/validator-18 tuple (427 needs_review + 48 quarantined);
+  confirmed defects with file:line evidence and ranked fix levers.
 - `2026-09-06-l2-data-quality-audit.md` — **current analysis, advisory**:
   read-only audit of all stored L2 states, live MCP source/profile comparisons,
   demonstrated semantic and completeness defects, and prioritized quality gates.
