@@ -102,6 +102,7 @@ from __future__ import annotations
 import contextlib
 import gzip
 import json
+import re
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -210,6 +211,86 @@ def _bundle_for(prompt_version: str | None, schema_version: str | None) -> Bundl
             if candidate.schema_version == schema_version:
                 return candidate
     return _pinned(get_bundle(DEFAULT_BUNDLE))
+
+
+# --- the retry delta check (plan Task 4) -----------------------------------
+# A retry is handed the candidate it is editing (prompt v10) and is asked to
+# change only what the errors name. This is the half that checks it got one:
+# the top-level collections a retry can quietly empty, walked as (dotted path,
+# accessor). Anything here that was in the prior emit, is gone from the retry,
+# and is named by none of the fed errors is `retry:unexplained_deletion` — the
+# retry-collapse shape the 2026-09-14 analysis found dominating the
+# relationship cluster, where the verifier sees a smaller, perfectly clean
+# record and has nothing to complain about.
+_RETRY_TRACKED: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("statements", ("statements",)),
+    ("relations.groups", ("relations", "groups")),
+    ("relations.conditions", ("relations", "conditions")),
+    ("relations.example_sets", ("relations", "example_sets")),
+    ("facts.entries", ("facts", "entries")),
+    ("mentions", ("mentions",)),
+)
+
+
+def _tracked(emit: dict[str, Any], path: tuple[str, ...]) -> list[Any]:
+    node: Any = emit
+    for key in path:
+        if not isinstance(node, dict):
+            return []
+        node = node.get(key)
+    return node if isinstance(node, list) else []
+
+
+def _object_ids(items: list[Any]) -> set[str]:
+    return {i["id"] for i in items if isinstance(i, dict) and isinstance(i.get("id"), str)}
+
+
+def _named_by(errors: list[str], tokens: tuple[str, ...]) -> bool:
+    """Whether any fed error names one of `tokens` — an object's id or the path
+    it sat at in the prior emit, in either spelling the error strings use
+    (`statements[3]` from the verifier and the binder, `statements/3` from the
+    JSON-schema validator). Bounded on both sides so `s1` does not match `s10`
+    and `facts/entries/1` does not match `facts/entries/12`: a loose match here
+    silently disarms the check.
+    """
+    for token in tokens:
+        # hyphen is in the id alphabet (emit schema: ^[A-Za-z0-9_-]{1,40}$),
+        # so it bounds nothing: `s1` must not be named by an error about
+        # `s1-alt` (2026-09-16 review)
+        pattern = rf"(?<![0-9A-Za-z_-]){re.escape(token)}(?![0-9A-Za-z_-])"
+        if any(re.search(pattern, error) for error in errors):
+            return True
+    return False
+
+
+def unexplained_deletions(
+    prior: dict[str, Any], current: dict[str, Any], fed: list[str]
+) -> list[str]:
+    """Content errors for objects this retry dropped without being asked to.
+
+    `prior` is the last emit that PARSED — the one the retry prompt showed —
+    and `fed` is exactly the error list that prompt listed, so the index paths
+    in those errors address `prior`'s own objects. An object is a candidate for
+    this check when it is usable in `prior` (an object with an id — anything
+    else the retry cannot be asked to carry forward) and no fed error names it;
+    objects the errors DID name may change or vanish freely, since fixing them
+    is what the retry was for.
+    """
+    errors: list[str] = []
+    for dotted, path in _RETRY_TRACKED:
+        before = _tracked(prior, path)
+        kept = _object_ids(_tracked(current, path))
+        for index, item in enumerate(before):
+            if not isinstance(item, dict):
+                continue
+            oid = item.get("id")
+            if not isinstance(oid, str) or not oid or oid in kept:
+                continue
+            here = (oid, f"{dotted}[{index}]", "/".join((*path, str(index))))
+            if _named_by(fed, here):
+                continue
+            errors.append(f"retry:unexplained_deletion at {dotted}[{index}] (id={oid})")
+    return errors
 
 
 class LockLost(RuntimeError):
@@ -2453,11 +2534,19 @@ def _extract_doc_inner(
     for rung_i, model in enumerate(candidates):
         last_rung = rung_i == len(candidates) - 1
         prior_errors: list[str] = []
+        # The last candidate this rung produced: the response verbatim (fed
+        # back so the retry edits it instead of regenerating) and its parsed
+        # form (the delta check's baseline). The two move together and only on
+        # an attempt that parsed. A rung change resets them with `prior_errors`
+        # — a fresh model is a fresh generation, not an edit of another model's
+        # answer.
+        prior_raw: str | None = None
+        prior_emit: dict[str, Any] | None = None
         transports = 0
         content_no = 0
         while content_no < CONTENT_ATTEMPTS:
             t0 = now()
-            prompt = bundle.render(markdown, prior_errors)
+            prompt = bundle.render(markdown, prior_errors, prior_raw)
             # Hold NO open transaction while the model runs (a minute-plus): end the
             # pre-call reads (markdown, next_attempt_no) and any prior attempt's
             # insert-only write here, so the connection is transaction-idle — the
@@ -2549,29 +2638,62 @@ def _extract_doc_inner(
                                 ladder_exhausted=exhausted, started_at=t0,
                                 tokens=(result.input_tokens, result.output_tokens),
                                 cost=result.cost_usd)
-                prior_errors = errors
+                # An unparseable answer replaces neither half: there is nothing
+                # to show a retry and nothing it could have deleted. The next
+                # attempt is shown — and judged against — the last candidate
+                # that actually existed, so what the prompt carries and what the
+                # delta check compares can never be two different emits. The
+                # errors it is asked to fix are BOTH halves: the parse failure
+                # and whatever the shown candidate actually failed on — feeding
+                # the parse error alone would pair a valid-looking candidate
+                # with "fix ONLY these issues" and invite returning it verbatim
+                # (2026-09-16 review).
+                prior_errors = errors + [
+                    e for e in prior_errors
+                    if not e.startswith("response is not valid JSON")
+                ]
                 continue
+            # this attempt parsed, so it is answerable for what the last one
+            # held: anything valid and unnamed that is missing is a content
+            # error, carried alongside whatever else this attempt got wrong.
+            # A deletion error in the fed list is an order to RESTORE, never
+            # permission to drop again — it does not "name" the object into
+            # the allowed-change set.
+            asked = [e for e in prior_errors
+                     if not e.startswith("retry:unexplained_deletion")]
+            dropped = (
+                unexplained_deletions(prior_emit, emit, asked)
+                if prior_emit is not None else []
+            )
+            if not dropped:
+                # a flagged emit never becomes the baseline: advancing to it
+                # would judge the next attempt against the collapsed candidate,
+                # find nothing missing, and publish the loss one attempt later
+                # (2026-09-16 review probe) — the check must survive a repeat.
+                prior_raw, prior_emit = result.raw_text, emit
             if schema_errors := validate_emit(emit, bundle.schema_version):
+                errors = schema_errors + dropped
                 archive_attempt(requested_model=model, observed_model=observed,
                                 outcome="schema_invalid", raw_response=result.raw_text,
-                                fed=prior_errors, produced=schema_errors,
+                                fed=prior_errors, produced=errors,
                                 ladder_exhausted=exhausted, started_at=t0,
                                 tokens=(result.input_tokens, result.output_tokens),
                                 cost=result.cost_usd)
-                prior_errors = schema_errors
+                prior_errors = errors
                 continue
             try:
                 record = bundle.assemble(emit, markdown, document_hash=dh,
                                          normalizer_version=NORMALIZER_VERSION,
                                          observed_model=observed, at=iso(t0))
             except AssembleError as exc:
+                errors = exc.errors + dropped
                 archive_attempt(requested_model=model, observed_model=observed,
                                 outcome="attribution_failed", raw_response=result.raw_text,
-                                fed=prior_errors, produced=exc.errors,
+                                fed=prior_errors, produced=errors,
                                 ladder_exhausted=exhausted, started_at=t0,
                                 tokens=(result.input_tokens, result.output_tokens),
                                 cost=result.cost_usd)
-                prior_errors = exc.errors
+                prior_errors = errors
                 continue
             report = bundle.verify(record, markdown)
             findings: list[dict[str, Any]] = [
@@ -2579,12 +2701,18 @@ def _extract_doc_inner(
                  "severity": f.severity, "detail": f.detail}
                 for f in report.findings
             ]
-            if report.status == "fail":
+            if report.status == "fail" or dropped:
                 _rf = bundle.render_finding
                 errors = [
                     _rf(f) if _rf is not None else f"{f.check}:{f.code} at {f.path}"
                     for f in report.findings if f.severity == "error"
-                ]
+                ] + dropped
+                # A retry that deleted unnamed work is a content failure even
+                # when the verifier passes it: the record it would publish is
+                # the lossy one, and the ladder is where that gets another go.
+                # `attribution_failed` is the vocabulary's content-failure
+                # outcome (state.py settles it like the rest, quarantining an
+                # exhausted ladder) — a new outcome would change settlement.
                 archive_attempt(requested_model=model, observed_model=observed,
                                 outcome="attribution_failed", raw_response=result.raw_text,
                                 fed=prior_errors, produced=errors, findings=findings,
@@ -2650,7 +2778,12 @@ def _take_samples(
     while slots:
         slot, retried, content_no, prior_errors = slots.pop(0)
         t0 = now()
-        prompt = bundle.render(markdown, prior_errors)
+        # No prior candidate here, deliberately: the retry-carries-the-candidate
+        # evidence (2026-09-14) is about the slot-1 ladder, and a sample slot's
+        # value to the agreement gate is that it was generated independently.
+        # Extending the edit contract to sample retries is a measured change,
+        # not a free one.
+        prompt = bundle.render(markdown, prior_errors, None)
         session.do(lambda c: c.commit())  # transaction-idle while the model runs
         try:
             def _call(p: str = prompt, m: str = model) -> EngineResult:

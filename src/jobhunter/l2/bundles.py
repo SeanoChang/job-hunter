@@ -77,7 +77,13 @@ class Bundle:
     validator_version: str
     template: str
     prompt_sha: Callable[[], str]
-    render: Callable[[str, list[str]], str]
+    # (markdown, prior_errors, prior_emit) -> the prompt. The third argument is
+    # the failed attempt's raw response, so a retry can be an edit of it rather
+    # than a fresh generation (v10 retry contract); a bundle whose prompt has no
+    # retry-candidate block takes it and ignores it. It has no default HERE on
+    # purpose: every call site then has to say what the previous attempt left
+    # behind, and "nothing" is a decision that reads in the code.
+    render: Callable[[str, list[str], str | None], str]
     assemble: Callable[..., dict[str, Any]]  # raises AssembleError
     verify: Callable[[dict[str, Any], str], Report]
     profile_of: Callable[[dict[str, Any]], dict[str, Any]]
@@ -112,6 +118,19 @@ class Bundle:
     audit_judge: Callable[[dict[str, Any], dict[str, Any], str, str], Any] | None = None
 
 
+def _v1_render_prompt(
+    markdown: str, prior_errors: list[str], prior_emit: str | None = None
+) -> str:
+    """v1's frozen two-argument `render`, behind the widened bundle signature.
+
+    v1's prompt bytes are frozen (`demand-profile/v5` is a shipped corpus
+    partition), so it has no retry-candidate block to put `prior_emit` in and
+    the argument is accepted and dropped. Adapting here rather than touching
+    `l2/prompt.py` is what keeps that guarantee literal.
+    """
+    return _v1_render(markdown, prior_errors)
+
+
 def _v1_profile_of(record: dict[str, Any]) -> dict[str, Any]:
     """The stored profile blob for a v1 record (was `runner._profile_of`)."""
     return {"facts": record["facts"], "demand_profile": record["demand_profile"]}
@@ -143,7 +162,7 @@ _V1 = Bundle(
     validator_version=_V1_VALIDATOR_VERSION,
     template=_V1_TEMPLATE,
     prompt_sha=_v1_prompt_sha,
-    render=_v1_render,
+    render=_v1_render_prompt,
     assemble=_assemble_v1,
     verify=_verify_v1,
     profile_of=_v1_profile_of,

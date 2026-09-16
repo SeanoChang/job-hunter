@@ -54,8 +54,14 @@ def test_v1_bundle_is_todays_constants() -> None:
     assert b.template == prompt_mod.TEMPLATE
     assert b.prompt_sha() == prompt_mod.prompt_sha()
     # the exact objects, not lookalikes: a wrapper here would be a second
-    # implementation to keep in step
-    assert b.render is prompt_mod.render
+    # implementation to keep in step. `render` is the one exception — the
+    # bundle signature carries a retry candidate v1's frozen two-argument
+    # renderer has nowhere to put — so it is pinned by its bytes instead: the
+    # adapter must render v1's prompt and drop the argument, never grow a
+    # retry block of its own.
+    assert b.render("Requirements\n\nA degree.\n", ["e"], '{"statements": []}') == (
+        prompt_mod.render("Requirements\n\nA degree.\n", ["e"])
+    )
     assert b.assemble is assemble_v1
     assert b.verify is verify_v1
 
@@ -154,7 +160,7 @@ def test_v2_bundle_is_the_v6_engine_tuple() -> None:
     b = get_bundle("v2")
     assert b.name == "v2"
     assert (b.prompt_version, b.schema_version, b.validator_version) == (
-        "demand-profile/v9",
+        "demand-profile/v10",
         "2",
         "19",
     )
@@ -212,18 +218,18 @@ def test_v2_registers_the_semantic_audit_phase() -> None:
 def test_the_validator_bump_keeps_the_replay_tuple() -> None:
     """Replay keys on (prompt, schema) alone, so 15 -> 16 re-queues the corpus
     under a fresh validator without orphaning the archived v2 attempts."""
-    b = get_bundle_for_tuple("demand-profile/v9", "2")
+    b = get_bundle_for_tuple("demand-profile/v10", "2")
     assert b is get_bundle("v2") and b.validator_version == "19"
 
 
 def test_get_bundle_for_tuple_maps_both_engine_tuples() -> None:
     assert get_bundle_for_tuple("demand-profile/v5", "1") is get_bundle("v1")
-    assert get_bundle_for_tuple("demand-profile/v9", "2") is get_bundle("v2")
+    assert get_bundle_for_tuple("demand-profile/v10", "2") is get_bundle("v2")
     # a historical or unregistered tuple is a KeyError, never a silent v1
     with pytest.raises(KeyError):
         get_bundle_for_tuple("demand-profile/v4", "1")
     with pytest.raises(KeyError):
-        get_bundle_for_tuple("demand-profile/v9", "1")
+        get_bundle_for_tuple("demand-profile/v10", "1")
 
 
 def _env(**extra: str) -> dict[str, str]:

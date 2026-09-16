@@ -50,6 +50,7 @@ from jobhunter.l2.runner import (
     _Session,
     run,
     settle,
+    unexplained_deletions,
 )
 from jobhunter.l2.state import globs_to_regex
 from jobhunter.l2.v2.assemble import assemble
@@ -64,7 +65,7 @@ Conn = psycopg.Connection[dict[str, Any]]
 CASES = pathlib.Path(__file__).parent / "v2" / "cases"
 GLOBS = ("z-ai/*",)
 MODEL = "z-ai/glm-5.2:free"
-V2_TUPLE = ("demand-profile/v9", "2", "19")
+V2_TUPLE = ("demand-profile/v10", "2", "19")
 # C04's three certifications, as `profile_mentions` rows once an audit clears
 # the record: the importance is the linked STATEMENT's, not the area's.
 C04_ROWS = [
@@ -421,7 +422,7 @@ def test_the_v2_prompt_and_schema_are_archived_write_once(
     seed_case(pg, "C01")
     run(v2_settings(), pg, store, engine=AuditingEngine([result(emit_of("C01"))], clean_audit),
         max_docs=10, max_usd=5.0)
-    assert store.exists(keys.x_prompt_key("demand-profile/v9"))
+    assert store.exists(keys.x_prompt_key(V2_TUPLE[0]))
     assert store.exists(keys.x_schema_key("2"))
     attempt = attempts_in(store)[0]
     assert attempt.outcome == "ok"
@@ -1732,3 +1733,245 @@ def test_live_settle_folds_attempts_from_compat_validators(
     pg.commit()
     state = settle(pg, store, dh, GLOBS, "2026-09-14T09:00:00Z", bundle=get_bundle("v2"))
     assert state.status == "validated"
+
+
+# --- retries carry the prior candidate (plan Task 4) -----------------------
+
+
+class RecordingEngine(AuditingEngine):
+    """`AuditingEngine` that also keeps every EXTRACTION prompt it was handed.
+
+    Told apart the same way the phases are: an audit or repair prompt carries a
+    candidate-hash line, an extraction never does.
+    """
+
+    def __init__(self, script: list[Any], audit: Any, repair: Any = None) -> None:
+        super().__init__(script, audit, repair)
+        self.extractions: list[str] = []
+
+    def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
+        if "CANDIDATE HASH:" not in prompt:
+            self.extractions.append(prompt)
+        return super().complete(prompt, schema, model)
+
+
+def broken_c09() -> dict[str, Any]:
+    """A C09 emit whose importance evidence cites a block that does not exist.
+
+    One binding error, on `statements[0]` — it names neither the group nor the
+    condition, which is what makes the collapse below unexplained.
+    """
+    emit = copy.deepcopy(emit_of("C09"))
+    emit["statements"][0]["importance_evidence"][0]["block_id"] = "b000009"
+    return emit
+
+
+def collapsed_c09() -> dict[str, Any]:
+    """The retry-collapse shape, verbatim from the 2026-09-14 analysis: the
+    binding error is fixed and the populated `relations` — a group and a
+    condition nothing complained about — are gone.
+
+    Every dangling reference to them is scrubbed too, so the emit binds and
+    verifies clean: without the delta check this attempt is simply `ok`, and
+    the alternatives route is silently lost.
+    """
+    emit = copy.deepcopy(emit_of("C09"))
+    emit["relations"] = {"groups": [], "conditions": [], "example_sets": []}
+    emit["statements"][1]["condition_ids"] = []
+    emit["facts"]["entries"][0]["condition_ids"] = []
+    return emit
+
+
+def test_a_retry_that_drops_unnamed_relations_is_a_content_error(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """The confirmed retry-collapse shape, caught by code.
+
+    Attempt 1 fails one binding error on `statements[0]`. Attempt 2 fixes it and
+    deletes the group and the condition no error named — schema-valid, bindable,
+    verifier-clean, and wrong. The delta check turns it into a content error and
+    the ladder goes round again; attempt 3 brings the relations back.
+    """
+    seed_case(pg, "C09")
+    engine = RecordingEngine(
+        [result(broken_c09()), result(collapsed_c09())] + [result(emit_of("C09"))] * 3,
+        clean_audit,
+    )
+    summary = run(v2_settings(), pg, store, engine=engine, max_docs=10, max_usd=5.0)
+    assert summary.validated == 1
+
+    ladder = [a for a in attempts_in(store) if a.sample_slot == 1]
+    assert [a.outcome for a in ladder] == [
+        "attribution_failed", "attribution_failed", "ok",
+    ]
+    deletions = [v["error"] for v in ladder[1].validation if "error" in v]
+    assert deletions == [
+        "retry:unexplained_deletion at relations.groups[0] (id=g_education_route)",
+        "retry:unexplained_deletion at relations.conditions[0] (id=c_equivalent_route)",
+    ]
+    # fed to the next rung like any other content error
+    assert ladder[2].prior_errors == deletions
+    # the retry prompt carried the candidate it was asked to edit
+    assert json.dumps(broken_c09()) in engine.extractions[1]
+    assert "Do not remove or rewrite anything the errors do not name" in engine.extractions[1]
+    # and the settled record kept the alternatives route
+    assert [g["id"] for g in row_of(pg)["profile"]["relations"]["groups"]] == [
+        "g_education_route"
+    ]
+
+
+def test_a_repeated_collapse_is_never_published(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """The check must not disarm after firing once (2026-09-16 review probe).
+
+    Attempt 3 repeats attempt 2's collapse. The baseline stays the last
+    un-flagged candidate and a deletion error is an order to restore, never
+    permission to drop — so the loss is refused all the way down the ladder
+    and the document quarantines instead of publishing the lossy record."""
+    seed_case(pg, "C09")
+    engine = RecordingEngine(
+        [result(broken_c09()), result(collapsed_c09()), result(collapsed_c09())],
+        clean_audit,
+    )
+    summary = run(v2_settings(), pg, store, engine=engine, max_docs=10, max_usd=5.0)
+    assert summary.validated == 0
+    assert summary.quarantined == 1
+
+    ladder = [a for a in attempts_in(store) if a.sample_slot == 1]
+    assert [a.outcome for a in ladder] == [
+        "attribution_failed", "attribution_failed", "attribution_failed",
+    ]
+    # attempt 3 was shown — and judged against — the un-flagged candidate
+    assert json.dumps(broken_c09()) in engine.extractions[2]
+    assert [v["error"] for v in ladder[2].validation if "error" in v] == [
+        "retry:unexplained_deletion at relations.groups[0] (id=g_education_route)",
+        "retry:unexplained_deletion at relations.conditions[0] (id=c_equivalent_route)",
+    ]
+
+
+def test_a_retry_that_only_fixes_what_was_named_is_not_a_deletion(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """The other half of the check: a minimal targeted edit must pass silently.
+
+    Same failed attempt 1, but the retry keeps every object and fixes only the
+    block the error named — nothing is flagged and the document validates on
+    attempt 2.
+    """
+    seed_case(pg, "C09")
+    engine = RecordingEngine([result(broken_c09())] + [result(emit_of("C09"))] * 3, clean_audit)
+    summary = run(v2_settings(), pg, store, engine=engine, max_docs=10, max_usd=5.0)
+    assert summary.validated == 1
+
+    ladder = [a for a in attempts_in(store) if a.sample_slot == 1]
+    assert [a.outcome for a in ladder] == ["attribution_failed", "ok"]
+    archived = attempts_in(store)
+    assert not any(
+        "unexplained_deletion" in str(v.get("error", "")) for a in archived for v in a.validation
+    )
+    assert json.dumps(broken_c09()) in engine.extractions[1]
+
+
+def test_a_retry_after_an_unparseable_answer_carries_no_candidate(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """There is nothing to preserve when the prior answer never parsed: the
+    retry renders exactly today's bytes and the delta check cannot fire — it has
+    no baseline, so a smaller retry is not a deletion.
+    """
+    markdown = source("C09")
+    seed_case(pg, "C09")
+    engine = RecordingEngine(
+        [EngineResult("Sorry — here is the JSON: {", MODEL, 20, 4, 0.0),
+         result(collapsed_c09())] + [result(collapsed_c09())] * 2,
+        clean_audit,
+    )
+    summary = run(v2_settings(), pg, store, engine=engine, max_docs=10, max_usd=5.0)
+    assert summary.validated == 1
+
+    ladder = [a for a in attempts_in(store) if a.sample_slot == 1]
+    assert [a.outcome for a in ladder] == ["schema_invalid", "ok"]
+    retry = engine.extractions[1]
+    assert "Sorry — here is the JSON:" not in retry
+    assert retry == get_bundle("v2").render(markdown, ladder[1].prior_errors, None)
+
+
+def test_an_error_names_an_object_only_on_a_whole_token(
+    # no fixtures: the delta check is pure, and this is the boundary that
+    # decides whether it fires at all
+) -> None:
+    """`s1` is not named by an error about `s10`, and `facts/entries/1` is not
+    named by one about `facts/entries/12`.
+
+    A loose (substring) match here silently disarms the check on exactly the
+    documents that have enough objects to lose one.
+    """
+    prior = {
+        "statements": [{"id": "s1"}, {"id": "s10"}],
+        "facts": {"entries": [{"id": "f_a"}, {"id": "f_b"}]},
+    }
+    gone: dict[str, Any] = {"statements": [], "facts": {"entries": []}}
+
+    assert unexplained_deletions(prior, gone, ["statements[1]: bad polarity"]) == [
+        "retry:unexplained_deletion at statements[0] (id=s1)",
+        "retry:unexplained_deletion at facts.entries[0] (id=f_a)",
+        "retry:unexplained_deletion at facts.entries[1] (id=f_b)",
+    ]
+    # hyphen is an id character too (emit schema id pattern ^[A-Za-z0-9_-]+$):
+    # an error about `s1-alt` must not name `s1`
+    prior_h = {"statements": [{"id": "s1"}, {"id": "s1-alt"}]}
+    gone_h: dict[str, Any] = {"statements": []}
+    assert unexplained_deletions(prior_h, gone_h, ["statements[1]: bad id s1-alt"]) == [
+        "retry:unexplained_deletion at statements[0] (id=s1)",
+    ]
+    assert unexplained_deletions(prior, gone, ["facts/entries/12: unknown family"]) == [
+        "retry:unexplained_deletion at statements[0] (id=s1)",
+        "retry:unexplained_deletion at statements[1] (id=s10)",
+        "retry:unexplained_deletion at facts.entries[0] (id=f_a)",
+        "retry:unexplained_deletion at facts.entries[1] (id=f_b)",
+    ]
+    # an id the errors DO name may vanish: fixing it is what the retry was for
+    assert unexplained_deletions(prior, gone, ["mentions[0]: ungrounded (id=s10)"]) == [
+        "retry:unexplained_deletion at statements[0] (id=s1)",
+        "retry:unexplained_deletion at facts.entries[0] (id=f_a)",
+        "retry:unexplained_deletion at facts.entries[1] (id=f_b)",
+    ]
+
+
+def test_an_unparseable_answer_mid_ladder_keeps_the_last_real_candidate(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """The prompt and the delta baseline are always the same emit.
+
+    Attempt 1 produces a candidate, attempt 2 comes back as broken JSON, and
+    attempt 3 is shown attempt 1's candidate again — so the objects it is held
+    to are exactly the ones it was handed. Letting the unparseable answer
+    replace the shown text but not the baseline would judge attempt 3 against a
+    candidate it never saw.
+    """
+    seed_case(pg, "C09")
+    engine = RecordingEngine(
+        [result(broken_c09()),
+         EngineResult("{ truncated", MODEL, 20, 4, 0.0),
+         result(collapsed_c09())],
+        clean_audit,
+    )
+    summary = run(v2_settings(), pg, store, engine=engine, max_docs=10, max_usd=5.0)
+    assert summary.quarantined == 1
+
+    ladder = [a for a in attempts_in(store) if a.sample_slot == 1]
+    assert [a.outcome for a in ladder] == [
+        "attribution_failed", "schema_invalid", "attribution_failed",
+    ]
+    assert json.dumps(broken_c09()) in engine.extractions[2]
+    assert [v["error"] for v in ladder[2].validation if "error" in v] == [
+        "retry:unexplained_deletion at relations.groups[0] (id=g_education_route)",
+        "retry:unexplained_deletion at relations.conditions[0] (id=c_equivalent_route)",
+    ]
+    # the retry is asked to fix what the SHOWN candidate failed on, not only
+    # the parse noise the unparseable answer added (2026-09-16 review): the
+    # fed errors carry both halves
+    fed = ladder[2].prior_errors
+    assert any(e.startswith("response is not valid JSON") for e in fed)
+    assert any("statements[0]" in e for e in fed)

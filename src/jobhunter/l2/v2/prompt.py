@@ -16,14 +16,27 @@ computes offsets and never reproduces a block's text from memory. The
 extractor text below is the spec's §4 contract, verbatim — it is a contract,
 not a paraphrase target (the v1 lesson: prompt and validator drifting apart
 when reworded independently).
+
+v10 (2026-09-16) — a retry now carries the candidate it is editing. Through
+v9 a retry rendered source + errors and no JSON, so "fix ONLY these issues"
+asked for a fresh generation of everything else: the 2026-09-14 failure
+analysis found retries routinely dropping populated `relations` and mentions
+no error had named. `render` takes the prior response and echoes it back with
+a preservation instruction, and `runner` checks the edit it gets back
+(`retry:unexplained_deletion`). The v10 content rules — importance
+disambiguation, conservative proficiency, the populated relations and
+block_accounting examples — land under this same identifier, so the template
+bytes freeze once.
 """
 
 from __future__ import annotations
 
+import json
+
 from jobhunter.hashing import sha256_hex
 from jobhunter.l2.v2.source import annotate
 
-PROMPT_VERSION = "demand-profile/v9"
+PROMPT_VERSION = "demand-profile/v10"
 
 _GUARD = """\
 You are extracting a demand profile from ONE job posting document, given to \
@@ -217,12 +230,53 @@ def _prior_errors_block(prior_errors: list[str]) -> str:
     )
 
 
-def render(markdown: str, prior_errors: list[str]) -> str:
+def _prior_emit_block(prior_emit: str | None, prior_errors: list[str]) -> str:
+    """The failed candidate itself, echoed back for a minimal edit.
+
+    Without it a retry is a fresh generation that happens to be shown some
+    error strings, which is why retries delete work nobody complained about
+    (2026-09-14 analysis: populated `relations` vanishing from a retry asked
+    to fix one span). Handing the model its own prior answer makes the retry
+    an edit of that answer.
+
+    Two cases render nothing at all, byte-identical to a v9 retry: text that
+    is not a JSON object — a truncated or prose-wrapped body teaches a broken
+    shape and offers nothing to minimally edit — and a call with no errors
+    fed, where "fix ONLY the listed errors" would name an empty list.
+    """
+    if not prior_emit or not prior_errors:
+        return ""
+    try:
+        parsed = json.loads(prior_emit)
+    except ValueError:
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    return (
+        "Your previous answer, verbatim:\n"
+        "<<<PREVIOUS JSON\n"
+        f"{prior_emit}\n"
+        "PREVIOUS JSON>>>\n"
+        "Return the SAME JSON, minimally edited to fix ONLY the listed\n"
+        "errors. Do not remove or rewrite anything the errors do not name:\n"
+        "every statement, relation, condition, example set, fact entry,\n"
+        "mention and accounting row the errors are silent about must come\n"
+        "back unchanged, with the same id. Deleting or rewriting content no\n"
+        "error named is itself a validation failure.\n\n"
+    )
+
+
+def render(markdown: str, prior_errors: list[str], prior_emit: str | None = None) -> str:
+    """The prompt for one attempt: source blocks, then whatever the previous
+    attempt left behind — its errors, and the candidate they were raised
+    against. Both retry pieces sit after the closing source fence, so text
+    derived from an untrusted document never lands ahead of that document."""
     source_blocks = "\n".join(f"{b.id}: {b.text}" for b in annotate(markdown))
     return (
         _TEMPLATE_HEAD
         + source_blocks
         + _TEMPLATE_MID
         + _prior_errors_block(prior_errors)
+        + _prior_emit_block(prior_emit, prior_errors)
         + _TEMPLATE_TAIL
     )
