@@ -1,8 +1,72 @@
+from typing import Any
+
 import pytest
 
+from jobhunter.hashing import sha256_hex
 from jobhunter.l2.schemas import validate_record
 from jobhunter.l2.v2.assemble import AssembleError, assemble, candidate_hash
 from tests.l2.v2.conftest import AT, DOC_HASH, MD, make_emit
+
+# --- validator/19: the unit cited as its own span ---------------------------
+
+UNIT_MD = (
+    "Sales leadership\n"
+    "Enterprise sales leadership: 12+ years in a quota-carrying role.\n"
+)
+UNIT_DOC_HASH = sha256_hex(UNIT_MD.encode("utf-8"))
+
+
+def unit_anchor_emit() -> dict[str, Any]:
+    """The 2026-09-15 external probe: the number and its unit cited separately.
+
+    b000001 "Sales leadership" / b000002 the requirement line. The value aspect
+    cites "12+" and the unit aspect cites "years" — the exact split that made
+    `derive_quantity` read a dimensionless count of 12 under validator/18.
+    """
+    whole = {"block_id": "b000002", "text": None, "occurrence": None}
+    value = {"block_id": "b000002", "text": "12+", "occurrence": 0}
+    unit = {"block_id": "b000002", "text": "years", "occurrence": 0}
+    return {
+        "source_assessment": {"usability": "usable", "evidence": None, "note": None},
+        "statements": [{
+            "id": "s1", "kind": "qualification", "subject": "candidate",
+            "topic": "Enterprise sales leadership", "evidence": [whole],
+            "importance": "required", "importance_evidence": [whole],
+            "polarity": "positive", "polarity_evidence": None,
+            "proficiency": None, "proficiency_evidence": None,
+            "condition_ids": [], "fact_ids": ["f1"], "unresolved": [],
+        }],
+        "relations": {"groups": [], "conditions": [], "example_sets": []},
+        "facts": {
+            "presence": {
+                "experience": {"state": "stated", "evidence": [value]},
+                "compensation": {"state": "none_found", "evidence": None},
+                "quantities": {"state": "none_found", "evidence": None},
+                "dates": {"state": "none_found", "evidence": None},
+            },
+            "entries": [{
+                "id": "f1", "family": "experience", "statement_ids": ["s1"],
+                "condition_ids": [], "scope": {"kind": "overall", "evidence": None},
+                "date_kind": None, "component": None,
+                "evidence": {"value": [value], "comparison": None, "unit": [unit],
+                             "currency": None, "component": None, "applicability": None},
+            }],
+        },
+        "mentions": [],
+        "areas": [{"id": "a1", "name": "Experience", "kind": "capability",
+                   "statement_ids": ["s1"], "evidence": None}],
+        "block_accounting": [
+            {"block_id": "b000001", "disposition": "context", "ref_ids": [],
+             "exclusion_reason": None, "evidence": None},
+            {"block_id": "b000002", "disposition": "statements", "ref_ids": ["s1"],
+             "exclusion_reason": None, "evidence": None},
+        ],
+    }
+
+
+def unit_anchor_record() -> dict[str, Any]:
+    return assemble(unit_anchor_emit(), UNIT_MD, document_hash=UNIT_DOC_HASH,
+                    observed_model="gpt-5.6-luna", at=AT)
 
 
 def test_assemble_binds_derives_and_validates() -> None:
@@ -18,7 +82,7 @@ def test_assemble_binds_derives_and_validates() -> None:
                                    "inclusive_min": True, "inclusive_max": None,
                                    "unit": "month"}
     assert record["extraction"]["schema_version"] == "2"
-    assert record["extraction"]["validator_version"] == "18"
+    assert record["extraction"]["validator_version"] == "19"
     assert record["document"]["annotation_version"] == "blocks/1"
     assert record["extraction"]["candidate_hash"] == candidate_hash(record)
 
@@ -65,6 +129,32 @@ def test_a_control_character_in_any_emitted_string_is_a_content_error() -> None:
     with pytest.raises(AssembleError) as exc:
         assemble(emit, MD, document_hash=DOC_HASH, observed_model="m", at=AT)
     assert any("control character" in e and "topic" in e for e in exc.value.errors)
+
+
+def test_a_separately_cited_unit_anchor_reaches_the_derivation() -> None:
+    """validator/19, the external probe: "12+" with the unit cited as its own
+    span is twelve YEARS. Under 18 assembly never passed `evidence["unit"]` to
+    `derive_quantity` (only the compensation branch forwarded its anchors), so
+    the record stored a dimensionless count of 12 and every check agreed."""
+    record = unit_anchor_record()
+    assert validate_record(record, "2") == []
+    derived = record["facts"]["entries"][0]["derived"]
+    assert derived["state"] == "parsed"
+    assert derived["quantity"] == {"dimension": "duration", "comparison": "gte",
+                                   "min_value": 144, "max_value": None,
+                                   "inclusive_min": True, "inclusive_max": None,
+                                   "unit": "month"}
+
+
+def test_an_unknown_unit_anchor_keeps_the_fact_present_unparsed() -> None:
+    """Null-over-guess at the assembly boundary: a cited unit the grammar does
+    not know leaves the fact stated-but-unparsed, never a guessed count."""
+    emit = unit_anchor_emit()
+    emit["facts"]["entries"][0]["evidence"]["unit"] = [
+        {"block_id": "b000002", "text": "quota", "occurrence": 0}]
+    record = assemble(emit, UNIT_MD, document_hash=UNIT_DOC_HASH, observed_model="m", at=AT)
+    derived = record["facts"]["entries"][0]["derived"]
+    assert derived["state"] == "present_unparsed" and derived["quantity"] is None
 
 
 def test_newlines_and_tabs_in_emitted_strings_stay_legal() -> None:

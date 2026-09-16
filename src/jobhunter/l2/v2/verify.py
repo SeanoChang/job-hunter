@@ -79,7 +79,12 @@ def _rederive(family: str, evidence: dict[str, Any]) -> dict[str, Any]:
     """
     value = _cited(evidence["value"]) or ""
     if family in ("experience", "quantity"):
-        quantity = derive_quantity(value, _cited(evidence["comparison"]))
+        # validator/19: the cited unit anchor, forwarded here as independently
+        # as assembly forwards it — a fix applied to the writer alone would
+        # leave this call reading "12+" as a count and passing the record
+        quantity = derive_quantity(
+            value, _cited(evidence["comparison"]), _cited(evidence["unit"])
+        )
         return {"state": "parsed" if quantity else "present_unparsed",
                 "quantity": quantity, "money": None, "date": None}
     if family == "compensation":
@@ -365,14 +370,43 @@ def _check_mentions(record: dict[str, Any], report: Report) -> None:
                          stored_key=mention["normalized_key"])
 
 
+def _evidence_blocks(record: dict[str, Any]) -> dict[str, set[str]]:
+    """object id -> the block ids that object's OWN evidence cites.
+
+    Statements and fact entries are the two kinds `block_accounting.ref_ids`
+    may name, so they are the two kinds indexed here. Ids are unique per
+    namespace (`duplicate_id` is its own finding); a collision across the two
+    merges, which can only make the coverage check below more forgiving.
+    """
+    index: dict[str, set[str]] = {}
+    for statement in record["statements"]:
+        cited = index.setdefault(statement["id"], set())
+        for key in ("evidence", "importance_evidence", "polarity_evidence",
+                    "proficiency_evidence"):
+            cited.update(ref["block_id"] for ref in statement[key] or [])
+        for issue in statement["unresolved"]:
+            cited.update(ref["block_id"] for ref in issue["evidence"] or [])
+    for entry in record["facts"]["entries"]:
+        cited = index.setdefault(entry["id"], set())
+        for refs in entry["evidence"].values():
+            cited.update(ref["block_id"] for ref in refs or [])
+        if entry["scope"] is not None:
+            cited.update(ref["block_id"] for ref in entry["scope"]["evidence"] or [])
+    return index
+
+
 def _check_accounting(record: dict[str, Any], blocks: list[Block], report: Report) -> None:
-    """Every nonempty block is accounted for, and an exclusion says why.
+    """Every nonempty block is accounted for, an exclusion says why, and a
+    coverage claim is backed by evidence from the block it claims.
 
     Coverage is structural, never semantic recall: an accounted block can still
-    hide a missed clause, which is why the requirement-language tripwire below
-    is a warning pointed at the auditor rather than a pass/fail verdict.
+    hide a missed clause, which is why the requirement-language tripwires below
+    are warnings pointed at the auditor rather than pass/fail verdicts. What
+    validator/19 does make an error is the empty claim — a `statements` row
+    whose named objects quote nothing from that block at all.
     """
     by_id = {block.id: block for block in blocks}
+    cited_blocks = _evidence_blocks(record)
     accounted: set[str] = set()
     excluded: set[str] = set()
     for i, entry in enumerate(record["block_accounting"]):
@@ -391,12 +425,35 @@ def _check_accounting(record: dict[str, Any], blocks: list[Block], report: Repor
                 report.warn("accounting", path, "exclusion_requirement_language",
                             block_id=block_id, reason=entry["exclusion_reason"],
                             excerpt=block.text.strip()[:80])
-        elif entry["exclusion_reason"] is not None:
-            report.error("accounting", path, "exclusion_reason_missing",
-                         disposition=disposition, reason=entry["exclusion_reason"])
+        else:
+            if entry["exclusion_reason"] is not None:
+                report.error("accounting", path, "exclusion_reason_missing",
+                             disposition=disposition, reason=entry["exclusion_reason"])
+            # validator/19: a section kept as `context` still speaks in
+            # obligations when its content mapped to no statement kind — the
+            # taxonomy-gap shape behind whole dropped sections (2026-09-14
+            # analysis (b)). Same warning contract as the excluded tripwire:
+            # the auditor decides whether a rule was lost, not this module.
+            if (disposition == "context" and block is not None
+                    and _REQUIREMENT_LANGUAGE.search(block.text)):
+                report.warn("accounting", path, "context_requirement_language",
+                            block_id=block_id, excerpt=block.text.strip()[:80])
         if disposition in _DISPOSITIONS_NEEDING_REFS and not entry["ref_ids"]:
             report.error("accounting", path, "refs_missing",
                          block_id=block_id, disposition=disposition)
+        elif (disposition in _DISPOSITIONS_NEEDING_REFS and block is not None
+              and not any(block_id in cited_blocks.get(ref_id, frozenset())
+                          for ref_id in entry["ref_ids"])):
+            # validator/19: "extracted into these objects" is a claim about
+            # THIS block, so one of the objects has to quote it. v1 checked
+            # this (`possible_omission`, validator/7) and v2 never ported it:
+            # 14 duty bullets accounted to three statements all evidenced from
+            # the intro paragraph passed every check (2026-09-14 analysis (a)).
+            # One reference is enough — a partially quoted block is the
+            # auditor's question, never this check's.
+            report.error("accounting", path, "coverage_unevidenced",
+                         block_id=block_id, ref_ids=list(entry["ref_ids"]),
+                         excerpt=block.text.strip()[:80])
     for block in blocks:
         if block.id not in accounted:
             report.error("accounting", "block_accounting", "block_unaccounted",

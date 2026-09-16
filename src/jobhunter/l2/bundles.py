@@ -192,8 +192,16 @@ _V2 = Bundle(
     render_finding=_v2_render_finding,
     audit_version=_V2_AUDIT_VERSION,
     # 17 -> 18 changed settlement (dispute-set adjudication) only; assembly,
-    # binding and the emit contract are byte-identical, so 17 attempts fold
-    compat_validators=("17",),
+    # binding and the emit contract are byte-identical, so 17 attempts fold.
+    # 18 -> 19 DOES change derivation and the check table. Only rebuild.py
+    # re-judges (it re-assembles and re-verifies the archived raw emit, so a
+    # unit-anchor emit lands at whatever 19 makes of it); the LIVE fold
+    # serves attempt rows and records exactly as archived — an already-
+    # extracted document keeps its 18-derived values until a replay, which is
+    # why Task 6 measures by replay, never by the live path. Dropping 18 here
+    # would strand those documents mid-ladder instead — the 2026-09-14
+    # stranded-repair defect this field exists for.
+    compat_validators=("17", "18"),
     audit_render=_v2_audit_render,
     audit_emit_schema=_v2_audit_emit_schema,
     audit_judge=_v2_audit_judge,

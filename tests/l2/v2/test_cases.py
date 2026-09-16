@@ -61,11 +61,23 @@ def codes(record: dict[str, Any], markdown: str) -> set[str]:
     return {f.code for f in verify(record, markdown).findings}
 
 
-def clean(record: dict[str, Any], markdown: str) -> None:
-    """The record describes its document exactly: schema, spans, and re-derivation."""
+def clean(record: dict[str, Any], markdown: str, *, warns: tuple[str, ...] = ()) -> None:
+    """The record describes its document exactly: schema, spans, and re-derivation.
+
+    `warns` names the blocks validator/19's widened requirement-language
+    tripwire is expected to flag — a section kept as `context` whose text still
+    speaks in obligations is the auditor's business, never a verdict on the
+    record. Naming them keeps the assertion exact: an unexpected warning fails
+    here exactly as an unexpected error does.
+    """
     assert validate_record(record, "2") == []
     report = verify(record, markdown)
-    assert report.findings == [], [(f.code, f.path, f.detail) for f in report.findings]
+    errors = [f for f in report.findings if f.severity == "error"]
+    assert errors == [], [(f.code, f.path, f.detail) for f in errors]
+    warnings = [f for f in report.findings if f.severity == "warning"]
+    assert [(f.code, f.detail["block_id"]) for f in warnings] == [
+        ("context_requirement_language", block_id) for block_id in warns
+    ], [(f.code, f.path, f.detail) for f in warnings]
 
 
 def by_id(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -177,7 +189,9 @@ def test_c04_preferred_certification_never_inherits_area_importance() -> None:
     """Audit defect 4: `profile_mentions` took importance from the presentation
     area, so a preferred CPA next to a required qualification read as required."""
     record, markdown = build("C04")
-    clean(record, markdown)
+    # "### What We Require" is kept as `context`; validator/19 points the
+    # auditor at it without touching the record's verdict
+    clean(record, markdown, warns=("b000004",))
     cpa = by_id(record["statements"])["s_cpa"]
     assert cpa["importance"] == "preferred" and cpa["polarity"] == "positive"
 
@@ -207,7 +221,8 @@ def test_c05_every_named_technology_has_a_source_linked_mention() -> None:
     """Audit defect 5: the technical claims existed and the mention array was
     empty, so nothing was searchable."""
     record, markdown = build("C05")
-    clean(record, markdown)
+    # the "### **Required Qualifications:**" heading, kept as `context`
+    clean(record, markdown, warns=("b000001",))
     keys = {mention["normalized_key"] for mention in record["mentions"]}
     assert {"java", "spring boot", "docker", "kubernetes"} <= keys
     for mention in record["mentions"]:

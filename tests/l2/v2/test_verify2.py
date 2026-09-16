@@ -21,8 +21,12 @@ def _codes(record: dict[str, Any], markdown: str = MD) -> set[str]:
 
 def test_clean_record_passes(v2_record: dict[str, Any]) -> None:
     report = verify(v2_record, MD)
-    assert report.findings == []
-    assert report.status == "pass" and report.validator_version == "18"
+    # validator/19: the "Requirements" heading is kept as `context`, and the
+    # widened tripwire hands it to the auditor — a warning, never a verdict
+    assert [(f.code, f.severity, f.detail["block_id"]) for f in report.findings] == [
+        ("context_requirement_language", "warning", "b000001")
+    ]
+    assert report.status == "pass" and report.validator_version == "19"
     assert report.metrics == {
         "n_statements": 1, "n_mentions": 0, "n_fact_entries": 1,
         "n_blocks": 2, "blocks_accounted": 2, "excluded_blocks": 0,
@@ -201,6 +205,11 @@ def test_rederivation_matches_assembly() -> None:
     same `facts` grammar, not a re-run of assembly's private helper, so a wrong
     family→grammar or state mapping in assembly can still turn `fact_mismatch`
     red. This test is the other half of that choice: the two must agree.
+
+    validator/19 extends the table to the unit anchor, in
+    `test_verify.py::test_rederivation_matches_assembly_including_the_unit_anchor`
+    — where agreement alone is not enough, because under 18 both mappings
+    ignored the anchor and agreed on the wrong answer.
     """
 
     def aspect(text: str | None) -> list[dict[str, Any]] | None:

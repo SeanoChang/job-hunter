@@ -64,7 +64,7 @@ Conn = psycopg.Connection[dict[str, Any]]
 CASES = pathlib.Path(__file__).parent / "v2" / "cases"
 GLOBS = ("z-ai/*",)
 MODEL = "z-ai/glm-5.2:free"
-V2_TUPLE = ("demand-profile/v9", "2", "18")
+V2_TUPLE = ("demand-profile/v9", "2", "19")
 # C04's three certifications, as `profile_mentions` rows once an audit clears
 # the record: the importance is the linked STATEMENT's, not the area's.
 C04_ROWS = [
@@ -293,9 +293,21 @@ def unparseable_audit(prompt: str) -> str:
     return "the candidate looks fine to me"  # not JSON: an audit error, never a pass
 
 
-def foreign_audit(prompt: str) -> str:
-    """A valid audit of somebody else's candidate — `judge` must refuse it."""
-    return json.dumps({"candidate_hash": "f" * 64, "findings": [], "unresolved": []})
+def refused_audit(prompt: str) -> str:
+    """An audit `judge` must refuse: a finding against an id no candidate has.
+
+    Through semantic-audit/v2 this was an audit echoing somebody else's
+    candidate hash. v3 removed the echo — which candidate an audit belongs to
+    is the caller's record and hash, never a string the model retypes — so a
+    fabricated target is what a refused verdict looks like now.
+    """
+    return json.dumps({
+        "findings": [{
+            "code": "importance", "targets": ["s_no_such_id"], "evidence": None,
+            "explanation": "the posting words this as preferred, not required",
+        }],
+        "unresolved": [],
+    })
 
 
 class AuditingEngine(FakeEngine):
@@ -692,13 +704,14 @@ def test_a_disagreeing_cohort_with_a_failed_audit_stays_for_review(
     assert artifact["candidate_hash"] == chosen.record["extraction"]["candidate_hash"]
 
 
-def test_an_audit_of_another_candidate_is_an_error_not_a_pass(
+def test_an_audit_the_judge_refuses_is_an_error_not_a_pass(
     pg: Conn, store: ArchiveStore  # noqa: F811
 ) -> None:
-    """`judge` binds findings to the exact candidate hash; a violation reaches
-    the archive as an `audit_error`, with the defect list the judge raised."""
+    """`judge` binds every finding to the candidate's own ids; a violation
+    reaches the archive as an `audit_error`, with the defect list the judge
+    raised — never a pass, and never a demotion of the record itself."""
     seed_case(pg, "C04")
-    engine = AuditingEngine([result(emit_of("C04"))], foreign_audit)
+    engine = AuditingEngine([result(emit_of("C04"))], refused_audit)
     run(v2_settings(), pg, store, engine=engine, max_docs=10, max_usd=5.0)
 
     row = pg.execute("SELECT profile FROM extractions").fetchone()
@@ -707,7 +720,7 @@ def test_an_audit_of_another_candidate_is_an_error_not_a_pass(
     assert mention_rows_in(pg) == []
     artifact = next(iter(audits_in(store).values()))
     assert artifact["outcome"] == "audit_error"
-    assert any("candidate_hash" in e for e in artifact["errors"])
+    assert any("s_no_such_id" in e for e in artifact["errors"])
 
 
 def test_a_transport_failure_leaves_the_candidates_pass_unspent(

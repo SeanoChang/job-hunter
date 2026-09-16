@@ -39,7 +39,21 @@ from typing import Any
 # moves the lifecycle, never the eligibility rules. The method is the
 # 2026-09-13 adversarial verifier's — naive statement-id overlap between
 # samples was refuted there at 4 false clears in 9 documents.
-VALIDATOR_VERSION = "18"
+# validator/19: `derive_quantity` reads the UNIT ANCHOR the emit cites as its
+# own span, in assembly and in verification alike — an emit citing value "12+"
+# and unit "years" derived a dimensionless count of 12, and no check could see
+# it because both call sites made the same argument-short call (2026-09-15
+# external review, finding 1). An anchor outside the grammar forces
+# `present_unparsed`, never a guessed dimension. Accounting gains
+# `coverage_unevidenced`: a `statements` disposition asserts a block was
+# extracted INTO the objects it names, so at least one of them must cite that
+# block — 14 duty bullets "accounted" to statements evidenced from the intro
+# paragraph is the laundering shape this closes (2026-09-14 analysis, shape
+# (a)); partial coverage of a block stays the auditor's question. The
+# requirement-language tripwire widens to `context` blocks as the warning
+# `context_requirement_language` (shape (b): whole sections dropped as context
+# when their content maps to no statement kind).
+VALIDATOR_VERSION = "19"
 
 _CMP_PHRASES: list[tuple[str, str]] = [
     (r"at\s+least|a\s+minimum\s+of|minimum\s+of|minimum|no\s+less\s+than", "gte"),
@@ -79,11 +93,26 @@ def _comparison(comparison_text: str | None) -> str | None:
     return "?"  # comparison evidence present but not in the grammar: unparsed
 
 
-def derive_quantity(value_text: str, comparison_text: str | None) -> dict[str, Any] | None:
+def derive_quantity(value_text: str, comparison_text: str | None,
+                    unit_text: str | None = None) -> dict[str, Any] | None:
+    """The cited spans as one quantity, or None when the grammar cannot read them.
+
+    validator/19: `unit_text` is the unit the emit cited as its OWN span, the
+    way the compensation branch has always taken currency and period anchors.
+    It is consulted only when the value span carries no unit of its own — a
+    value that says "6 months" means months whatever the anchor says — and an
+    anchor the grammar does not know forces None rather than letting the number
+    fall through to a dimensionless count. A value span carrying some other
+    unit word is a contradiction, not a tie to break, and stays unparsed.
+    """
     op = _comparison(comparison_text)
     if op == "?":
         return None
     unit_m = _UNIT.search(value_text)
+    if unit_m is None and (unit_text or "").strip() and not _HAS_ALPHA.search(value_text):
+        unit_m = _UNIT.search(unit_text or "")
+        if unit_m is None:
+            return None  # a cited unit outside the grammar: a gap, never a count
     if unit_m and unit_m.group("years"):
         dimension, unit, scale = "duration", "month", 12.0
     elif unit_m and unit_m.group("months"):

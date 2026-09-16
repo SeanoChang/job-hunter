@@ -45,6 +45,11 @@ from jobhunter.hashing import sha256_hex
 from jobhunter.l2.v2.source import RefBindError, annotate, blocks_by_id, resolve
 from jobhunter.l2.v2.types import Block
 
+# shared, not mirrored — but that vocabulary is frozen under
+# VALIDATOR_VERSION, so widening it there changes v3 severities: any such
+# change bumps AUDIT_VERSION alongside the validator.
+from jobhunter.l2.v2.verify import _REQUIREMENT_LANGUAGE
+
 # version history (bump, never edit in place):
 #   v1: the spec §4 contract as written — every omission blocking
 #   v2: omission triage after the 2026-09-12 3-doc smoke fired 18/7/9 blocking
@@ -53,7 +58,20 @@ from jobhunter.l2.v2.types import Block
 #       targeting a captured candidate object is a granularity warning, an
 #       omission whose cited block is code-classified boilerplate is a
 #       warning, and the template gains the omission-scope paragraph
-AUDIT_VERSION = "semantic-audit/v2"
+#   v3: the 2026-09-15 external review's two audit defects. (a) SUPPRESSION —
+#       v2 downgraded on a target that merely existed in the candidate and on
+#       a boilerplate marker alone, so an omission of a travel requirement
+#       aimed at an unrelated fact entry, and an English-proficiency
+#       requirement sharing its block with EEO wording, both demoted to
+#       warnings and left the record eligible. v3 lowers only on proof: a
+#       target whose OWN evidence cites the finding's block, or a boilerplate
+#       block that speaks no requirement language. (b) MODEL-TRANSCRIBED
+#       HASH — the emit's `candidate_hash` echo is gone from the schema, the
+#       prompt and `judge`; codex garbled the 64-hex string and 61 review
+#       documents archived `audit_error` over bookkeeping the caller already
+#       owns. Binding stays code-owned: the caller's hash keys the artifact
+#       and heads the prompt.
+AUDIT_VERSION = "semantic-audit/v3"
 
 # The closed finding vocabulary (spec §4: "Codes cover source insufficiency,
 # omission, unsupported statement, importance, polarity/subject, relationship,
@@ -76,7 +94,7 @@ CODES = (
 # numerical misinterpretation, missing named mentions, and bad exclusions are
 # blocking. Display wording differences and semantically redundant duplicates
 # are warnings." One warning code in the base map, therefore; everything else
-# gates. `omission` alone is triaged DOWN by `_severity` (semantic-audit/v2):
+# gates. `omission` alone is triaged DOWN by `_severity` (semantic-audit/v3):
 # the base entry is its ceiling, never its floor.
 SEVERITY: dict[str, str] = {
     "omission": "blocking",
@@ -111,7 +129,7 @@ DIMENSION: dict[str, str] = {
 # point at in the candidate, so the source citation is mandatory instead.
 _EVIDENCE_REQUIRED = frozenset({"omission", "source_insufficiency"})
 
-# semantic-audit/v2 omission triage, code-owned. The candidate's own
+# The omission triage's boilerplate half, code-owned. The candidate's own
 # `excluded` accounting is deliberately NOT consulted — trusting it would let
 # the extractor self-certify the very exclusions `bad_exclusion` exists to
 # audit. Instead: legal/EEO/privacy/benefits/anti-fraud boilerplate is
@@ -119,6 +137,10 @@ _EVIDENCE_REQUIRED = frozenset({"omission", "source_insufficiency"})
 # match). Kept tight: a phrase belongs here only when a block containing it is
 # boilerplate essentially always; decision-relevant lookalikes (visa
 # sponsorship, background-check requirements, clearance) stay out.
+#
+# A marker is necessary and no longer sufficient (semantic-audit/v3): one
+# block can carry both an EEO sentence and a real requirement, and `md/1`
+# keeps them together whenever the posting wrote them as one paragraph.
 _BOILERPLATE_MARKERS = (
     "equal opportunity employer",
     "equal employment opportunity",
@@ -142,9 +164,20 @@ _BOILERPLATE_MARKERS = (
 )
 
 
-def _boilerplate(text: str) -> bool:
+def _out_of_scope(text: str) -> bool:
+    """Boilerplate the extraction contract never asked for: a marker hit with
+    no requirement language anywhere in the same block.
+
+    The requirement tripwire is the verifier's own, imported rather than
+    mirrored: two copies of that vocabulary is precisely how one block gets
+    read as boilerplate here and as a live requirement there — the C02/C07
+    English-proficiency footer, which says "requires" and nothing else from
+    the vocabulary, is the case both must agree on.
+    """
     folded = text.casefold()
-    return any(marker in folded for marker in _BOILERPLATE_MARKERS)
+    if not any(marker in folded for marker in _BOILERPLATE_MARKERS):
+        return False
+    return _REQUIREMENT_LANGUAGE.search(text) is None
 
 
 def _severity(
@@ -152,23 +185,36 @@ def _severity(
     targets: list[str],
     evidence: dict[str, Any] | None,
     blocks: dict[str, Block],
+    cited_blocks: dict[str, set[str]],
 ) -> str:
-    """`SEVERITY[code]`, with the semantic-audit/v2 omission triage on top.
+    """`SEVERITY[code]`, with the semantic-audit/v3 omission triage on top.
 
-    An `omission` is blocking only when it reports genuinely uncaptured
-    demand content: (1) a target naming a captured candidate object (any
-    non-block id) means the auditor itself located the proposition in the
-    candidate, so the complaint is quote granularity — a warning; (2) a cited
-    block whose text is code-classified boilerplate is outside the extraction
-    contract's omission scope — a warning. Triage only ever lowers; no code
-    is raised above its base severity.
+    An `omission` is lowered to a warning only on proof that it reports
+    something other than uncaptured demand content:
+
+    1. Granularity — at least one target is a candidate object whose OWN
+       evidence cites the block this finding cites. Auditor and candidate are
+       then pointing at the same source text, and the complaint is how much
+       of it the quote covers. v2 downgraded whenever a target was any
+       candidate object at all, which proves nothing about the cited block:
+       an omitted travel requirement aimed at an unrelated sales fact entry
+       demoted itself.
+    2. Scope — the cited block is boilerplate AND speaks no requirement
+       (`_out_of_scope`). v2 tested the marker alone, so a block mixing EEO
+       wording with an English-proficiency requirement demoted too.
+
+    Capture is read off the RESOLVED block, so a re-anchored citation is
+    triaged where the text actually is. Triage only ever lowers, and only
+    `omission`: every other code keeps `SEVERITY[code]` exactly.
     """
     base = SEVERITY[code]
-    if code != "omission" or base != "blocking":
+    if code != "omission" or base != "blocking" or evidence is None:
         return base
-    if any(t not in blocks for t in targets):
+    block_id = evidence["block_id"]
+    if any(block_id in cited_blocks.get(target, set()) for target in targets):
         return "warning"
-    if evidence is not None and _boilerplate(blocks[evidence["block_id"]].text):
+    block = blocks.get(block_id)
+    if block is not None and _out_of_scope(block.text):
         return "warning"
     return base
 
@@ -215,7 +261,10 @@ applicant. Legal, EEO, privacy, benefits and anti-fraud boilerplate is not an
 omission; a RELEVANT clause wrongly excluded as boilerplate is bad_exclusion.
 When the candidate holds a statement for the proposition but its quote covers
 less of the sentence than you would have chosen, that is granularity, not a
-missing statement: cite the statement id in targets so it is triaged as such.
+missing statement: cite that statement's id in targets. The downgrade is
+earned only when the statement's own evidence already cites the block your
+finding cites — a target that never quoted the block is a missing statement,
+whatever id you name.
 """
 
 _EMIT_FORMAT_NOTE = """\
@@ -233,8 +282,6 @@ citation; an omission or source_insufficiency finding always needs one.
 "targets" are ids copied from the candidate — statement, relation, fact entry,
 mention and area ids, or a source block id for a wrongly excluded block. Never
 invent an id.
-
-Echo the candidate hash back exactly as given, in "candidate_hash".
 
 Do not emit severity, a dimension, or a verdict: code derives severity and the
 affected quality dimension from the finding code alone, and settlement is not
@@ -347,19 +394,19 @@ def emit_schema() -> dict[str, Any]:
     const/enum node and do not resolve local refs — the emit_guard.py lesson.
     Every object also carries `properties`, so `schemas.strict_schema` cannot
     collapse one into its JSON-string bridge.
+
+    It asks for no candidate identifier (semantic-audit/v3). Which candidate an
+    audit belongs to is decided by the record and hash the caller hands
+    `judge`, so a 64-hex string transcribed by the model bought no binding —
+    and cost the whole audit whenever it was mistyped.
     """
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "job-hunter L2 semantic audit emit schema (semantic-audit/v1)",
+        "title": "job-hunter L2 semantic audit emit schema (semantic-audit/v3)",
         "type": "object",
         "additionalProperties": False,
-        "required": ["candidate_hash", "findings", "unresolved"],
+        "required": ["findings", "unresolved"],
         "properties": {
-            "candidate_hash": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$",
-                "description": "the supplied candidate hash, echoed verbatim",
-            },
             "findings": {
                 "type": "array",
                 "items": {
@@ -438,32 +485,87 @@ def _excerpt(value: Any, limit: int = 80) -> str:
     return repr(value)
 
 
-def _ids(nodes: Any) -> set[str]:
-    if not isinstance(nodes, list):
-        return set()
-    return {n["id"] for n in nodes if isinstance(n, dict) and isinstance(n.get("id"), str)}
+def _listed(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
 
 
-def _target_ids(record: dict[str, Any], blocks: dict[str, Block]) -> set[str]:
-    """Every id the auditor may legitimately name.
+def _objects(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """The record's typed, id-bearing objects: statements, relation groups,
+    conditions and example sets, fact entries, mentions, areas.
 
-    The record's typed objects — statements, relation groups/conditions/
-    example sets, fact entries, mentions, areas — plus the source block ids.
-    Block ids belong here because they are the only handle a `bad_exclusion`
-    finding has: accounting entries are keyed by block, never by an id of
-    their own, and the auditor sees those ids in the prompt.
+    Block accounting rows are deliberately absent: they carry no id of their
+    own — the block id IS their handle — so they are neither a target space of
+    their own nor an object that can cite evidence.
     """
     relations = record.get("relations")
     relations = relations if isinstance(relations, dict) else {}
     facts = record.get("facts")
     facts = facts if isinstance(facts, dict) else {}
-    ids = _ids(record.get("statements"))
+    nodes: list[Any] = list(_listed(record.get("statements")))
     for key in ("groups", "conditions", "example_sets"):
-        ids |= _ids(relations.get(key))
-    ids |= _ids(facts.get("entries"))
-    ids |= _ids(record.get("mentions"))
-    ids |= _ids(record.get("areas"))
-    return ids | set(blocks)
+        nodes += _listed(relations.get(key))
+    nodes += _listed(facts.get("entries"))
+    nodes += _listed(record.get("mentions"))
+    nodes += _listed(record.get("areas"))
+    return [n for n in nodes if isinstance(n, dict) and isinstance(n.get("id"), str)]
+
+
+def _target_ids(record: dict[str, Any], blocks: dict[str, Block]) -> set[str]:
+    """Every id the auditor may legitimately name.
+
+    The record's typed objects plus the source block ids. Block ids belong
+    here because they are the only handle a `bad_exclusion` finding has:
+    accounting entries are keyed by block, never by an id of their own, and
+    the auditor sees those ids in the prompt.
+    """
+    return {str(node["id"]) for node in _objects(record)} | set(blocks)
+
+
+def _ref_blocks(node: Any) -> set[str]:
+    """Every block id cited anywhere inside one candidate object.
+
+    A bound reference carries `block_id`; an object's evidence is one of them,
+    a list of them, or — a fact entry — a mapping of aspect to list, plus the
+    scope's own reference. Walking the object instead of enumerating its
+    evidence fields is what keeps this honest as the record schema grows one:
+    a new evidence-bearing field counts immediately rather than silently
+    reading as "cites nothing", which in triage means "never captured".
+
+    The one exception is `unresolved`: an unresolved issue's citation
+    declares NON-capture — the extractor saying it could not resolve what
+    that block says — and counting it inverted the triage (2026-09-16 review
+    probe: a real omission downgraded because its target's only tie to the
+    block was an unresolved entry).
+    """
+    found: set[str] = set()
+    if isinstance(node, dict):
+        block_id = node.get("block_id")
+        if isinstance(block_id, str):
+            return {block_id}
+        for key, value in node.items():
+            if key == "unresolved":
+                continue
+            found |= _ref_blocks(value)
+    elif isinstance(node, list):
+        for value in node:
+            found |= _ref_blocks(value)
+    return found
+
+
+def _cited_blocks(record: dict[str, Any]) -> dict[str, set[str]]:
+    """object id → the blocks that object's OWN evidence cites.
+
+    The whole content of the semantic-audit/v3 granularity rule: an omission
+    is a granularity complaint only when some object the finding targets has
+    already cited the block the finding cites. Built once per audit, from the
+    record alone — the candidate's own accounting and quality blocks are never
+    consulted, for the same reason the boilerplate half does not read
+    `excluded`: self-certification is what `bad_exclusion` exists to audit.
+    """
+    index: dict[str, set[str]] = {}
+    for node in _objects(record):
+        index.setdefault(str(node["id"]), set()).update(_ref_blocks(node))
+    return index
 
 
 def _targets(path: str, value: Any, ids: set[str], errors: list[str]) -> list[str]:
@@ -497,7 +599,12 @@ def _evidence(
 
 
 def _finding(
-    path: str, node: Any, ids: set[str], blocks: dict[str, Block], errors: list[str]
+    path: str,
+    node: Any,
+    ids: set[str],
+    blocks: dict[str, Block],
+    cited_blocks: dict[str, set[str]],
+    errors: list[str],
 ) -> dict[str, Any] | None:
     if not isinstance(node, dict):
         errors.append(f"{path}: expected a finding object, got {_excerpt(node)}")
@@ -517,7 +624,7 @@ def _finding(
     evidence = _evidence(path, code, node.get("evidence"), blocks, errors)
     return {
         "code": code,
-        "severity": _severity(code, targets, evidence, blocks),
+        "severity": _severity(code, targets, evidence, blocks, cited_blocks),
         "dimension": DIMENSION[code],
         "targets": targets,
         "evidence": evidence,
@@ -526,14 +633,18 @@ def _finding(
 
 
 def _findings(
-    value: Any, ids: set[str], blocks: dict[str, Block], errors: list[str]
+    value: Any,
+    ids: set[str],
+    blocks: dict[str, Block],
+    cited_blocks: dict[str, set[str]],
+    errors: list[str],
 ) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         errors.append(f"findings: expected a list, got {_excerpt(value)}")
         return []
     bound: list[dict[str, Any]] = []
     for i, node in enumerate(value):
-        one = _finding(f"findings[{i}]", node, ids, blocks, errors)
+        one = _finding(f"findings[{i}]", node, ids, blocks, cited_blocks, errors)
         if one is not None:
             bound.append(one)
     return bound
@@ -563,26 +674,27 @@ def _unresolved(value: Any, ids: set[str], errors: list[str]) -> list[dict[str, 
 def judge(
     emit: dict[str, Any], record: dict[str, Any], markdown: str, candidate_hash: str
 ) -> AuditOutcome:
-    """Validate one audit emit against the candidate it claims to audit.
+    """Validate one audit emit against the candidate it audits.
 
-    Valid means: the emit echoes THIS candidate's hash, every target names an
-    id the candidate actually has, every citation binds to the document, and
-    the two codes that report absent extraction carry one. Anything else
-    raises `AuditJudgeError` with the whole defect list — the caller archives
-    that as an audit error, which is never a pass.
+    Valid means: every target names an id the candidate actually has, every
+    citation binds to the document, and the two codes that report absent
+    extraction carry one. Anything else raises `AuditJudgeError` with the
+    whole defect list — the caller archives that as an audit error, which is
+    never a pass.
+
+    `candidate_hash` is the CALLER's binding and stays a parameter
+    (semantic-audit/v3): it keys the archived artifact and heads the prompt,
+    and `record` is the candidate itself, so nothing here has to ask the model
+    which extraction it just read. The v2 echo compared a 64-hex string the
+    model retyped — bookkeeping that added no binding and, when codex garbled
+    it, failed 61 otherwise-usable audits outright.
     """
     if not isinstance(emit, dict):
         raise AuditJudgeError([f"<root>: expected an audit object, got {_excerpt(emit)}"])
     errors: list[str] = []
-    emitted_hash = emit.get("candidate_hash")
-    if emitted_hash != candidate_hash:
-        errors.append(
-            f"candidate_hash: audits {_excerpt(emitted_hash)}, not this candidate "
-            f"{_excerpt(candidate_hash)}"
-        )
     blocks = blocks_by_id(annotate(markdown))
     ids = _target_ids(record, blocks)
-    findings = _findings(emit.get("findings"), ids, blocks, errors)
+    findings = _findings(emit.get("findings"), ids, blocks, _cited_blocks(record), errors)
     unresolved = _unresolved(emit.get("unresolved"), ids, errors)
     if errors:
         raise AuditJudgeError(errors)

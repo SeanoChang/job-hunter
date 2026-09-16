@@ -37,11 +37,9 @@ from jobhunter.l2.v2.audit import (
 from jobhunter.l2.v2.source import RefBindError, annotate, blocks_by_id, resolve
 from tests.l2.v2.conftest import AT, MD
 
-OTHER_HASH = "f" * 64
-
 
 def _emit(**over: Any) -> dict[str, Any]:
-    base: dict[str, Any] = {"candidate_hash": "", "findings": [], "unresolved": []}
+    base: dict[str, Any] = {"findings": [], "unresolved": []}
     base.update(over)
     return base
 
@@ -58,19 +56,19 @@ def _finding(code: str, **over: Any) -> dict[str, Any]:
 
 
 def _judge(record: dict[str, Any], markdown: str, **over: Any) -> AuditOutcome:
-    """judge() over a record, with the candidate hash wired up by default."""
-    candidate_hash = record["extraction"]["candidate_hash"]
-    emit = _emit(**over)
-    if not emit["candidate_hash"]:
-        emit["candidate_hash"] = candidate_hash
-    return judge(emit, record, markdown, candidate_hash)
+    """judge() over a record, bound to that record's candidate hash.
+
+    The hash is the CALLER's, never the emit's (semantic-audit/v3): it keys the
+    artifact and heads the prompt, and the model is not asked to retype it.
+    """
+    return judge(_emit(**over), record, markdown, record["extraction"]["candidate_hash"])
 
 
 # --- template pins ----------------------------------------------------------
 
 
 def test_version_and_template_sha() -> None:
-    assert AUDIT_VERSION == "semantic-audit/v2"
+    assert AUDIT_VERSION == "semantic-audit/v3"
     assert template_sha() == sha256_hex(TEMPLATE.encode("utf-8"))
 
 
@@ -90,6 +88,16 @@ def test_template_forbids_model_owned_severity() -> None:
     assert "Do not emit severity" in TEMPLATE
     for code in CODES:
         assert code in TEMPLATE  # every code is explained to the model
+
+
+def test_the_template_heads_with_the_hash_and_asks_for_no_echo() -> None:
+    """semantic-audit/v3: the candidate hash still heads the prompt (it says
+    WHICH candidate is under audit) but nothing asks the model to retype it —
+    the 64-hex echo is bookkeeping code already owns, and a garbled
+    transcription used to archive the whole audit as `audit_error`."""
+    assert "CANDIDATE HASH: " in TEMPLATE
+    assert "Echo the candidate hash" not in TEMPLATE
+    assert '"candidate_hash"' not in TEMPLATE
 
 
 # --- render -----------------------------------------------------------------
@@ -154,7 +162,7 @@ def test_emit_schema_is_a_valid_draft_2020_12_schema() -> None:
 def test_emit_schema_shape() -> None:
     schema = emit_schema()
     assert schema["type"] == "object"
-    assert sorted(schema["required"]) == ["candidate_hash", "findings", "unresolved"]
+    assert sorted(schema["required"]) == ["findings", "unresolved"]
     finding = schema["properties"]["findings"]["items"]
     assert sorted(finding["required"]) == ["code", "evidence", "explanation", "targets"]
     assert finding["properties"]["code"]["enum"] == list(CODES)
@@ -189,23 +197,28 @@ def test_strict_transform_keeps_the_schema_expressible() -> None:
 def test_emit_schema_admits_a_real_emit_and_closes_the_code_enum() -> None:
     validator = jsonschema.Draft202012Validator(emit_schema())
     ok = _emit(
-        candidate_hash="a" * 64,
         findings=[_finding("importance", evidence={
             "block_id": "b000002", "text": "minimum", "occurrence": 0})],
         unresolved=[{"question": "is the degree required?", "targets": ["s1"]}],
     )
     assert validator.is_valid(ok), list(validator.iter_errors(ok))
-    assert not validator.is_valid(_emit(candidate_hash="a" * 64,
-                                        findings=[_finding("made_up_code")]))
-    bad_extra = _emit(candidate_hash="a" * 64)
+    assert not validator.is_valid(_emit(findings=[_finding("made_up_code")]))
+    bad_extra = _emit()
     bad_extra["verdict"] = "accept"
     assert not validator.is_valid(bad_extra)
-    missing = {"candidate_hash": "a" * 64, "findings": []}
-    assert not validator.is_valid(missing)
-    assert not validator.is_valid(_emit(
-        candidate_hash="a" * 64,
-        findings=[_finding("importance", severity="warning")],
-    ))
+    assert not validator.is_valid({"findings": []})
+    assert not validator.is_valid(_emit(findings=[_finding("importance", severity="warning")]))
+
+
+def test_the_emit_schema_never_asks_for_the_candidate_hash() -> None:
+    """semantic-audit/v3: the echo is gone from the contract, not made
+    tolerant — the field the model used to garble is not requestable."""
+    schema = emit_schema()
+    assert "candidate_hash" not in schema["properties"]
+    assert "candidate_hash" not in json.dumps(schema)
+    validator = jsonschema.Draft202012Validator(schema)
+    assert validator.is_valid({"findings": [], "unresolved": []})
+    assert not validator.is_valid({"candidate_hash": "a" * 64, "findings": [], "unresolved": []})
 
 
 # --- severity and dimension maps -------------------------------------------
@@ -250,7 +263,6 @@ def test_audit_outcome_is_frozen(v2_record: dict[str, Any]) -> None:
 
 def test_judge_does_not_mutate_its_inputs(v2_record: dict[str, Any]) -> None:
     emit = _emit(
-        candidate_hash=v2_record["extraction"]["candidate_hash"],
         findings=[_finding("omission", targets=[], evidence={
             "block_id": "b000001", "text": None, "occurrence": None})],
         unresolved=[{"question": "q", "targets": []}],
@@ -263,11 +275,23 @@ def test_judge_does_not_mutate_its_inputs(v2_record: dict[str, Any]) -> None:
 # --- judge: validity rules -------------------------------------------------
 
 
-def test_judge_rejects_a_foreign_candidate_hash(v2_record: dict[str, Any]) -> None:
-    with pytest.raises(AuditJudgeError) as exc:
-        judge(_emit(candidate_hash=OTHER_HASH), v2_record, MD,
-              v2_record["extraction"]["candidate_hash"])
-    assert "candidate_hash" in str(exc.value)
+def test_judge_accepts_an_emit_that_carries_no_hash(v2_record: dict[str, Any]) -> None:
+    """semantic-audit/v3: which candidate this audits is decided by the record
+    and hash the CALLER passes, so a hash-free emit is the normal shape."""
+    out = judge({"findings": [], "unresolved": []}, v2_record, MD,
+                v2_record["extraction"]["candidate_hash"])
+    assert (out.blocking, out.warnings) == (0, 0)
+    assert (out.semantics, out.completeness) == ("no_findings", "no_findings")
+
+
+def test_a_model_transcribed_hash_is_not_a_validity_defect(v2_record: dict[str, Any]) -> None:
+    """The defect that audit-blocked 61 review documents: codex garbled the
+    64-hex echo and `judge` failed the whole audit on bookkeeping code already
+    owns. An emitted hash is now inert — never compared, never fatal."""
+    for emitted in ("f" * 64, "not-a-hash", ""):
+        out = judge({"candidate_hash": emitted, "findings": [], "unresolved": []},
+                    v2_record, MD, v2_record["extraction"]["candidate_hash"])
+        assert (out.semantics, out.completeness) == ("no_findings", "no_findings")
 
 
 def test_judge_rejects_an_unknown_code(v2_record: dict[str, Any]) -> None:
@@ -329,11 +353,10 @@ def test_judge_rejects_structurally_broken_emits(v2_record: dict[str, Any]) -> N
     h = v2_record["extraction"]["candidate_hash"]
     for broken in (
         [],
-        {"candidate_hash": h, "findings": {}, "unresolved": []},
-        {"candidate_hash": h, "findings": [], "unresolved": "none"},
-        {"candidate_hash": h, "findings": ["nope"], "unresolved": []},
-        {"candidate_hash": h, "findings": [], "unresolved": [{"targets": []}]},
-        {"findings": [], "unresolved": []},
+        {"findings": {}, "unresolved": []},
+        {"findings": [], "unresolved": "none"},
+        {"findings": ["nope"], "unresolved": []},
+        {"findings": [], "unresolved": [{"targets": []}]},
     ):
         with pytest.raises(AuditJudgeError):
             judge(broken, v2_record, MD, h)  # type: ignore[arg-type]
@@ -342,13 +365,12 @@ def test_judge_rejects_structurally_broken_emits(v2_record: dict[str, Any]) -> N
 def test_judge_reports_every_defect_at_once(v2_record: dict[str, Any]) -> None:
     with pytest.raises(AuditJudgeError) as exc:
         judge(
-            _emit(candidate_hash=OTHER_HASH,
-                  findings=[_finding("vibes"), _finding("importance", targets=["s42"])]),
+            _emit(findings=[_finding("vibes"), _finding("importance", targets=["s42"])]),
             v2_record, MD, v2_record["extraction"]["candidate_hash"],
         )
-    assert len(exc.value.errors) == 3
+    assert len(exc.value.errors) == 2
     message = str(exc.value)
-    assert "candidate_hash" in message and "vibes" in message and "s42" in message
+    assert "vibes" in message and "s42" in message
 
 
 # --- judge: code-owned severity and dimension ------------------------------
@@ -542,10 +564,15 @@ def test_the_module_imports_nothing_with_side_effects() -> None:
     assert imported <= {
         "__future__", "dataclasses", "json", "typing",
         "jobhunter.hashing", "jobhunter.l2.v2.source", "jobhunter.l2.v2.types",
+        # semantic-audit/v3 reuses the verifier's requirement-language
+        # tripwire rather than mirroring it: two copies of that vocabulary is
+        # how a boilerplate block carrying a real requirement gets read two
+        # ways. `verify` is pure (no I/O, no model) and imports nothing here.
+        "jobhunter.l2.v2.verify",
     }, imported
 
 
-# --- semantic-audit/v2 omission triage --------------------------------------
+# --- omission triage: the v2 behaviours v3 keeps ----------------------------
 
 # MD plus one legal-boilerplate line: b000003 in this document
 _BOILER_MD = MD + "Zed Inc. is an equal opportunity employer and values diversity.\n"
@@ -554,10 +581,12 @@ _BOILER_MD = MD + "Zed Inc. is an equal opportunity employer and values diversit
 def test_an_omission_against_a_captured_statement_is_a_granularity_warning(
     v2_record: dict[str, Any],
 ) -> None:
-    """The auditor citing a statement id concedes the proposition WAS captured;
-    the complaint is quote granularity (the 3-doc smoke's dominant class:
-    'omits the fast-paced context' against a captured qualification). Warning,
-    so completeness stays clear and the record can still be eligible."""
+    """s1's own evidence cites b000002, so an omission citing b000002 against
+    s1 is the auditor saying the proposition IS in the candidate and the quote
+    covers less of the sentence than it would have chosen (the 3-doc smoke's
+    dominant class: 'omits the fast-paced context' against a captured
+    qualification). Warning, so completeness stays clear and the record can
+    still be eligible."""
     out = _judge(v2_record, _BOILER_MD, findings=[_finding("omission", targets=["s1"],
         evidence={"block_id": "b000002", "text": None, "occurrence": None})])
     assert (out.blocking, out.warnings) == (0, 1)
@@ -597,3 +626,140 @@ def test_triage_never_lowers_a_non_omission_code(v2_record: dict[str, Any]) -> N
     out = _judge(v2_record, _BOILER_MD, findings=[_finding("bad_exclusion", targets=[],
         evidence={"block_id": "b000003", "text": None, "occurrence": None})])
     assert (out.blocking, out.warnings) == (1, 0)
+
+
+# --- semantic-audit/v3: downgrade only on proven capture --------------------
+
+# MD (b000001 "Requirements", b000002 the experience sentence) plus an
+# uncaptured demand block, a pure-boilerplate block, and the mixed block the
+# 2026-09-15 external review probed: EEO wording and a real English
+# requirement in ONE block. The first two blocks are MD's, so `v2_record`'s
+# bound evidence still names this document's blocks.
+_V3_MD = (
+    MD
+    + "Travel to client sites up to 40% of the time.\n"
+    + "Zed Inc. is an equal opportunity employer and values diversity.\n"
+    + "Zed Inc. is an equal opportunity employer. This position requires the "
+    + "incumbent to have a sufficient knowledge of English.\n"
+)
+_TRAVEL, _BOILER_BLOCK, _MIXED = "b000003", "b000004", "b000005"
+
+# what `v2_record` cites, object by object: s1 {b000001 (importance), b000002
+# (evidence)}, f1 {b000002}, a1 {} (its evidence is null)
+_CITES_NOTHING = "a1"
+_CITES_B2_ONLY = "f1"
+
+
+def _whole(block_id: str) -> dict[str, Any]:
+    return {"block_id": block_id, "text": None, "occurrence": None}
+
+
+@pytest.mark.parametrize("target", [_CITES_B2_ONLY, _CITES_NOTHING])
+def test_an_omission_whose_target_never_cited_the_block_stays_blocking(
+    v2_record: dict[str, Any], target: str
+) -> None:
+    """The external probe, as a fixture: a target that merely EXISTS in the
+    candidate proves nothing about the cited block. f1 cites b000002 only and
+    a1 cites nothing, so neither can show the travel requirement was captured
+    — the v2 rule downgraded both and suppressed a real omission."""
+    out = _judge(v2_record, _V3_MD, findings=[
+        _finding("omission", targets=[target], evidence=_whole(_TRAVEL))])
+    assert (out.blocking, out.warnings) == (1, 0)
+    assert out.completeness == "findings"
+    assert out.findings[0]["severity"] == "blocking"
+
+
+def test_an_omission_citing_eeo_text_around_a_requirement_stays_blocking(
+    v2_record: dict[str, Any],
+) -> None:
+    """The second external probe: one block carrying both EEO wording and an
+    English-proficiency requirement. v2 downgraded it on the boilerplate
+    marker alone — the C02/C07 class, invisible all over again. A boilerplate
+    block only leaves omission scope when it speaks no requirement."""
+    out = _judge(v2_record, _V3_MD, findings=[
+        _finding("omission", targets=[], evidence=_whole(_MIXED))])
+    assert (out.blocking, out.warnings) == (1, 0)
+    assert out.completeness == "findings"
+
+
+def test_an_omission_citing_pure_boilerplate_is_still_a_warning(
+    v2_record: dict[str, Any],
+) -> None:
+    """The v2 behaviour that survives: EEO text with no requirement language
+    in it is outside the extraction contract's omission scope."""
+    out = _judge(v2_record, _V3_MD, findings=[
+        _finding("omission", targets=[], evidence=_whole(_BOILER_BLOCK))])
+    assert (out.blocking, out.warnings) == (0, 1)
+    assert out.completeness == "no_findings"
+
+
+def test_an_unresolved_citation_is_not_proof_of_capture(
+    v2_record: dict[str, Any],
+) -> None:
+    """An unresolved issue's evidence declares NON-capture: the extractor is
+    saying it could not resolve what that block says. The 2026-09-16 review
+    probe gave s1 an unresolved entry citing the travel block and the capture
+    index counted it, downgrading a real omission to granularity."""
+    record = copy.deepcopy(v2_record)
+    record["statements"][0]["unresolved"] = [
+        {"reason": "unclear_importance",
+         "evidence": [{"block_id": _TRAVEL, "span": [0, 6], "text": "Travel",
+                       "occurrence": 0}]}]
+    out = _judge(record, _V3_MD, findings=[
+        _finding("omission", targets=["s1"], evidence=_whole(_TRAVEL))])
+    assert (out.blocking, out.warnings) == (1, 0)
+    assert out.findings[0]["severity"] == "blocking"
+
+
+def test_true_granularity_against_a_facts_entry_is_still_a_warning(
+    v2_record: dict[str, Any],
+) -> None:
+    """Capture is proven per object, not per id space: f1's own evidence cites
+    b000002, so an omission citing b000002 against f1 is granularity."""
+    out = _judge(v2_record, _V3_MD, findings=[
+        _finding("omission", targets=[_CITES_B2_ONLY], evidence=_whole("b000002"))])
+    assert (out.blocking, out.warnings) == (0, 1)
+    assert out.findings[0]["severity"] == "warning"
+
+
+def test_capture_is_read_off_the_block_the_citation_binds_to(
+    v2_record: dict[str, Any],
+) -> None:
+    """The citation carries b000001 but the quote lives in b000002 (the
+    re-anchor tier). Triage runs on the RESOLVED block, where f1's evidence
+    actually is — otherwise a re-anchored citation reads as uncaptured."""
+    out = _judge(v2_record, _V3_MD, findings=[_finding(
+        "omission", targets=[_CITES_B2_ONLY],
+        evidence={"block_id": "b000001", "text": "8 years", "occurrence": 0})])
+    assert out.findings[0]["evidence"]["block_id"] == "b000002"
+    assert (out.blocking, out.warnings) == (0, 1)
+
+
+def test_one_capturing_target_among_several_is_enough(v2_record: dict[str, Any]) -> None:
+    """`at least one target` — the auditor may name the whole neighbourhood of
+    a granularity complaint, and one object that cites the block settles it."""
+    out = _judge(v2_record, _V3_MD, findings=[_finding(
+        "omission", targets=[_CITES_NOTHING, "s1"], evidence=_whole("b000002"))])
+    assert (out.blocking, out.warnings) == (0, 1)
+
+
+def test_a_block_id_target_is_not_a_capture_proof(v2_record: dict[str, Any]) -> None:
+    """Block ids are legal targets (a `bad_exclusion` finding has no other
+    handle), but a block does not cite evidence and cannot show capture."""
+    out = _judge(v2_record, _V3_MD, findings=[
+        _finding("omission", targets=[_TRAVEL], evidence=_whole(_TRAVEL))])
+    assert (out.blocking, out.warnings) == (1, 0)
+
+
+@pytest.mark.parametrize("code", [c for c in CODES if c != "omission"])
+def test_triage_leaves_every_other_code_at_its_base_severity(
+    v2_record: dict[str, Any], code: str
+) -> None:
+    """Each triage condition separately — proven capture (s1's own evidence
+    cites b000002) and a boilerplate block — against every other code:
+    severity is whatever `SEVERITY` says. Triage owns `omission` alone, and
+    only lowers."""
+    out = _judge(v2_record, _V3_MD, findings=[
+        _finding(code, targets=["s1"], evidence=_whole("b000002")),
+        _finding(code, targets=["s1"], evidence=_whole(_BOILER_BLOCK))])
+    assert [f["severity"] for f in out.findings] == [SEVERITY[code]] * 2

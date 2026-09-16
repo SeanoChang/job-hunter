@@ -145,7 +145,12 @@ def _derive(family: Any, evidence: dict[str, Any]) -> dict[str, Any]:
     unstated. `conflicting` is the increment-2 auditor's state, never assembly's."""
     value = _texts(evidence["value"]) or ""
     if family in ("experience", "quantity"):
-        quantity = derive_quantity(value, _texts(evidence["comparison"]))
+        # validator/19: the unit anchor travels with the value, exactly as the
+        # currency/period anchors do below. Without it "12+" · "years" derived
+        # a dimensionless count of 12 (2026-09-15 review, finding 1).
+        quantity = derive_quantity(
+            value, _texts(evidence["comparison"]), _texts(evidence["unit"])
+        )
         return {
             "state": "parsed" if quantity else "present_unparsed",
             "quantity": quantity, "money": None, "date": None,
