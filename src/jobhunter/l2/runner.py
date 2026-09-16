@@ -95,6 +95,24 @@ blocking findings are all that keep them out of the aggregates, one round each,
 found through `flags` rather than by probing the archive per row. Neither
 touches a parked record: that is a published terminal state, and its exit is a
 human.
+
+Every audit probe here reads the ACTIVE bundle's audit version, because the
+artifact keys carry it (`keys.x_audit_key`). An artifact written by an earlier
+audit version judged the same candidate under a contract that has since been
+replaced, so it is history rather than this tuple's verdict: the fold sees no
+audit (`not_checked`, never a pass) and the document is owed one. That is what
+makes an `AUDIT_VERSION` bump recoverable instead of a no-op — the previous
+keying made "audited" mean "some version audited it", so a bump could reach
+nothing already settled. Settled rows get there through `_reaudit_pass`'s own
+queue, one call per document inside the same per-pass budget an `audit_error`
+takes, because the fold records which audit version it answered for
+(`flags.audit_version`) and a row whose recorded version is not the active one
+is a row that owes an audit. Replay has no key to derive — it re-judges the
+candidate — so it reads the version out of each artifact's body instead and
+drops the ones no bundle in force would read (`_ArchivedPhases`); the selection
+is the same, and so is the answer. Nothing is swept and nothing is rewritten:
+the older artifact stays where it was written, the new one lands beside it, and
+a row a human has ruled on is still out of reach (spec §6).
 """
 
 from __future__ import annotations
@@ -504,7 +522,7 @@ class _ArchivedAudit:
 #: what a dimension may say in an artifact; anything else reads as `error`
 _AUDIT_DIMENSIONS = ("no_findings", "findings", "error")
 #: the tail every audit artifact key ends with (`x_audit_key` writes gzip JSON)
-_AUDIT_SUFFIX = ".json.gz"
+_AUDIT_SUFFIX = keys.X_ARTIFACT_SUFFIX
 
 
 def _audit_bytes(artifact: dict[str, Any]) -> bytes:
@@ -513,16 +531,19 @@ def _audit_bytes(artifact: dict[str, Any]) -> bytes:
     )
 
 
-def _audit_pass_key(attempt_key: str, pass_no: int) -> str:
-    """Where pass `pass_no` of this candidate's audit is archived.
+def _audit_pass_key(attempt_key: str, audit_version: str | None, pass_no: int) -> str:
+    """Where pass `pass_no` of this candidate's audit under `audit_version` is
+    archived.
 
-    Pass 1 is `keys.x_audit_key` unchanged — every artifact the archive already
-    holds is a pass 1 — and the re-audit lands BESIDE it under a suffixed key in
-    the same namespace. Beside, never over: the archive is write-once, and an
-    error that a retry overwrote would be an error nothing can account for
-    afterwards (spec §5.6 archives every phase artifact, not the last one).
+    Pass 1 is `keys.x_audit_key` — which is where the version enters the key —
+    and the re-audit lands BESIDE it under a suffixed key in the same namespace.
+    Beside, never over: the archive is write-once, and an error that a retry
+    overwrote would be an error nothing can account for afterwards (spec §5.6
+    archives every phase artifact, not the last one). The version segment sits
+    between the candidate and the pass mark, so each (candidate, version, pass)
+    has a key of its own and no bump can ever land on another version's verdict.
     """
-    key = keys.x_audit_key(attempt_key)
+    key = keys.x_audit_key(attempt_key, audit_version)
     if pass_no <= 1:
         return key
     return f"{key.removesuffix(_AUDIT_SUFFIX)}-p{pass_no}{_AUDIT_SUFFIX}"
@@ -568,13 +589,22 @@ def _errored(audit: _ArchivedAudit) -> bool:
     return "error" in (audit.semantics, audit.completeness)
 
 
-def _latest_audit(store: ArchiveStore, attempt_key: str) -> _ArchivedAudit | None:
-    """This candidate's verdict, out of the archive (spec §5).
+def _latest_audit(
+    store: ArchiveStore, attempt_key: str, audit_version: str | None
+) -> _ArchivedAudit | None:
+    """This candidate's verdict under `audit_version`, out of the archive (spec §5).
 
     Derived keys and an `exists`, never a table: the artifacts live under
-    `x_audit_key(candidate_attempt)`, so the live drain, the catch-up scan and
-    `extract rebuild` read the same answer for the same candidate, no migration
-    exists to go wrong, and replaying an audited archive costs zero model calls.
+    `x_audit_key(candidate_attempt, audit_version)`, so the live drain, the
+    catch-up scan and `extract rebuild` read the same answer for the same
+    candidate, no migration exists to go wrong, and replaying an audited archive
+    costs zero model calls.
+
+    Only THIS version's artifacts answer. An audit written by an older version
+    judged the same candidate under a contract the active tuple has replaced, so
+    it is history, not the verdict in force: the fold reads no audit at all
+    (`not_checked`, never a pass) and the re-audit queue comes back for it. That
+    is the whole of "an `AUDIT_VERSION` bump means audit owed".
 
     The LAST pass is the verdict: a re-audit exists only because the pass before
     it errored, so reading it is what "an error is not the last word" means on
@@ -584,7 +614,7 @@ def _latest_audit(store: ArchiveStore, attempt_key: str) -> _ArchivedAudit | Non
     """
     latest: _ArchivedAudit | None = None
     for pass_no in range(1, AUDIT_PASSES + 1):
-        key = _audit_pass_key(attempt_key, pass_no)
+        key = _audit_pass_key(attempt_key, audit_version, pass_no)
         if not store.exists(key):
             break
         latest = _audit_view(store, key)
@@ -593,17 +623,24 @@ def _latest_audit(store: ArchiveStore, attempt_key: str) -> _ArchivedAudit | Non
     return latest
 
 
-def _next_audit_pass(store: ArchiveStore, attempt_key: str) -> tuple[int, str] | None:
-    """The pass number and key this candidate's next audit artifact takes, or
-    `None` when it has had its passes.
+def _next_audit_pass(
+    store: ArchiveStore, attempt_key: str, audit_version: str | None
+) -> tuple[int, str] | None:
+    """The pass number and key this candidate's next audit artifact takes under
+    `audit_version`, or `None` when it has had its passes.
 
     Three ways to be done, and only one of them spends anything: a completed
     audit is written once (write-once, and re-auditing a verdict until it reads
     better is exactly the backdoor spec §6 forbids), `AUDIT_PASSES` errors is
     the budget, and a candidate nothing has audited yet takes pass 1.
+
+    The budget is per version, because the keys are: a candidate whose v2 passes
+    are gone still has its v3 passes, which is what lets a bump recover the
+    documents an old contract could not judge. It is not a bigger budget — each
+    version is still two passes, and a version is bumped by code, not by a run.
     """
     for pass_no in range(1, AUDIT_PASSES + 1):
-        key = _audit_pass_key(attempt_key, pass_no)
+        key = _audit_pass_key(attempt_key, audit_version, pass_no)
         if not store.exists(key):
             return pass_no, key
         if not _errored(_audit_view(store, key)):
@@ -622,9 +659,16 @@ def _dimension(value: Any) -> str:
 _REPAIRED_MARK = "-r1"
 
 
-def _repair_audit_key(attempt_key: str) -> str:
-    """Where the one audit of this candidate's repaired successor is archived."""
-    key = keys.x_audit_key(attempt_key)
+def _repair_audit_key(attempt_key: str, audit_version: str | None) -> str:
+    """Where the one audit of this candidate's repaired successor is archived.
+
+    The repair round itself is version-free — one round per candidate, whatever
+    judged it — but the verdict ON the repaired candidate is an audit like any
+    other, so it composes with the version segment exactly as the passes do
+    (`…-s1a2.a3-r1.json.gz`). A bump leaves the old `-r1` where it was and owes
+    the repaired candidate a verdict of its own.
+    """
+    key = keys.x_audit_key(attempt_key, audit_version)
     return f"{key.removesuffix(_AUDIT_SUFFIX)}{_REPAIRED_MARK}{_AUDIT_SUFFIX}"
 
 
@@ -642,7 +686,9 @@ def _repaired_record(store: ArchiveStore, key: str) -> dict[str, Any] | None:
     return record if isinstance(record, dict) else None
 
 
-def _repair_audit_owed(store: ArchiveStore, attempt_key: str) -> bool:
+def _repair_audit_owed(
+    store: ArchiveStore, attempt_key: str, audit_version: str | None
+) -> bool:
     """Is the candidate a repair round produced still waiting for its one audit?
 
     A round is TWO archived writes, not one — spec §5 allows "one semantic
@@ -662,10 +708,15 @@ def _repair_audit_owed(store: ArchiveStore, attempt_key: str) -> bool:
     Cheapest probe first, because every fold of every settled row asks it: a
     candidate with no round at all costs one `exists`, a finished round two, and
     only a round whose verdict is missing is worth reading an artifact for.
+
+    "Finished" is per audit version, like every other audit probe: a repaired
+    candidate an older version cleared has no verdict the active tuple can
+    publish, so its one subsequent audit is owed again. The round is not — the
+    repair key carries no version, and no candidate ever gets a second round.
     """
     if not store.exists(keys.x_repair_key(attempt_key)):
         return False  # no round: there is no second candidate to audit
-    if store.exists(_repair_audit_key(attempt_key)):
+    if store.exists(_repair_audit_key(attempt_key, audit_version)):
         return False  # the round's own verdict is on record; write-once ends it
     # a round the judge refused produced no candidate either, and its base
     # settles exactly as it would have without the round
@@ -703,7 +754,9 @@ class _Published:
     record: dict[str, Any] | None = None
 
 
-def _published(store: ArchiveStore, attempt_key: str) -> _Published:
+def _published(
+    store: ArchiveStore, attempt_key: str, audit_version: str | None
+) -> _Published:
     """One candidate's phase artifacts, read the way every fold reads them.
 
     Derived keys and `exists` probes, exactly like the audit phase, so live
@@ -712,15 +765,20 @@ def _published(store: ArchiveStore, attempt_key: str) -> _Published:
     verdict stands unless a repair round replaced the candidate itself; then the
     repaired record settles under the repaired candidate's own audit, and the
     base's findings stay in the archive as the history of why.
+
+    Both verdicts are read under the ACTIVE audit version: a repaired candidate
+    only settles in the base's place on a verdict the tuple in force can
+    publish, so a bump leaves the base settling until the round's audit is
+    re-taken, never on the strength of a retired contract's pass.
     """
-    base = _latest_audit(store, attempt_key)
+    base = _latest_audit(store, attempt_key, audit_version)
     key = keys.x_repair_key(attempt_key)
     if not store.exists(key):
         return _Published(audit=base)
     replacement = _repaired_record(store, key)
     if replacement is None:
         return _Published(audit=base)  # the judge refused the patch
-    audit_key = _repair_audit_key(attempt_key)
+    audit_key = _repair_audit_key(attempt_key, audit_version)
     repaired = _audit_view(store, audit_key) if store.exists(audit_key) else None
     if not _repair_accepted(base, repaired):
         return _Published(audit=base)
@@ -743,6 +801,7 @@ class _Phases:
 
     def __init__(self, store: ArchiveStore, bundle: Bundle) -> None:
         self._store = store
+        self._version = bundle.audit_version
         self._on = bundle.audit_version is not None
         self._seen: dict[str, _Published] = {}
 
@@ -753,7 +812,8 @@ class _Phases:
     def _of(self, attempt_key: str) -> _Published:
         if attempt_key not in self._seen:
             self._seen[attempt_key] = (
-                _published(self._store, attempt_key) if self._on else _Published()
+                _published(self._store, attempt_key, self._version)
+                if self._on else _Published()
             )
         return self._seen[attempt_key]
 
@@ -763,6 +823,37 @@ class _Phases:
     def record(self, attempt_key: str) -> dict[str, Any] | None:
         """The repaired candidate this attempt publishes, or None for its own."""
         return self._of(attempt_key).record
+
+
+def _artifact_audit_version(artifact: dict[str, Any]) -> str:
+    """Which audit contract wrote this artifact.
+
+    Every artifact the phase writes records its own `audit_version`, and one
+    that does not is an artifact from before the phase was versioned — which
+    the bare key it sits at says is a `semantic-audit/v2`
+    (`keys.LEGACY_AUDIT_VERSION`), by the same definition the key derivation
+    uses. Read from the BODY, because replay reaches artifacts by scanning a
+    namespace rather than by deriving the key it wants.
+    """
+    version = artifact.get("audit_version")
+    return version if isinstance(version, str) and version else keys.LEGACY_AUDIT_VERSION
+
+
+def _audit_versions_in_force() -> frozenset[str]:
+    """Every audit contract some registered bundle would read at today.
+
+    A version no bundle names has been superseded, and its verdicts are history
+    — exactly what the live path expresses by deriving the active version's key
+    and finding nothing at it. The SET is what replay can use, because it holds
+    one scan for a whole mixed corpus, and it is not looser than the live rule:
+    a candidate hash covers the tuple that sealed it, so an artifact written by
+    another bundle's audit version can only ever join that bundle's candidates.
+    """
+    return frozenset(
+        version
+        for version in (get_bundle(name).audit_version for name in registered())
+        if version is not None
+    )
 
 
 class _ArchivedPhases:
@@ -778,17 +869,30 @@ class _ArchivedPhases:
     and one today's validators changed settles honestly unaudited rather than
     borrowing the verdict of a candidate that no longer exists.
 
+    The hash says which candidate an artifact describes and nothing about which
+    contract judged it, so the version is the second half of the selection here:
+    an artifact of a retired audit version is skipped, and the candidate settles
+    unaudited — the same answer the live path reaches by deriving the active
+    version's key. Without it `extract rebuild` would publish a retired pass as
+    the verdict in force and stamp the row with an active version nothing read,
+    which takes the document out of the re-audit queue for good: one replay
+    after a bump would strand precisely the documents the bump exists to
+    recover.
+
     One scan per namespace, and only what settlement reads is kept.
     """
 
     def __init__(self, store: ArchiveStore) -> None:
         self._audits: dict[str, _ArchivedAudit] = {}
         self._repairs: dict[str, dict[str, Any]] = {}
+        in_force = _audit_versions_in_force()
         for key in store.list(keys.X_AUDITS_PREFIX):
             artifact = _artifact(store, key)
             candidate = artifact.get("candidate_hash")
             if not isinstance(candidate, str) or not candidate:
                 continue  # an artifact that names no candidate describes none
+            if _artifact_audit_version(artifact) not in in_force:
+                continue  # a retired contract's verdict: audit owed, not done
             view = _audit_view_of(artifact)
             # the live walk's rule, without the pass order (artifact keys sort
             # by suffix, not by pass): a COMPLETED audit is the verdict, and a
@@ -1005,13 +1109,25 @@ def _flags(
     for, written by the same fold that decided it.
 
     `audit` is the phase's status on this candidate (`ok`/`error`/
-    `not_checked`), `audit_retry` says that status can still change, and
-    `repair` is the trigger's reason when there is one, so both passes that
-    revisit settled documents — the re-audit here, the repair campaign next —
-    find their work in one indexed query instead of an archive probe per
-    settled row. It is derived, like every other column this module writes: a
-    rebuild reproduces it, and a row folded before it existed simply has none,
-    which is what keeps a silent backfill out of the drain.
+    `not_checked`), `audit_version` is the audit contract this fold selected
+    under, `audit_retry` says that status can still change, and `repair` is the
+    trigger's reason when there is one, so both passes that revisit settled
+    documents — the re-audit here, the repair campaign next — find their work in
+    one indexed query instead of an archive probe per settled row. It is
+    derived, like every other column this module writes: a rebuild reproduces
+    it, and a row folded before it existed simply has none, which is what keeps
+    a silent backfill out of the drain.
+
+    `audit_version` is what makes an `AUDIT_VERSION` bump reach the rows that
+    are already settled. Their `audit: ok` was true of the contract that judged
+    them and is not true of the one in force, and no probe of the archive can
+    tell the queue that without a GET per settled row — so the fold records
+    which contract it answered for, and a row whose recorded version is not the
+    active one is a row that owes an audit (`_reaudit_queue`). The active
+    version is the honest answer because it is the only one any fold can read:
+    the live path derives that version's keys (`_published`) and replay skips
+    every artifact another version wrote (`_ArchivedPhases`), so the stamp names
+    the contract behind the verdict rather than merely the one in force.
 
     `audit_retry` is the one thing the status alone cannot say. "Error" is true
     of a candidate owed a retry and of one whose two passes are gone, and the
@@ -1037,7 +1153,7 @@ def _flags(
         audit = "error"
     else:
         audit = "ok"
-    flags: dict[str, Any] = {"audit": audit}
+    flags: dict[str, Any] = {"audit": audit, "audit_version": active.audit_version}
     if retry_owed:
         flags["audit_retry"] = True
     if trigger is not None:
@@ -1066,8 +1182,8 @@ def _audit_retry_owed(store: ArchiveStore, state: DerivedState, active: Bundle) 
     if (state.semantics, state.completeness) == ("not_checked", "not_checked"):
         return True
     if "error" in (state.semantics, state.completeness):
-        return _next_audit_pass(store, state.chosen_attempt) is not None
-    return _repair_audit_owed(store, state.chosen_attempt)
+        return _next_audit_pass(store, state.chosen_attempt, active.audit_version) is not None
+    return _repair_audit_owed(store, state.chosen_attempt, active.audit_version)
 
 
 def _settled(record: dict[str, Any], state: DerivedState) -> dict[str, Any]:
@@ -1430,25 +1546,34 @@ def _reaudit_queue(
     prompt_version: str,
     schema_version: str,
     validator_version: str,
+    audit_version: str,
     model_regex: str,
     only_doc: str | None,
     limit: int,
 ) -> list[tuple[str, str]]:
-    """Settled documents whose audit can still finish, oldest fold first.
+    """Settled documents whose audit is owed, oldest fold first.
 
     The derived row's own `flags` is the index — `settle` writes the audit
-    phase's status and whether a pass remains there on every fold — so finding
-    this work costs one query instead of an archive probe per settled document.
-    A row folded before those flags existed carries none and is not retried:
-    the pass fills as the corpus is re-folded, which is what keeps a silent
-    backfill out of the drain.
+    phase's status, the audit version it answered for, and whether a pass
+    remains there on every fold — so finding this work costs one query instead
+    of an archive probe per settled document. A row folded before those flags
+    existed carries none and is not retried: the pass fills as the corpus is
+    re-folded, which is what keeps a silent backfill out of the drain.
 
-    Two conditions, and each of them is a rule this pass exists to obey.
+    Three conditions, and each of them is a rule this pass exists to obey.
 
     `audit_retry` is the budget: a candidate whose two passes are gone must
     leave the window, or the spent pool — oldest rows in the table, because
     their `updated_at` froze on the fold that recorded the second error — fills
     every `LIMIT max_docs` window and the pass stops re-auditing corpus-wide.
+
+    A recorded audit version that is not the active one is the second kind of
+    owed audit, and it is the one an `AUDIT_VERSION` bump creates: the row's
+    `audit: ok` describes a contract that has been replaced, the artifact behind
+    it is not at the key the tuple in force reads, and nothing else in the table
+    can say so. Such a row takes exactly the path an `audit_error` takes — this
+    same window, this same per-pass budget, one call each — never a blanket
+    sweep of the corpus.
 
     `status = 'validated'` is the publication boundary (spec §6: "Once a
     terminal needs-review/quarantined/rejected state has been published,
@@ -1473,14 +1598,19 @@ def _reaudit_queue(
         WHERE prompt_version = %(pv)s AND schema_version = %(sv)s
           AND validator_version = %(vv)s AND model ~ %(model_regex)s
           AND chosen_attempt IS NOT NULL AND status = 'validated'
-          AND flags->>'audit_retry' = 'true'
+          AND (
+            flags->>'audit_retry' = 'true'
+            OR (flags->'audit' IS NOT NULL
+                AND flags->>'audit_version' IS DISTINCT FROM %(av)s)
+          )
           AND (%(only)s::text IS NULL OR document_hash = %(only)s)
         ORDER BY updated_at, document_hash
         LIMIT %(limit)s
         """,
         {
             "pv": prompt_version, "sv": schema_version, "vv": validator_version,
-            "model_regex": model_regex, "only": only_doc, "limit": limit,
+            "av": audit_version, "model_regex": model_regex,
+            "only": only_doc, "limit": limit,
         },
     ).fetchall()
     return [(r["document_hash"], r["chosen_attempt"]) for r in rows]
@@ -1536,10 +1666,11 @@ def _reaudit_pass(
     if active.audit_version is None:
         return None  # no audit phase, nothing that could have errored
     store = journal.store
+    audit_version = active.audit_version
     queued = session.do(
         lambda c: _reaudit_queue(
             c, prompt_version=active.prompt_version, schema_version=active.schema_version,
-            validator_version=active.validator_version,
+            validator_version=active.validator_version, audit_version=audit_version,
             model_regex=globs_to_regex(settings.l2_models), only_doc=only_doc, limit=max_docs,
         )
     )
@@ -1558,16 +1689,20 @@ def _reaudit_pass(
         def _settle(c: Conn, d: str = dh) -> DerivedState:
             return settle(c, store, d, settings.l2_models, iso(now()), bundle=active)
 
-        # a repair round's own audit first: it exists only where the base
-        # candidate's is already complete, so the two are never both owed, and
-        # it is the one that decides which candidate the row publishes
-        owed_repair = _repair_audit_owed(store, candidate)
-        if not owed_repair and _next_audit_pass(store, candidate) is None:
-            # the flag outlived the budget — a row folded under an older rule,
-            # or one whose settlement never landed. Re-fold it so it stops
-            # claiming a retry it cannot take, and do not count it: the archive
-            # is what says the passes are gone, and this is the only place that
-            # can put the row back in agreement with it.
+        # The base candidate's own pass first, then a repair round's subsequent
+        # audit. Under one audit version the two are never both owed — a round
+        # exists only where the base's verdict is already complete — but a
+        # version bump owes both, and the base's is what the round's verdict is
+        # judged against (`_repair_accepted`), so it must not be taken second.
+        scheduled = _next_audit_pass(store, candidate, audit_version)
+        owed_repair = scheduled is None and _repair_audit_owed(store, candidate, audit_version)
+        if scheduled is None and not owed_repair:
+            # the row asks for work the archive says is done: a flag that
+            # outlived the budget, a settlement that never landed, or a version
+            # this tuple has already audited under a fold that did not record
+            # it. Re-fold it so it stops claiming a pass it cannot take, and do
+            # not count it — the archive is what says so, and this is the only
+            # place that can put the row back in agreement with it.
             session.do(_settle)
             session.do(lambda c: c.commit())
             continue
@@ -2024,7 +2159,7 @@ def _audit_candidate(
     # could not change anything and would only spend the operator's budget.
     if state.chosen_attempt is None or state.status not in ("validated", "needs_review"):
         return AuditPhase()
-    scheduled = _next_audit_pass(store, state.chosen_attempt)
+    scheduled = _next_audit_pass(store, state.chosen_attempt, bundle.audit_version)
     if scheduled is None:
         # audited already (write-once), or two errors deep: the verdict on
         # record is the verdict, and it is what the trigger reads.
@@ -2242,7 +2377,7 @@ def _repair_candidate(
     key = keys.x_repair_key(trigger.attempt_key)
     if store.exists(key):
         return None  # the round is taken; write-once is the cap
-    audit = _latest_audit(store, trigger.attempt_key)
+    audit = _latest_audit(store, trigger.attempt_key, bundle.audit_version)
     if audit is None or _errored(audit):
         return None  # no completed audit: nothing validated to repair against
     findings = [f for f in audit.findings if f.get("severity") != "warning"]
@@ -2394,7 +2529,7 @@ def _audit_repaired(
     repaired = _repaired_record(store, key) if store.exists(key) else None
     if repaired is None:
         return None  # no round, or one that produced no candidate to audit
-    audit_key = _repair_audit_key(attempt_key)
+    audit_key = _repair_audit_key(attempt_key, bundle.audit_version)
     if store.exists(audit_key):
         return None  # write-once: the one subsequent audit is the one it took
     model = from_bytes(store.get(attempt_key)).requested_model
@@ -2407,7 +2542,7 @@ def _audit_repaired(
     )
     # counted on the policy's own answer, not on the phase's hopes: this is the
     # same read settlement is about to make
-    if _published(store, attempt_key).record is not None:
+    if _published(store, attempt_key, bundle.audit_version).record is not None:
         summary.repaired += 1
     return unreachable
 

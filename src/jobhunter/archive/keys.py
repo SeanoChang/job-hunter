@@ -95,29 +95,79 @@ def parse_x_attempt_key(key: str) -> tuple[datetime, str, int, int] | None:
 
 
 # The semantic audit (spec §4) is a phase of its own: its artifact is keyed by
-# the candidate attempt it audited, in a separate namespace. Deriving the key
-# instead of recording it is what lets settlement fold identically live, in the
-# catch-up scan and in replay — one `exists` probe, no table, no migration.
+# the candidate attempt it audited AND by the audit version that judged it, in a
+# separate namespace. Deriving the key instead of recording it is what lets
+# settlement fold identically live, in the catch-up scan and in replay — one
+# `exists` probe, no table, no migration.
 X_AUDITS_PREFIX = "extractions/audits/"
+#: every archived extraction-phase artifact is gzipped JSON
+X_ARTIFACT_SUFFIX = ".json.gz"
+#: What a BARE audit key is, by definition. The phase shipped unversioned keys
+#: through `semantic-audit/v2`, so an artifact with no version segment is a v2
+#: artifact — readable exactly where it was written, and never overwritten by a
+#: later version (the archive is write-once).
+LEGACY_AUDIT_VERSION = "semantic-audit/v2"
+#: the audit family the segment below spells, and the only one the phase has
+#: ever had — taken from the legacy version so the two cannot drift apart
+_AUDIT_FAMILY = LEGACY_AUDIT_VERSION.rsplit("/", 1)[0]
+#: the whole of what the segment can spell: this family, numbered `vN`
+_AUDIT_VERSION_RE = re.compile(rf"^{re.escape(_AUDIT_FAMILY)}/v([0-9]+)$")
 
 
-def x_audit_key(attempt_key: str) -> str:
-    """The audit artifact for one extraction attempt's candidate.
+def _audit_segment(audit_version: str) -> str:
+    """The key segment spelling one audit version: `semantic-audit/v3` -> `a3`.
+
+    The number is what identifies the version within its family, so the segment
+    stays short in a name that already carries a stamp, a document hash and a
+    slot. Short is only safe while the spelling is INJECTIVE, and this one is
+    injective exactly over `semantic-audit/vN`: normalising a richer tail would
+    put `v2.1` on `semantic-audit/v21`'s key, and dropping the family would put
+    any other `*/v3` on `semantic-audit/v3`'s. So anything else raises rather
+    than falling back to a segment that is not its own — two versions sharing a
+    write-once key is exactly the collision the segment exists to prevent, and
+    renaming the family or numbering it differently is then a deliberate change
+    here rather than an accident in the archive.
+    """
+    match = _AUDIT_VERSION_RE.match(audit_version)
+    if match is None:
+        raise ValueError(
+            f"cannot spell an audit key segment for version {audit_version!r}; "
+            f"the segment spells {_AUDIT_FAMILY}/vN only, and a version outside "
+            "that shape would share a write-once key with one inside it"
+        )
+    return f"a{match.group(1)}"
+
+
+def x_audit_key(attempt_key: str, audit_version: str | None) -> str:
+    """The audit artifact for one extraction attempt's candidate, under one
+    audit version.
 
     `extractions/attempts/<stamp>-<doc12>-s<slot>a<no>.json.gz`
-    -> `extractions/audits/<stamp>-<doc12>-s<slot>a<no>.json.gz`
+    -> `extractions/audits/<stamp>-<doc12>-s<slot>a<no>[.a<v>].json.gz`
 
-    One-to-one with the attempt, and never under `X_ATTEMPTS_PREFIX`: spec §5
-    keeps the phases distinct, so an audit artifact must not be listed, folded
-    or counted as an extraction sample. A key that is not an extraction attempt
-    raises — mapping garbage would point settlement at another document's audit.
+    The version is part of the key, not just of the artifact body, and that is
+    what makes an `AUDIT_VERSION` bump recoverable: a reader derives the key of
+    the version in force, so an artifact written by an older one is simply not
+    there — "audit owed", never "audit done" — while the older artifact stays
+    exactly where it was written. `LEGACY_AUDIT_VERSION` and `None` are the bare
+    key: v2 shipped without a segment, and those artifacts keep their spelling.
+
+    One-to-one with (attempt, version), and never under `X_ATTEMPTS_PREFIX`:
+    spec §5 keeps the phases distinct, so an audit artifact must not be listed,
+    folded or counted as an extraction sample. A key that is not an extraction
+    attempt raises — mapping garbage would point settlement at another
+    document's audit.
     """
     if parse_x_attempt_key(attempt_key) is None:
         raise ValueError(
             f"not an extraction attempt key: {attempt_key!r}; an audit artifact is keyed "
             "by the candidate attempt it audited"
         )
-    return X_AUDITS_PREFIX + attempt_key[len(X_ATTEMPTS_PREFIX) :]
+    leaf = attempt_key[len(X_ATTEMPTS_PREFIX) :]
+    if audit_version is None or audit_version == LEGACY_AUDIT_VERSION:
+        return X_AUDITS_PREFIX + leaf
+    stem = leaf.removesuffix(X_ARTIFACT_SUFFIX)
+    return f"{X_AUDITS_PREFIX}{stem}.{_audit_segment(audit_version)}{X_ARTIFACT_SUFFIX}"
 
 
 # The bounded repair round (spec §4 Repair) is the third phase, and it gets the

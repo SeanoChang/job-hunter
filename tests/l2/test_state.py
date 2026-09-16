@@ -626,6 +626,15 @@ def test_the_gate_dimension_map_is_the_policy_table() -> None:
         "importance": ("importance",),
         "negation": ("polarity_subject",),
         "f1": ("omission", "unsupported_statement", "relationship"),
+        # the validator/19 comparator dimensions (2026-09-16): without these a
+        # cohort whose ONLY failure is a meaning split has an empty dispute
+        # set and adjudicates straight past a blocking finding of exactly
+        # that dimension
+        "kind": ("unsupported_statement",),
+        "polarity_target": ("polarity_subject",),
+        "scoped_values": ("numeric_scope_unit",),
+        "alternatives": ("relationship",),
+        "entity_links": ("mention_linkage",),
     }
 
 
@@ -638,7 +647,11 @@ def test_a_failed_gate_makes_its_own_dimension_touch_the_dispute(gate: str) -> N
         off_dispute = [finding(code, "s1")]
         assert audit_touches_dispute(off_dispute, DISPUTE, [gate]) is True
         assert audit_touches_dispute(off_dispute, DISPUTE, []) is False
-        other = [g for g in GATE_DIMENSION_CODES if g != gate]
+        # gates that share the code (f1 and alternatives both map
+        # relationship) legitimately touch on it; only gates whose dimension
+        # set excludes the code must stay silent
+        other = [g for g in GATE_DIMENSION_CODES
+                 if code not in GATE_DIMENSION_CODES[g]]
         assert audit_touches_dispute(off_dispute, DISPUTE, other) is False
 
 

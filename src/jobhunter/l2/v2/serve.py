@@ -154,13 +154,24 @@ def claim_index(record: dict[str, Any]) -> dict[str, Any]:
     is the envelope of the refs it cites, because the gate aligns claims by span
     overlap and a claim has one textual footprint.
 
-    What the legacy claim cannot carry, this does not pretend to compare: kind,
-    topic, scope, derived VALUES, conditions, alternatives and mention roles are
-    all absent, so two samples that cite the same text and disagree about what
-    it means still pass. Spec §6's v2 comparator (aligned statement kind,
-    importance, polarity, scoped fact values, entity links, alternatives) is the
-    successor and bumps `VALIDATOR_VERSION` when it lands; this is the floor
-    beneath it, not that.
+    Validator/19 adds spec §6's remaining comparator dimensions to each claim —
+    statement `kind`, the `polarity_target` a negation actually points at, the
+    `values` its fact entries derived, the `alternatives` it participates in,
+    and its `entity_links`. Until they were here, two samples that cited the
+    same spans and disagreed about everything else scored F1 1.0 and certified
+    each other: `all_of` against `any_of` over one pair of statements is a
+    different job, and the gate could not see it (external review finding 6).
+    Carrying them is this function's half; comparing them is `agreement`'s, and
+    none of them touch F1 or a threshold.
+
+    Two of the five are deliberately namespace-free — derived values come from
+    `facts.py` under a frozen validator, and entity links are casefolded source
+    surfaces — so both samples mean the same thing by them. Group MEMBER ids are
+    not: ids are minted per sample (validator/18's refutation 7b354fd4), so they
+    travel here in the claim's own namespace for naming and the comparator reads
+    only what crosses samples. Topic, conditions and mention roles are still
+    absent; they are display labels or a shape the eleven-case corpus does not
+    yet produce.
 
     The shape is v1's `demand_profile` because that is the shape the gate reads,
     and — until the readers dispatch on `schema` — the only shape
@@ -173,11 +184,22 @@ def claim_index(record: dict[str, Any]) -> dict[str, Any]:
 
     It is not free: over the eleven case fixtures the index costs about a third
     of the slice (30KB of blob becomes 41KB, ~1KB a document), nearly all of it
-    the cited text a legacy renderer needs. That is the price of a gate that
-    works, and it stays far short of the record — block accounting, presentation
-    areas and the extraction envelope are still only in the archive.
+    the cited text a legacy renderer needs, and validator/19's five dimensions
+    add ~650 bytes a document on top (41KB -> 48KB). That is the price of a gate
+    that works, and it stays far short of the record — block accounting,
+    presentation areas and the extraction envelope are still only in the
+    archive.
     """
     statements = {s["id"]: s for s in record["statements"]}
+    entries = record["facts"]["entries"]
+    values = _values_by_statement(entries)
+    links = _links_by_statement(record["mentions"])
+    routes = _routes_by_member(record["relations"]["groups"])
+
+    def semantics(statement_id: str) -> dict[str, Any]:
+        return {"values": values.get(statement_id, ()), "links": links.get(statement_id, ()),
+                "routes": routes.get(statement_id, ())}
+
     areas: dict[str, dict[str, Any]] = {
         statement["id"]: {
             "id": statement["id"],
@@ -185,18 +207,25 @@ def claim_index(record: dict[str, Any]) -> dict[str, Any]:
             "kind": statement["kind"],
             "importance": statement["importance"] or NO_IMPORTANCE,
             "level": statement["proficiency"],
-            "claims": [_claim(statement, statement["evidence"])],
+            "claims": [_claim(statement, statement["evidence"], **semantics(statement["id"]))],
         }
         for statement in record["statements"]
     }
     for mention in record["mentions"]:
         for statement_id in mention["statement_ids"]:
             if (area := areas.get(statement_id)) is not None:
-                area["claims"].append(_claim(statements[statement_id], [mention["evidence"]]))
+                area["claims"].append(
+                    _claim(statements[statement_id], [mention["evidence"]],
+                           **semantics(statement_id))
+                )
     unlinked: list[dict[str, Any]] = []
-    for entry in record["facts"]["entries"]:
+    for entry in entries:
         anchor = next((statements[i] for i in entry["statement_ids"] if i in statements), None)
-        claim = _claim(anchor, entry["evidence"]["value"])
+        # a fact claim carries ITS OWN derived value, not its statement's whole
+        # set: it is the one assertion the entry makes on its own span
+        claim = _claim(anchor, entry["evidence"]["value"], values=(_value_signature(entry),),
+                       links=links.get(anchor["id"], ()) if anchor else (),
+                       routes=routes.get(anchor["id"], ()) if anchor else ())
         if anchor is None:
             # a fact no statement claims still says something about the document,
             # and a sample that omits it disagrees with one that reports it
@@ -207,15 +236,27 @@ def claim_index(record: dict[str, Any]) -> dict[str, Any]:
     return {"areas": [*areas.values(), *unlinked]}
 
 
-def _claim(statement: dict[str, Any] | None, refs: list[dict[str, Any]]) -> dict[str, Any]:
+def _claim(
+    statement: dict[str, Any] | None,
+    refs: list[dict[str, Any]],
+    *,
+    values: tuple[str, ...] = (),
+    links: tuple[str, ...] = (),
+    routes: tuple[dict[str, Any], ...] = (),
+) -> dict[str, Any]:
     """One claim: the cited text and its span, under its statement's labels.
 
     `negated` is v1's boolean, so `negative` and `ambiguous` both read as "not
     plainly positive" — any split against `positive` escalates, which is what
-    the gate asks of polarity, while a negative/ambiguous split is one of the
-    distinctions the successor comparator has to make.
+    the gate asks of polarity. `polarity_target` is where the rest of polarity
+    lives (validator/19): the pair a negation actually points at, so two samples
+    that agree something is negated and disagree about WHAT ("No sponsorship
+    available" as an employer constraint or as a candidate disqualification, the
+    spec §3 case) split here, as does negative against ambiguous. It is null for
+    a positive statement, which negates nothing and has no target.
     """
     ordered = sorted(refs, key=lambda r: (r["span"][0], r["span"][1]))
+    polarity = statement["polarity"] if statement else None
     return {
         "quote": {
             "text": " ".join(str(ref["text"]) for ref in ordered),
@@ -224,6 +265,97 @@ def _claim(statement: dict[str, Any] | None, refs: list[dict[str, Any]]) -> dict
         "importance": statement["importance"] if statement else None,
         "level": statement["proficiency"] if statement else None,
         "negated": statement is not None and statement["polarity"] != "positive",
+        "kind": statement["kind"] if statement else None,
+        "polarity_target": (
+            f"{polarity}:{statement['subject']}"
+            if statement is not None and polarity != "positive"
+            else None
+        ),
+        "values": list(values),
+        "alternatives": [dict(route) for route in routes],
+        "entity_links": list(links),
+    }
+
+
+def _values_by_statement(entries: list[dict[str, Any]]) -> dict[str, tuple[str, ...]]:
+    """statement id -> the derived values its fact entries carry, sorted."""
+    out: dict[str, list[str]] = {}
+    for entry in entries:
+        signature = _value_signature(entry)
+        for statement_id in entry["statement_ids"]:
+            out.setdefault(statement_id, []).append(signature)
+    return {statement_id: tuple(sorted(v)) for statement_id, v in out.items()}
+
+
+def _value_signature(entry: dict[str, Any]) -> str:
+    """One fact entry's derived value, scope included, as one comparable string.
+
+    Scope is part of the value, not context around it: spec §3's "5 years
+    overall including 2 managing" is two entries whose numbers mean different
+    things, and a sample that scopes 24 months to management where another
+    scopes them to the whole role disagrees about the job.
+
+    Nothing is re-derived here. These numbers came from `facts.py` under a
+    frozen validator version, which is exactly why they compare across samples:
+    unlike an id, a derived quantity means the same thing in both namespaces.
+    The state leads, so `parsed` never silently compares equal to
+    `present_unparsed` with the same empty payload.
+    """
+    derived = entry["derived"]
+    scope = entry["scope"]["kind"] if entry["scope"] else ""
+    parts = [entry["family"], scope, entry["date_kind"] or "", entry["component"] or "",
+             derived["state"]]
+    if (quantity := derived["quantity"]) is not None:
+        parts += ["q", quantity["dimension"], quantity["comparison"],
+                  _number(quantity["min_value"]), _number(quantity["max_value"]),
+                  str(quantity["inclusive_min"]), str(quantity["inclusive_max"]),
+                  str(quantity["unit"])]
+    if (money := derived["money"]) is not None:
+        parts += ["m", money["comparison"], str(money["min_amount"]), str(money["max_amount"]),
+                  str(money["currency"]), str(money["period"])]
+    if (date := derived["date"]) is not None:
+        parts += ["d", str(date["date"]), ",".join(date["candidates"] or ())]
+    return "|".join(parts)
+
+
+def _number(value: Any) -> str:
+    """A derived number as text, with 144 and 144.0 spelled the same — the JSON
+    round trip through the blob decides which of the two a sample carries."""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _links_by_statement(mentions: list[dict[str, Any]]) -> dict[str, tuple[str, ...]]:
+    """statement id -> the casefolded surfaces linked to it, sorted and unique.
+
+    Casefolded because `aliases/1` is: two samples spelling one brand
+    differently named the same entity, and a split there would be noise rather
+    than a disagreement about the document.
+    """
+    out: dict[str, set[str]] = {}
+    for mention in mentions:
+        for statement_id in mention["statement_ids"]:
+            out.setdefault(statement_id, set()).add(mention["surface"].casefold())
+    return {statement_id: tuple(sorted(s)) for statement_id, s in out.items()}
+
+
+def _routes_by_member(groups: list[dict[str, Any]]) -> dict[str, tuple[dict[str, Any], ...]]:
+    """member id -> the groups it belongs to DIRECTLY, in a stable order.
+
+    Direct membership only: a statement inside a nested group belongs to that
+    inner group, which is the operator actually governing it. Members travel as
+    the sample's own ids (the comparator never matches them across samples) and
+    the operator is what crosses.
+    """
+    out: dict[str, list[dict[str, Any]]] = {}
+    for group in groups:
+        route = {"operator": group["operator"], "members": list(group["members"])}
+        for member in group["members"]:
+            out.setdefault(member, []).append(route)
+    return {
+        member: tuple(sorted(routes, key=lambda r: (r["operator"], tuple(r["members"]))))
+        for member, routes in out.items()
     }
 
 

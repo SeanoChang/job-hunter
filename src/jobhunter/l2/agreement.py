@@ -9,6 +9,17 @@ sample chosen whole (max mean pairwise F1, lowest slot on ties) — samples are
 never merged, because a merged record is one no engine produced and no
 archive object backs.
 
+Validator/19 adds the rest of spec §6's comparator — "aligned statement kind,
+importance, polarity, scoped fact values, entity links, and alternatives" — as
+five more zero-tolerance DIMENSION checks on aligned pairs, beside importance
+and negation and never folded into F1. No threshold moves: F1 counts how much
+two samples found in common, and what they mean by what they both found is a
+different question, which is how two records identical except `all_of` against
+`any_of` used to score a perfect 1.0 and certify each other (external review
+finding 6). A v1 claim carries none of the five fields, so a v1 cohort scores
+exactly what it scored before — this is a v2 claim-surface addition, and v1's
+frozen validator identity stays honest.
+
 The thresholds here are part of VALIDATOR_VERSION: wiring this gate into the
 runner, or changing any constant, bumps it (a $0 archive replay).
 
@@ -29,6 +40,19 @@ from typing import Any
 JACCARD_MIN = 0.5
 F1_MIN = 0.80
 IMPORTANCE_MIN = 0.90
+
+#: The v2 semantic dimensions (spec §6, validator/19): failure name -> the key
+#: its disagreement count is reported under. All five are zero-tolerance like
+#: negation rather than ratios like importance — a dimension check asks whether
+#: two samples mean the same thing by text they BOTH cited, and 90% of that is
+#: not a meaningful quantity. They are counts, never terms in F1.
+DIMENSIONS: dict[str, str] = {
+    "kind": "kind_disagreements",
+    "polarity_target": "polarity_target_disagreements",
+    "scoped_values": "scoped_value_disagreements",
+    "alternatives": "alternatives_disagreements",
+    "entity_links": "entity_link_disagreements",
+}
 
 
 def cohort_hook(
@@ -72,6 +96,9 @@ def cohort_hook(
                 "pair_f1": {},
                 "required_importance_agreement": None,
                 "negation_disagreements": 0,
+                # nothing was compared, so no dimension disagreed — the keys are
+                # here because this report is read by the same code as the other
+                **dict.fromkeys(DIMENSIONS.values(), 0),
                 "thresholds": {"jaccard": JACCARD_MIN, "f1": f1_min,
                                "importance": IMPORTANCE_MIN},
                 "failures": ["sample_failed"],
@@ -113,6 +140,43 @@ class _Claim:
     # (v2's claim index areas are keyed by statement id; a v1 area has no id).
     # Alignment never reads it — it exists so a disagreement can be named.
     owner: str | None = None
+    # the v2 semantic dimensions (validator/19). Every one of them is empty on a
+    # v1 claim, and every check below is silent when either side is empty, so an
+    # older or leaner claim surface is compared exactly as it always was.
+    kind: str | None = None
+    polarity_target: str | None = None
+    values: tuple[str, ...] = ()
+    alternatives: tuple[str, ...] = ()
+    entity_links: tuple[str, ...] = ()
+
+
+def _strings(value: Any) -> tuple[str, ...]:
+    """A stored list read as strings — a blob is only ever guaranteed to match
+    the schema of the day it was written."""
+    if not isinstance(value, list):
+        return ()
+    return tuple(v for v in value if isinstance(v, str))
+
+
+def _operators(value: Any) -> tuple[str, ...]:
+    """The logical operators this claim sits under, sorted.
+
+    Member IDS are carried in the claim (they name the route in its own sample)
+    and deliberately NOT compared: ids are minted per sample and mean nothing
+    across them (validator/18's refutation 7b354fd4). Arity is left out too —
+    one sample splitting "Kotlin/Scala" into two statements where another keeps
+    one is atomization variance, which is what F1 is calibrated to absorb. What
+    crosses samples is the operator itself: "A and B" and "A or B" are different
+    jobs however either sample chose to atomize them.
+    """
+    if not isinstance(value, list):
+        return ()
+    operators = [
+        route["operator"]
+        for route in value
+        if isinstance(route, Mapping) and isinstance(route.get("operator"), str)
+    ]
+    return tuple(sorted(operators))
 
 
 def _claims(profile: Mapping[str, Any]) -> list[_Claim]:
@@ -137,12 +201,19 @@ def _claims(profile: Mapping[str, Any]) -> list[_Claim]:
             ):
                 span = (raw[0], raw[1])
             imp = c.get("importance")
+            kind = c.get("kind")
+            target = c.get("polarity_target")
             out.append(
                 _Claim(
                     span=span,
                     importance=imp if isinstance(imp, str) else None,
                     negated=bool(c.get("negated")),
                     owner=owner if isinstance(owner, str) else None,
+                    kind=kind if isinstance(kind, str) else None,
+                    polarity_target=target if isinstance(target, str) else None,
+                    values=_strings(c.get("values")),
+                    alternatives=_operators(c.get("alternatives")),
+                    entity_links=_strings(c.get("entity_links")),
                 )
             )
     return out
@@ -260,6 +331,47 @@ def _align(xs: list[_Claim], ys: list[_Claim]) -> list[tuple[int, int]]:
     return pairs
 
 
+def _differs(x: Any, y: Any) -> bool:
+    """Both sides said something, and they said different things."""
+    return bool(x) and bool(y) and x != y
+
+
+def _conflicts(x: tuple[str, ...], y: tuple[str, ...]) -> bool:
+    """An AGGREGATED dimension disagrees on conflict, never on omission.
+
+    `values` and `entity_links` aggregate everything a claim's statement
+    carries, so one sample deriving a fact — or linking a mention — the other
+    never emitted leaves a strict subset, which is the omission shape F1 and
+    the dispute set already answer for (2026-09-16 review). Two different
+    readings of the same content leave neither side containing the other,
+    and that is the split these dimensions exist to catch."""
+    xs, ys = set(x), set(y)
+    return bool(xs) and bool(ys) and not (xs <= ys or ys <= xs)
+
+
+def _dimension_splits(x: _Claim, y: _Claim) -> tuple[tuple[str, int], ...]:
+    """What this aligned pair disagrees about, per spec §6 dimension.
+
+    Four of the five are silent when either side carries nothing: a claim with
+    no kind, no negation target, no derived value or no linked entity is not
+    disagreeing about one — it says nothing about it, and the omission side of a
+    split is what F1 and the dispute set already answer for.
+
+    `alternatives` is the exception, because there absence IS an assertion: a
+    route in one sample and no relation at all in the other reads as "both of
+    these are separately required" (spec §3, "Membership in a route does not
+    make its members separately universal requirements"). That is exactly the
+    silent change a dropped `relations` block makes.
+    """
+    return (
+        ("kind", int(_differs(x.kind, y.kind))),
+        ("polarity_target", int(_differs(x.polarity_target, y.polarity_target))),
+        ("scoped_values", int(_conflicts(x.values, y.values))),
+        ("alternatives", int(x.alternatives != y.alternatives)),
+        ("entity_links", int(_conflicts(x.entity_links, y.entity_links))),
+    )
+
+
 def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> AgreementResult:
     """The §4.5 gate over k samples of one document, in slot order.
 
@@ -276,6 +388,7 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
     negation_splits = 0
     required_pairs = 0
     required_agree = 0
+    dimensions = dict.fromkeys(DIMENSIONS, 0)
     for a in range(len(samples)):
         for b in range(a + 1, len(samples)):
             xs, ys = claim_sets[a], claim_sets[b]
@@ -285,12 +398,15 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
             f1s.append(f1)
             pair_f1[(a, b)] = f1
             for i, j in pairs:
-                if xs[i].negated != ys[j].negated:
+                x, y = xs[i], ys[j]
+                if x.negated != y.negated:
                     negation_splits += 1
-                if "required" in (xs[i].importance, ys[j].importance):
+                if "required" in (x.importance, y.importance):
                     required_pairs += 1
-                    if xs[i].importance == ys[j].importance:
+                    if x.importance == y.importance:
                         required_agree += 1
+                for dimension, split in _dimension_splits(x, y):
+                    dimensions[dimension] += split
 
     mean_f1 = sum(f1s) / len(f1s)
     imp_agreement = (required_agree / required_pairs) if required_pairs else 1.0
@@ -302,6 +418,7 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
         failures.append("importance")
     if negation_splits:
         failures.append("negation")
+    failures.extend(dimension for dimension in DIMENSIONS if dimensions[dimension])
 
     # Medoid: max mean F1 against the other samples; lowest slot on ties.
     def mean_against_others(idx: int) -> float:
@@ -316,6 +433,7 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
         "pair_f1": {f"{a}-{b}": f1 for (a, b), f1 in sorted(pair_f1.items())},
         "required_importance_agreement": imp_agreement,
         "negation_disagreements": negation_splits,
+        **{DIMENSIONS[d]: n for d, n in dimensions.items()},
         "thresholds": {"jaccard": JACCARD_MIN, "f1": f1_min, "importance": IMPORTANCE_MIN},
         "failures": failures,
         "medoid": medoid,

@@ -24,6 +24,7 @@ import gzip
 import json
 import pathlib
 import re
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -42,6 +43,7 @@ from jobhunter.l2.engines import (
     EngineThrottled,
     EngineTransportError,
 )
+from jobhunter.l2.rebuild import rebuild_extractions
 from jobhunter.l2.runner import (
     ExtractSummary,
     _Journal,
@@ -112,6 +114,33 @@ def audits_in(archive: ArchiveStore) -> dict[str, dict[str, Any]]:
     }
 
 
+def audit_key(attempt_key: str, version: str | None = AUDIT_VERSION) -> str:
+    """Where THIS audit version's verdict on a candidate is archived.
+
+    The version is part of the key (spec §5.6), so every assertion in this file
+    names the version it means: the artifacts the active bundle writes and reads
+    are `AUDIT_VERSION`'s, and `version=None` is the bare legacy spelling, which
+    is a `semantic-audit/v2` artifact by definition.
+    """
+    return keys.x_audit_key(attempt_key, version)
+
+
+def flags(audit: str, **rest: Any) -> dict[str, Any]:
+    """The scheduling surface one fold writes: the audit phase's status, the
+    audit version the fold selected under, and whatever the verdict asks a later
+    run to come back for."""
+    return {"audit": audit, "audit_version": AUDIT_VERSION, **rest}
+
+
+def reaudit_window(pg: Conn, *, limit: int, version: str = AUDIT_VERSION) -> list[Any]:
+    """What the re-audit pass would take next, under the active audit version."""
+    return _reaudit_queue(
+        pg, prompt_version=V2_TUPLE[0], schema_version=V2_TUPLE[1],
+        validator_version=V2_TUPLE[2], audit_version=version,
+        model_regex=globs_to_regex(GLOBS), only_doc=None, limit=limit,
+    )
+
+
 def repairs_in(archive: ArchiveStore) -> dict[str, dict[str, Any]]:
     """Every archived repair artifact, by key: gzipped JSON at `x_repair_key`."""
     return {
@@ -130,23 +159,28 @@ def archive_audit(
     outcome: str = "ok",
     audit_pass: int = 1,
     candidate_hash: str = "",
+    version: str | None = AUDIT_VERSION,
 ) -> None:
     """One audit artifact, written by hand — the read half of the contract.
 
-    Settlement probes `x_audit_key(candidate)` and needs exactly three values
-    out of it; writing them here (rather than through the runner) is what pins
-    the format `settle` reads against the format the audit phase writes.
-    `audit_pass` picks which of the candidate's two passes is being written,
-    so a test can spend a budget without paying for two drains.
+    Settlement probes `x_audit_key(candidate, audit_version)` and needs exactly
+    three values out of it; writing them here (rather than through the runner)
+    is what pins the format `settle` reads against the format the audit phase
+    writes. `audit_pass` picks which of the candidate's two passes is being
+    written, so a test can spend a budget without paying for two drains, and
+    `version` picks which audit version wrote it — `None` is the bare legacy
+    key, which is a `semantic-audit/v2` artifact by definition.
     """
     artifact = {
-        "audit_version": AUDIT_VERSION, "outcome": outcome, "attempt_key": attempt_key,
+        "audit_version": version or keys.LEGACY_AUDIT_VERSION, "outcome": outcome,
+        "attempt_key": attempt_key,
         "audit_pass": audit_pass, "candidate_hash": candidate_hash,
         "semantics": semantics, "completeness": completeness, "blocking": blocking,
         "findings": [], "unresolved": [],
     }
     archive.put(
-        keys.x_audit_key(attempt_key) if audit_pass == 1 else retry_key(attempt_key),
+        audit_key(attempt_key, version) if audit_pass == 1
+        else retry_key(attempt_key, version),
         gzip.compress(json.dumps(artifact, sort_keys=True).encode("utf-8"), mtime=0),
     )
 
@@ -167,10 +201,11 @@ def row_of(pg: Conn) -> dict[str, Any]:
     return row
 
 
-def retry_key(attempt_key: str) -> str:
+def retry_key(attempt_key: str, version: str | None = AUDIT_VERSION) -> str:
     """Where the ONE re-audit of a candidate lands: beside the failed artifact,
-    in the same namespace, never over it (write-once)."""
-    return keys.x_audit_key(attempt_key).removesuffix(".json.gz") + "-p2.json.gz"
+    in the same namespace and under the same audit version, never over it
+    (write-once)."""
+    return audit_key(attempt_key, version).removesuffix(".json.gz") + "-p2.json.gz"
 
 
 def settled_rows(pg: Conn) -> dict[str, Any]:
@@ -466,7 +501,7 @@ def test_an_unaudited_record_stores_its_profile_but_indexes_no_mentions(
     # a phase that never ran is not a phase that failed — nothing to repair
     # against — but both passes are still there to take, and the row says so:
     # this is how a record the drain could not audit gets its audit later
-    assert row["flags"] == {"audit": "not_checked", "audit_retry": True}
+    assert row["flags"] == flags("not_checked", audit_retry=True)
     assert [m["surface"] for m in row["profile"]["mentions"]] == ["CPA", "ACCA", "ACA"]
     assert mention_rows_in(pg) == []
 
@@ -528,8 +563,8 @@ def test_an_agreeing_cohort_with_a_clean_audit_serves_mention_rows(
     # the audited candidate IS the settled one: the runner and settle share the
     # agreement gate, so the artifact can only ever be keyed by settle's choice
     artifacts = audits_in(store)
-    assert list(artifacts) == [keys.x_audit_key(row["chosen_attempt"])]
-    artifact = artifacts[keys.x_audit_key(row["chosen_attempt"])]
+    assert list(artifacts) == [audit_key(row["chosen_attempt"])]
+    artifact = artifacts[audit_key(row["chosen_attempt"])]
     assert artifact["outcome"] == "ok" and artifact["audit_version"] == AUDIT_VERSION
     assert artifact["attempt_key"] == row["chosen_attempt"]
     assert artifact["blocking"] == 0 and artifact["findings"] == []
@@ -608,7 +643,7 @@ def test_a_disagreeing_cohort_with_a_clean_audit_is_adjudicated(
     assert mention_rows_in(pg) == C04_ROWS  # an adjudicated record is indexed
 
     # exactly one audit, of the candidate settlement published
-    assert list(audits_in(store)) == [keys.x_audit_key(row["chosen_attempt"])]
+    assert list(audits_in(store)) == [audit_key(row["chosen_attempt"])]
 
 
 def test_an_accept_filed_before_the_audit_artifact_survives_it(
@@ -695,7 +730,7 @@ def test_a_disagreeing_cohort_with_a_failed_audit_stays_for_review(
     # 1: the runner and settle fold the same events through the same gate
     chosen = {a.attempt_key: a for a in attempts_in(store)}[row["chosen_attempt"]]
     assert chosen.sample_slot in (2, 3)
-    assert list(audits_in(store)) == [keys.x_audit_key(row["chosen_attempt"])]
+    assert list(audits_in(store)) == [audit_key(row["chosen_attempt"])]
 
     artifact = next(iter(audits_in(store).values()))
     assert artifact["outcome"] == "audit_error"
@@ -749,11 +784,11 @@ def test_a_transport_failure_leaves_the_candidates_pass_unspent(
     assert row["profile"]["quality"]["semantics"] == "not_checked"
     assert row["profile"]["quality"]["search_eligible"] is False
     assert audits_in(store) == {}
-    assert row["flags"] == {"audit": "not_checked", "audit_retry": True}
+    assert row["flags"] == flags("not_checked", audit_retry=True)
 
     second = AuditingEngine([], clean_audit)
     assert run(v2_settings(), pg, store, engine=second, max_docs=10, max_usd=5.0).reaudited == 1
-    assert set(audits_in(store)) == {keys.x_audit_key(row["chosen_attempt"])}  # pass 1, not p2
+    assert set(audits_in(store)) == {audit_key(row["chosen_attempt"])}  # pass 1, not p2
     assert mention_rows_in(pg) == C04_ROWS
 
 
@@ -777,7 +812,7 @@ def test_a_refused_audit_call_does_not_abort_the_run(
     assert row["status"] == "validated"
     assert row["profile"]["quality"]["search_eligible"] is False
     assert audits_in(store) == {}
-    assert row["flags"] == {"audit": "not_checked", "audit_retry": True}
+    assert row["flags"] == flags("not_checked", audit_retry=True)
 
 
 def test_a_transport_flake_is_retried_into_a_clean_audit(
@@ -928,7 +963,7 @@ def test_an_audit_error_is_re_audited_on_the_next_run_and_then_settles(
     assert errored["profile"]["quality"]["search_eligible"] is False
     assert mention_rows_in(pg) == []
     candidate = errored["chosen_attempt"]
-    assert set(audits_in(store)) == {keys.x_audit_key(candidate)}
+    assert set(audits_in(store)) == {audit_key(candidate)}
 
     second = AuditingEngine([], clean_audit)
     summary = run(v2_settings(), pg, store, engine=second, max_docs=10, max_usd=5.0)
@@ -936,8 +971,8 @@ def test_an_audit_error_is_re_audited_on_the_next_run_and_then_settles(
     assert summary.reaudited == 1 and summary.repair_triggered == 0
 
     artifacts = audits_in(store)
-    assert set(artifacts) == {keys.x_audit_key(candidate), retry_key(candidate)}
-    assert artifacts[keys.x_audit_key(candidate)]["outcome"] == "audit_error"
+    assert set(artifacts) == {audit_key(candidate), retry_key(candidate)}
+    assert artifacts[audit_key(candidate)]["outcome"] == "audit_error"
     retried = artifacts[retry_key(candidate)]
     assert retried["outcome"] == "ok" and retried["attempt_key"] == candidate
     assert retried["audit_version"] == AUDIT_VERSION and retried["blocking"] == 0
@@ -952,7 +987,7 @@ def test_an_audit_error_is_re_audited_on_the_next_run_and_then_settles(
     third = AuditingEngine([], blocking_audit)
     run(v2_settings(), pg, store, engine=third, max_docs=10, max_usd=5.0)
     assert third.audits == []  # a completed audit is written once, never re-run
-    assert set(audits_in(store)) == {keys.x_audit_key(candidate), retry_key(candidate)}
+    assert set(audits_in(store)) == {audit_key(candidate), retry_key(candidate)}
     assert mention_rows_in(pg) == C04_ROWS
 
 
@@ -967,20 +1002,20 @@ def test_two_audit_errors_end_the_candidates_budget(
     run(v2_settings(), pg, store, engine=first, max_docs=10, max_usd=5.0)
     errored = row_of(pg)
     assert errored["status"] == "validated"
-    assert errored["flags"] == {"audit": "error", "audit_retry": True}
+    assert errored["flags"] == flags("error", audit_retry=True)
     candidate = errored["chosen_attempt"]
 
     second = AuditingEngine([], unparseable_audit)
     summary = run(v2_settings(), pg, store, engine=second, max_docs=10, max_usd=5.0)
     assert len(second.audits) == 1 and summary.reaudited == 1
     artifacts = audits_in(store)
-    assert set(artifacts) == {keys.x_audit_key(candidate), retry_key(candidate)}
+    assert set(artifacts) == {audit_key(candidate), retry_key(candidate)}
     assert {a["outcome"] for a in artifacts.values()} == {"audit_error"}
 
     third = AuditingEngine([], clean_audit)
     summary = run(v2_settings(), pg, store, engine=third, max_docs=10, max_usd=5.0)
     assert third.audits == [] and summary.reaudited == 0
-    assert set(audits_in(store)) == {keys.x_audit_key(candidate), retry_key(candidate)}
+    assert set(audits_in(store)) == {audit_key(candidate), retry_key(candidate)}
 
     still = row_of(pg)
     assert still["status"] == "validated" and still["chosen_attempt"] == candidate
@@ -990,7 +1025,7 @@ def test_two_audit_errors_end_the_candidates_budget(
     # an error is never a repairable finding list: nothing to repair against,
     # and no `audit_retry` — the budget is gone, so the queue must stop
     # offering this row a slot it cannot use
-    assert still["flags"] == {"audit": "error"}
+    assert still["flags"] == flags("error")
     assert mention_rows_in(pg) == []
 
 
@@ -1022,7 +1057,7 @@ def test_a_parked_cohort_is_never_promoted_by_an_automated_re_audit(
     second = AuditingEngine([], clean_audit)
     summary = run(v2_settings(), pg, store, engine=second, max_docs=10, max_usd=5.0)
     assert second.audits == [] and summary.reaudited == 0
-    assert set(audits_in(store)) == {keys.x_audit_key(candidate)}
+    assert set(audits_in(store)) == {audit_key(candidate)}
 
     still = row_of(pg)
     assert still["status"] == "needs_review" and still["chosen_attempt"] == candidate
@@ -1051,12 +1086,12 @@ def test_a_throttled_audit_spends_no_pass_and_stops_the_run(
     row = row_of(pg)
     assert row["status"] == "validated"  # the paid-for extraction is not thrown away
     assert row["profile"]["quality"]["search_eligible"] is False
-    assert row["flags"] == {"audit": "not_checked", "audit_retry": True}
+    assert row["flags"] == flags("not_checked", audit_retry=True)
 
     second = AuditingEngine([], clean_audit)
     summary = run(v2_settings(), pg, store, engine=second, max_docs=10, max_usd=5.0)
     assert len(second.audits) == 1 and summary.reaudited == 1
-    assert set(audits_in(store)) == {keys.x_audit_key(row["chosen_attempt"])}
+    assert set(audits_in(store)) == {audit_key(row["chosen_attempt"])}
     assert mention_rows_in(pg) == C04_ROWS
 
 
@@ -1080,13 +1115,13 @@ def test_a_throttled_re_audit_stops_the_pass_with_the_budget_intact(
     summary = run(v2_settings(), pg, store, engine=throttled, max_docs=10, max_usd=5.0)
     assert summary.throttled is True and summary.reaudited == 0
     assert len(throttled.audits) == 1
-    assert set(audits_in(store)) == {keys.x_audit_key(candidate)}  # no p2 artifact
-    assert row_of(pg)["flags"] == {"audit": "error", "audit_retry": True}
+    assert set(audits_in(store)) == {audit_key(candidate)}  # no p2 artifact
+    assert row_of(pg)["flags"] == flags("error", audit_retry=True)
 
     healthy = AuditingEngine([], clean_audit)
     summary = run(v2_settings(), pg, store, engine=healthy, max_docs=10, max_usd=5.0)
     assert summary.reaudited == 1
-    assert set(audits_in(store)) == {keys.x_audit_key(candidate), retry_key(candidate)}
+    assert set(audits_in(store)) == {audit_key(candidate), retry_key(candidate)}
     assert row_of(pg)["profile"]["quality"]["search_eligible"] is True
     assert mention_rows_in(pg) == C04_ROWS
 
@@ -1112,7 +1147,7 @@ def test_the_re_audit_pass_breaks_on_a_provider_that_stops_answering(
     assert len(dead.audits) == 4  # two documents, one transport retry each
     assert set(audits_in(store)) == before
     assert [r["flags"] for r in pg.execute("SELECT flags FROM extractions")] == [
-        {"audit": "error", "audit_retry": True}
+        flags("error", audit_retry=True)
     ] * 2
 
 
@@ -1158,14 +1193,10 @@ def test_a_spent_candidate_never_fills_the_re_audit_window(
         settle(pg, store, dh, GLOBS, older, bundle=get_bundle("v2"))
     pg.commit()
     rows = {r["document_hash"]: r["flags"] for r in pg.execute("SELECT * FROM extractions")}
-    assert [rows[dh] for dh in spent] == [{"audit": "error"}] * 2
-    assert rows[fresh] == {"audit": "error", "audit_retry": True}
+    assert [rows[dh] for dh in spent] == [flags("error")] * 2
+    assert rows[fresh] == flags("error", audit_retry=True)
 
-    window = _reaudit_queue(
-        pg, prompt_version=V2_TUPLE[0], schema_version=V2_TUPLE[1],
-        validator_version=V2_TUPLE[2], model_regex=globs_to_regex(GLOBS),
-        only_doc=None, limit=2,
-    )
+    window = reaudit_window(pg, limit=2)
     assert [dh for dh, _ in window] == [fresh]
 
     # and a row whose flag outlived its budget — a run that died between the
@@ -1174,7 +1205,7 @@ def test_a_spent_candidate_never_fills_the_re_audit_window(
     # run would heal the row first, and this is the branch that has to.
     pg.execute(
         "UPDATE extractions SET flags = %s WHERE document_hash = %s",
-        (json.dumps({"audit": "error", "audit_retry": True}), spent[0]),
+        (json.dumps(flags("error", audit_retry=True)), spent[0]),
     )
     pg.commit()
     healthy = AuditingEngine([], clean_audit)
@@ -1189,8 +1220,193 @@ def test_a_spent_candidate_never_fills_the_re_audit_window(
     healed = pg.execute(
         "SELECT flags FROM extractions WHERE document_hash = %s", (spent[0],)
     ).fetchone()
-    assert healed is not None and healed["flags"] == {"audit": "error"}
+    assert healed is not None and healed["flags"] == flags("error")
     assert mention_rows_in(pg) == C04_ROWS
+
+
+# --- version-keyed audits: an older verdict is owed, not done ---------------
+
+
+LEGACY_BUNDLE = replace(get_bundle("v2"), audit_version=keys.LEGACY_AUDIT_VERSION)
+
+
+def legacy_audited(pg: Conn, store: ArchiveStore, case: str = "C04") -> tuple[str, str]:  # noqa: F811
+    """A document as the corpus holds it after a `semantic-audit/v2` run.
+
+    The drain extracts it with an auditor that never answers (so the runner
+    archives nothing), then the v2 artifact is written at the BARE key and the
+    row is folded under the v2 bundle — which is exactly what the archive and
+    the `extractions` table look like the moment before an `AUDIT_VERSION` bump:
+    a validated, eligible, fully audited document.
+    """
+    dh = seed_case(pg, case)
+    throttled = AuditingEngine(
+        [result(emit_of(case))], lambda prompt: EngineThrottled("429 rate limited")
+    )
+    run(v2_settings(), pg, store, engine=throttled, max_docs=10, max_usd=5.0)
+    candidate = row_of(pg)["chosen_attempt"]
+    chosen = {a.attempt_key: a for a in attempts_in(store)}[candidate]
+    # a real artifact names the candidate it judged; replay joins on nothing else
+    archive_audit(
+        store, candidate, version=None,
+        candidate_hash=chosen.record["extraction"]["candidate_hash"],
+    )
+    settle(pg, store, dh, GLOBS, iso(datetime.now(UTC)), bundle=LEGACY_BUNDLE)
+    pg.commit()
+    row = row_of(pg)
+    assert row["status"] == "validated" and row["profile"]["quality"]["search_eligible"]
+    assert row["flags"] == {"audit": "ok", "audit_version": keys.LEGACY_AUDIT_VERSION}
+    assert set(audits_in(store)) == {audit_key(candidate, None)}
+    return dh, candidate
+
+
+def test_an_audit_from_an_older_version_is_owed_not_done(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """Review finding 5: an `AUDIT_VERSION` bump used to re-audit nothing.
+
+    The artifact was keyed by the candidate alone, so the runner's `exists`
+    probe said "audited" whatever version wrote it, and a bump could only ever
+    reach documents the drain had not settled yet. Version-keyed artifacts turn
+    that around: the reader derives the key of the version in force, an older
+    artifact is not at it, and the document goes through the SAME bounded
+    re-audit queue an `audit_error` goes through — one call, no extraction, and
+    the v2 artifact left exactly where it was (the archive is write-once).
+    """
+    dh, candidate = legacy_audited(pg, store)
+    legacy = audit_key(candidate, None)
+    before = audits_in(store)
+
+    # the row the bump leaves behind is work owed, and the queue is what says so
+    assert [d for d, _ in reaudit_window(pg, limit=10)] == [dh]
+
+    engine = AuditingEngine([], clean_audit)  # an extraction call would raise
+    summary = run(v2_settings(), pg, store, engine=engine, max_docs=10, max_usd=5.0)
+    assert engine.calls == [] and len(engine.audits) == 1
+    assert summary.reaudited == 1
+
+    artifacts = audits_in(store)
+    assert set(artifacts) == {legacy, audit_key(candidate)}
+    assert artifacts[legacy] == before[legacy]  # beside the old verdict, never over it
+    fresh = artifacts[audit_key(candidate)]
+    assert fresh["audit_version"] == AUDIT_VERSION and fresh["audit_pass"] == 1
+    assert fresh["attempt_key"] == candidate and fresh["outcome"] == "ok"
+
+    row = row_of(pg)
+    assert row["status"] == "validated" and row["chosen_attempt"] == candidate
+    assert row["flags"] == flags("ok")
+    assert row["profile"]["quality"]["search_eligible"] is True
+    assert mention_rows_in(pg) == C04_ROWS
+
+    # and the current version's verdict is written once: the next run asks the
+    # model nothing, and the queue offers nothing
+    assert reaudit_window(pg, limit=10) == []
+    third = AuditingEngine([], blocking_audit)
+    summary = run(v2_settings(), pg, store, engine=third, max_docs=10, max_usd=5.0)
+    assert third.audits == [] and summary.reaudited == 0
+    assert set(audits_in(store)) == {legacy, audit_key(candidate)}
+    assert mention_rows_in(pg) == C04_ROWS
+
+
+def test_a_version_bump_never_reopens_a_human_settled_row(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """Spec §6, under the new selection rule: human dispositions are senior.
+
+    A row an operator has ruled on is a published terminal state, and "the
+    audit is owed" is no licence to touch it — a re-audit here would decide the
+    very thing the review queue is showing a person. The bump leaves it exactly
+    as the human left it: no call, no artifact, no re-fold.
+    """
+    dh, candidate = legacy_audited(pg, store)
+    at = datetime.now(UTC) + timedelta(minutes=1)
+    extraction.record_review(
+        pg, review_key=keys.x_review_key(at, dh, "flag", 1), document_hash=dh,
+        model=MODEL, prompt_version=V2_TUPLE[0], schema_version=V2_TUPLE[1],
+        validator_version=V2_TUPLE[2], verb="flag", payload=None, actor="human",
+        at=at.isoformat(),
+    )
+    parked = settle(pg, store, dh, GLOBS, iso(at), bundle=LEGACY_BUNDLE)
+    pg.commit()
+    assert parked.status == "needs_review" and row_of(pg)["reviewed_by"] == "human"
+
+    assert reaudit_window(pg, limit=10) == []
+    engine = AuditingEngine([], clean_audit)
+    summary = run(v2_settings(), pg, store, engine=engine, max_docs=10, max_usd=5.0)
+    assert engine.audits == [] and engine.calls == [] and summary.reaudited == 0
+    assert set(audits_in(store)) == {audit_key(candidate, None)}
+
+    still = row_of(pg)
+    assert still["status"] == "needs_review" and still["reviewed_by"] == "human"
+    assert still["chosen_attempt"] == candidate
+    assert mention_rows_in(pg) == []
+
+
+def test_replay_never_publishes_a_retired_versions_verdict(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """`extract rebuild` selects by audit version too, or it strands the corpus.
+
+    Replay joins audits to re-derived candidates by CANDIDATE HASH, because the
+    keys it could derive belong to attempts it is re-judging. The hash says
+    which candidate an artifact describes; it says nothing about which contract
+    judged it — so a replay that took every artifact it found would publish a
+    retired version's pass as the verdict in force, stamp the row with the
+    ACTIVE version it never read, and thereby remove the document from the
+    re-audit queue permanently. That is the exact opposite of what the version
+    keying is for: one `extract rebuild` after a bump would strand precisely the
+    documents the bump exists to recover.
+    """
+    dh, candidate = legacy_audited(pg, store)
+    legacy = audits_in(store)
+
+    rebuild_extractions(pg, store, GLOBS)
+    pg.commit()
+
+    row = row_of(pg)
+    assert row["status"] == "validated" and row["chosen_attempt"] == candidate
+    quality = row["profile"]["quality"]
+    assert (quality["semantics"], quality["completeness"]) == ("not_checked", "not_checked")
+    assert quality["search_eligible"] is False
+    assert mention_rows_in(pg) == []
+    # the fold answered under the version in force and found no audit at it
+    assert row["flags"] == flags("not_checked", audit_retry=True)
+    assert [d for d, _ in reaudit_window(pg, limit=10)] == [dh]
+    # and nothing was written or rewritten: replay judges, it does not audit
+    assert audits_in(store) == legacy
+
+
+def test_the_audit_version_segment_composes_with_the_pass_and_repair_marks() -> None:
+    """Every key the audit phase writes carries the version that wrote it.
+
+    Three roles share the namespace — a candidate's pass, its ONE re-audit
+    (`-p2`), and the verdict on a repaired successor (`-r1`) — and the version
+    segment sits between the candidate and the role, so each (candidate,
+    version, role) triple has its own write-once key and no two versions can
+    ever collide on one. The legacy spellings are untouched: unversioned is
+    `semantic-audit/v2` by definition, and those artifacts stay readable where
+    they were written.
+    """
+    at = datetime(2026, 8, 27, 6, 12, 4, tzinfo=UTC)
+    attempt = keys.x_attempt_key(at, "9f3ab" + "0" * 59, 1, 2)
+    stem = "extractions/audits/2026/08/27T061204Z-9f3ab0000000-s1a2"
+    assert AUDIT_VERSION == "semantic-audit/v3"  # the segment below is its tail
+    assert runner._audit_pass_key(attempt, AUDIT_VERSION, 1) == f"{stem}.a3.json.gz"
+    assert runner._audit_pass_key(attempt, AUDIT_VERSION, 2) == f"{stem}.a3-p2.json.gz"
+    assert runner._repair_audit_key(attempt, AUDIT_VERSION) == f"{stem}.a3-r1.json.gz"
+
+    legacy = keys.LEGACY_AUDIT_VERSION
+    assert runner._audit_pass_key(attempt, legacy, 1) == f"{stem}.json.gz"
+    assert runner._audit_pass_key(attempt, legacy, 2) == f"{stem}-p2.json.gz"
+    assert runner._repair_audit_key(attempt, legacy) == f"{stem}-r1.json.gz"
+    assert runner._audit_pass_key(attempt, None, 1) == f"{stem}.json.gz"
+
+    spellings = {
+        runner._audit_pass_key(attempt, version, pass_no)
+        for version in (AUDIT_VERSION, legacy)
+        for pass_no in (1, 2)
+    } | {runner._repair_audit_key(attempt, version) for version in (AUDIT_VERSION, legacy)}
+    assert len(spellings) == 6
 
 
 def test_a_blocking_finding_on_the_dispute_parks_the_cohort_and_asks_for_repair(
@@ -1213,7 +1429,7 @@ def test_a_blocking_finding_on_the_dispute_parks_the_cohort_and_asks_for_repair(
     assert row["status"] == "needs_review" and row["agreement"]["failures"] == ["negation"]
     quality = row["profile"]["quality"]
     assert quality["sampling"] == "disagreement" and quality["search_eligible"] is False
-    assert row["flags"] == {"audit": "ok", "repair": "dispute"}
+    assert row["flags"] == flags("ok", repair="dispute")
     assert mention_rows_in(pg) == []
 
 
@@ -1238,7 +1454,7 @@ def test_a_blocking_finding_off_the_dispute_adjudicates_and_asks_for_repair(
     quality = row["profile"]["quality"]
     assert quality["sampling"] == "adjudicated" and quality["semantics"] == "findings"
     assert quality["search_eligible"] is False  # the finding still gates the aggregate
-    assert row["flags"] == {"audit": "ok", "repair": "eligibility"}
+    assert row["flags"] == flags("ok", repair="eligibility")
     assert mention_rows_in(pg) == []
 
 
@@ -1252,7 +1468,7 @@ def test_a_human_ruling_takes_the_document_out_of_the_repair_queue(
     engine = AuditingEngine([result(emit_of("C04"))], blocking_audit)
     summary = run(v2_settings(), pg, store, engine=engine, max_docs=10, max_usd=5.0)
     assert summary.repair_triggered == 1
-    assert row_of(pg)["flags"] == {"audit": "ok", "repair": "eligibility"}
+    assert row_of(pg)["flags"] == flags("ok", repair="eligibility")
 
     # after the drain's own attempts, the way `extract review flag` stamps one
     at = datetime.now(UTC) + timedelta(minutes=1)
@@ -1264,21 +1480,21 @@ def test_a_human_ruling_takes_the_document_out_of_the_repair_queue(
     )
     state = settle(pg, store, dh, GLOBS, iso(at), bundle=get_bundle("v2"))
     assert state.status == "needs_review"
-    assert row_of(pg)["flags"] == {"audit": "ok"}
+    assert row_of(pg)["flags"] == flags("ok")
 
     later = AuditingEngine([], clean_audit)
     summary = run(v2_settings(), pg, store, engine=later, max_docs=10, max_usd=5.0)
     assert later.audits == [] and summary.repair_triggered == 0
-    assert row_of(pg)["flags"] == {"audit": "ok"}
+    assert row_of(pg)["flags"] == flags("ok")
 
 
 # --- the repair round (spec §4 Repair, §5, validator/18) --------------------
 
 
-def repaired_audit_key(attempt_key: str) -> str:
+def repaired_audit_key(attempt_key: str, version: str | None = AUDIT_VERSION) -> str:
     """Where the ONE audit of a repaired candidate lands: beside its base
     candidate's audits, never over them (write-once)."""
-    return keys.x_audit_key(attempt_key).removesuffix(".json.gz") + "-r1.json.gz"
+    return audit_key(attempt_key, version).removesuffix(".json.gz") + "-r1.json.gz"
 
 
 def test_an_eligibility_repair_puts_the_repaired_candidate_in_the_aggregate(
@@ -1307,7 +1523,7 @@ def test_an_eligibility_repair_puts_the_repaired_candidate_in_the_aggregate(
     assert mention_rows_in(pg) == C04_ROWS
     assert all(s["polarity"] == "positive" for s in row["profile"]["statements"])
     # nothing left to come back for: the round is spent and the findings are gone
-    assert row["flags"] == {"audit": "ok"}
+    assert row["flags"] == flags("ok")
 
     # spec §5: a repair is not an extraction sample and never becomes one
     attempts = attempts_in(store)
@@ -1328,7 +1544,7 @@ def test_an_eligibility_repair_puts_the_repaired_candidate_in_the_aggregate(
 
     # the repaired candidate has an audit of its own, beside the base's
     assert set(audits_in(store)) == {
-        keys.x_audit_key(attempts[0].attempt_key),
+        audit_key(attempts[0].attempt_key),
         repaired_audit_key(attempts[0].attempt_key),
     }
     repaired_audit = audits_in(store)[repaired_audit_key(attempts[0].attempt_key)]
@@ -1358,7 +1574,7 @@ def test_a_repair_on_the_dispute_adjudicates_the_cohort_it_was_asked_to_fix(
     assert quality["sampling"] == "adjudicated" and quality["search_eligible"] is True
     assert mention_rows_in(pg) == C04_ROWS
     assert len(attempts_in(store)) == 3  # the repaired candidate is not a fourth sample
-    assert row["flags"] == {"audit": "ok"}
+    assert row["flags"] == flags("ok")
 
 
 def test_a_failed_repair_settles_the_base_candidate(
@@ -1386,12 +1602,12 @@ def test_a_failed_repair_settles_the_base_candidate(
     quality = row["profile"]["quality"]
     assert quality["sampling"] == "disagreement" and quality["search_eligible"] is False
     assert mention_rows_in(pg) == []
-    assert row["flags"] == {"audit": "ok"}  # the round is spent; stop queueing it
+    assert row["flags"] == flags("ok")  # the round is spent; stop queueing it
 
     artifact = next(iter(repairs_in(store).values()))
     assert artifact["outcome"] == "repair_error" and artifact["record"] is None
     assert any("base_candidate_hash" in e for e in artifact["errors"])
-    assert set(audits_in(store)) == {keys.x_audit_key(row["chosen_attempt"])}
+    assert set(audits_in(store)) == {audit_key(row["chosen_attempt"])}
 
 
 def test_the_repair_round_is_offered_once_per_candidate(
@@ -1447,13 +1663,13 @@ def test_a_repaired_candidate_whose_audit_never_reached_is_audited_next_run(
     candidate = row_of(pg)["chosen_attempt"]
     artifact = repairs_in(store)[keys.x_repair_key(candidate)]
     assert artifact["outcome"] == "repaired" and artifact["record"] is not None
-    assert set(audits_in(store)) == {keys.x_audit_key(candidate)}  # no verdict on it
+    assert set(audits_in(store)) == {audit_key(candidate)}  # no verdict on it
 
     owed = row_of(pg)
     assert owed["status"] == "validated"  # the base candidate, exactly as audited
     assert owed["profile"]["quality"]["search_eligible"] is False
     assert mention_rows_in(pg) == []
-    assert owed["flags"] == {"audit": "ok", "audit_retry": True}
+    assert owed["flags"] == flags("ok", audit_retry=True)
 
     second = AuditingEngine([], clean_audit, repair=polarity_repair)
     summary = run(v2_settings(), pg, store, engine=second, max_docs=10, max_usd=5.0)
@@ -1461,7 +1677,7 @@ def test_a_repaired_candidate_whose_audit_never_reached_is_audited_next_run(
     assert len(second.audits) == 1
     assert summary.reaudited == 1 and summary.repaired == 1 and summary.repair_triggered == 0
     assert set(audits_in(store)) == {
-        keys.x_audit_key(candidate), repaired_audit_key(candidate)
+        audit_key(candidate), repaired_audit_key(candidate)
     }
 
     settled = row_of(pg)
@@ -1469,7 +1685,7 @@ def test_a_repaired_candidate_whose_audit_never_reached_is_audited_next_run(
     assert settled["profile"]["quality"]["search_eligible"] is True
     assert all(s["polarity"] == "positive" for s in settled["profile"]["statements"])
     assert mention_rows_in(pg) == C04_ROWS
-    assert settled["flags"] == {"audit": "ok"}  # nothing left to come back for
+    assert settled["flags"] == flags("ok")  # nothing left to come back for
 
     third = AuditingEngine([], clean_audit, repair=polarity_repair)
     assert run(v2_settings(), pg, store, engine=third,
@@ -1492,11 +1708,11 @@ def test_a_refused_verdict_on_a_repaired_candidate_ends_the_round(
     assert summary.repair_triggered == 1 and summary.repaired == 0
     candidate = row_of(pg)["chosen_attempt"]
     artifacts = audits_in(store)
-    assert set(artifacts) == {keys.x_audit_key(candidate), repaired_audit_key(candidate)}
+    assert set(artifacts) == {audit_key(candidate), repaired_audit_key(candidate)}
     assert artifacts[repaired_audit_key(candidate)]["outcome"] == "audit_error"
 
     row = row_of(pg)
-    assert row["status"] == "validated" and row["flags"] == {"audit": "ok"}
+    assert row["status"] == "validated" and row["flags"] == flags("ok")
     assert row["profile"]["quality"]["search_eligible"] is False
     assert any(s["polarity"] == "negative" for s in row["profile"]["statements"])
     assert mention_rows_in(pg) == []
@@ -1524,8 +1740,8 @@ def test_a_throttled_repair_audit_stops_the_run_with_the_round_finishable(
     assert summary.throttled is True and summary.repaired == 0
     assert len(engine.audits) == 2  # a 429 is not retried in the same breath
     candidate = row_of(pg)["chosen_attempt"]
-    assert set(audits_in(store)) == {keys.x_audit_key(candidate)}
-    assert row_of(pg)["flags"] == {"audit": "ok", "audit_retry": True}
+    assert set(audits_in(store)) == {audit_key(candidate)}
+    assert row_of(pg)["flags"] == flags("ok", audit_retry=True)
 
     healthy = AuditingEngine([], clean_audit, repair=polarity_repair)
     summary = run(v2_settings(), pg, store, engine=healthy, max_docs=10, max_usd=5.0)
@@ -1562,7 +1778,7 @@ def test_a_parked_cohorts_unfinished_repair_audit_is_never_taken_automatically(
     parked = row_of(pg)
     assert parked["status"] == "needs_review"
     assert parked["profile"]["quality"]["sampling"] == "disagreement"
-    assert parked["flags"] == {"audit": "ok", "audit_retry": True}
+    assert parked["flags"] == flags("ok", audit_retry=True)
 
     later = AuditingEngine([], clean_audit, repair=polarity_repair)
     summary = run(v2_settings(), pg, store, engine=later, max_docs=10, max_usd=5.0)
@@ -1619,7 +1835,7 @@ def test_the_repair_campaign_comes_back_for_the_settled_backlog(
     parked = row_of(pg)
     assert parked["status"] == "validated"
     assert parked["profile"]["quality"]["search_eligible"] is False
-    assert parked["flags"] == {"audit": "ok", "repair": "eligibility"}
+    assert parked["flags"] == flags("ok", repair="eligibility")
     assert repairs_in(store) == {}  # nothing reached a repairer; the round stands
     assert mention_rows_in(pg) == []
 
@@ -1633,7 +1849,7 @@ def test_the_repair_campaign_comes_back_for_the_settled_backlog(
     assert row["status"] == "validated" and row["chosen_attempt"] == parked["chosen_attempt"]
     assert row["profile"]["quality"]["search_eligible"] is True
     assert mention_rows_in(pg) == C04_ROWS
-    assert row["flags"] == {"audit": "ok"}
+    assert row["flags"] == flags("ok")
 
     third = AuditingEngine([], clean_audit, repair=polarity_repair)
     assert run(v2_settings(), pg, store, engine=third, max_docs=10, max_usd=5.0).repaired == 0
@@ -1656,7 +1872,7 @@ def test_a_parked_cohort_is_never_repaired_by_the_backlog_campaign(
         max_docs=10, max_usd=5.0)
     parked = row_of(pg)
     assert parked["status"] == "needs_review"
-    assert parked["flags"] == {"audit": "ok", "repair": "dispute"}
+    assert parked["flags"] == flags("ok", repair="dispute")
 
     later = AuditingEngine([], clean_audit, repair=polarity_repair)
     summary = run(v2_settings(), pg, store, engine=later, max_docs=10, max_usd=5.0)

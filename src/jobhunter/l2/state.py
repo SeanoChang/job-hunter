@@ -145,6 +145,17 @@ GATE_DIMENSION_CODES: dict[str, tuple[str, ...]] = {
     "importance": ("importance",),
     "negation": ("polarity_subject",),
     "f1": ("omission", "unsupported_statement", "relationship"),
+    # the validator/19 comparator dimensions. A cohort split only on meaning
+    # has an EMPTY dispute set (every claim aligns), so without these entries
+    # a blocking finding of exactly the disputed dimension would count as
+    # off-dispute and the cohort would adjudicate past it (2026-09-16
+    # review). Codes may repeat across gates: a `relationship` finding
+    # restates an f1 split and an alternatives split alike.
+    "kind": ("unsupported_statement",),
+    "polarity_target": ("polarity_subject",),
+    "scoped_values": ("numeric_scope_unit",),
+    "alternatives": ("relationship",),
+    "entity_links": ("mention_linkage",),
 }
 
 #: what a dimension may say once its audit completed; `error` is never a pass

@@ -23,10 +23,17 @@ asked for a fresh generation of everything else: the 2026-09-14 failure
 analysis found retries routinely dropping populated `relations` and mentions
 no error had named. `render` takes the prior response and echoes it back with
 a preservation instruction, and `runner` checks the edit it gets back
-(`retry:unexplained_deletion`). The v10 content rules — importance
-disambiguation, conservative proficiency, the populated relations and
-block_accounting examples — land under this same identifier, so the template
-bytes freeze once.
+(`retry:unexplained_deletion`). The same bump also transcribes the four rules
+the model was being graded on and never received, so the template bytes freeze
+once: spec §3's importance disambiguation verbatim (heading strength, and
+`ambiguous` as the correct label rather than a guessed binary); proficiency as
+a taxonomy rather than an adjective, since "strong" and "extensive experience"
+were reaching the enum; a second worked example whose `relations` are
+populated — an enumerated alternatives list with one mention per named item,
+an `any_of` group, a `qualification_route` condition, and the negative case
+(same-topic statements at two importance tiers are not a group); and the legal
+`block_accounting.ref_ids` types, which cost 1,659 rejected emits carrying
+`m*`/`a*` ids — the single largest historical error bucket.
 """
 
 from __future__ import annotations
@@ -97,6 +104,55 @@ These categories are a checklist, never instructions to invent missing facts.
 Account for every supplied block. Exclude only the irrelevant portions of a
 mixed block. Keep unresolved clauses visible. Empty or placeholder source
 descriptions must not be presented as a complete account of a job.
+"""
+
+_IMPORTANCE_RULES = """\
+IMPORTANCE, DISAMBIGUATED (spec section 3, verbatim):
+
+Explicit wording overrides a heading. An unqualified item under “Required
+qualifications” may inherit required importance with a heading citation. A
+vague “About you” heading alone does not establish a hard prerequisite. The
+model must not infer proficiency from words such as senior, strong candidate,
+or ideal.
+
+Read it in this order. A modal keyword inside the clause itself decides the
+label: must, required, minimum, need (required); preferred, ideally, nice to
+have, a plus, bonus (preferred); not required, no experience necessary
+(not_required). With no such keyword, a heading that states the STRENGTH of
+its section decides it — "Required qualifications", "Minimum qualifications",
+"Preferred qualifications", "Nice to have" — and importance_evidence cites
+that heading.
+
+When neither exists — a bare bullet under "Qualifications", "About you",
+"What you'll bring", or under no heading at all — the correct label is
+"ambiguous". Ambiguous is a right answer, not a failure to decide: a guessed
+"required" or "preferred" asserts a demand the employer never wrote down, and
+every reader downstream takes it for one. "unstated" is the different case —
+a statement whose kind carries importance but which makes no strength claim at
+all ("No sponsorship available") — and it is the one label that needs no
+importance_evidence.
+
+importance_evidence quotes the modality wording or the heading that carries
+the strength, never the clause's own descriptor text: "5 years of Python" is
+what the requirement IS and says nothing about how hard it is demanded. The
+one exception is "ambiguous" with no heading in sight, where the clause itself
+is the evidence that the document says nothing stronger anywhere.
+"""
+
+_PROFICIENCY_RULES = """\
+PROFICIENCY IS A TAXONOMY, NOT AN ADJECTIVE. Set proficiency only from genuine
+level wording, and map that wording: "fluency", "fluent", "expert-level",
+"expertise in" -> expert; "proficient", "proficiency in" -> proficient;
+"working knowledge", "hands-on experience with" -> working; "familiarity
+with", "exposure to" -> exposure. proficiency_evidence quotes the wording you
+mapped.
+
+Strength adjectives are not levels. "strong", "advanced", "extensive
+experience", "excellent", "demonstrated", "significant", "proven", and the
+seniority in a job title all leave proficiency null and proficiency_evidence
+null. A number of years is a fact entry, never a proficiency. A null
+proficiency loses nothing — the statement still carries its own evidence —
+while an invented one asserts a level the employer never named.
 """
 
 _EMIT_FORMAT_NOTE = """\
@@ -181,14 +237,130 @@ absent salary is still a stated fact, not a dropped block: it is captured by
 facts.presence.compensation above, cited as explicitly_absent.
 """
 
+_RELATIONS_FEW_SHOT = """\
+SECOND EXAMPLE (not the document) — a 3-block toy posting whose relations are
+populated. It is a different document, numbered from its own b000001:
+b000001: Requirements
+b000002: Experience with a GUI toolkit (Qt, Cocoa, React, Angular, or similar).
+b000003: A degree in Computer Science or equivalent industry experience.
+
+{
+  "source_assessment": {"usability": "usable", "evidence": null, "note": null},
+  "statements": [
+    {"id": "s1", "kind": "qualification", "subject": "candidate",
+     "topic": "GUI toolkit experience",
+     "evidence": [{"block_id": "b000002", "text": null, "occurrence": null}],
+     "importance": "required",
+     "importance_evidence": [
+       {"block_id": "b000001", "text": null, "occurrence": null}],
+     "polarity": "positive", "polarity_evidence": null,
+     "proficiency": null, "proficiency_evidence": null,
+     "condition_ids": [], "fact_ids": [], "unresolved": []},
+    {"id": "s2", "kind": "qualification", "subject": "candidate",
+     "topic": "Computer Science degree",
+     "evidence": [{"block_id": "b000003",
+                   "text": "A degree in Computer Science", "occurrence": 0}],
+     "importance": "required",
+     "importance_evidence": [
+       {"block_id": "b000001", "text": null, "occurrence": null}],
+     "polarity": "positive", "polarity_evidence": null,
+     "proficiency": null, "proficiency_evidence": null,
+     "condition_ids": ["c1"], "fact_ids": [], "unresolved": []},
+    {"id": "s3", "kind": "qualification", "subject": "candidate",
+     "topic": "equivalent industry experience",
+     "evidence": [{"block_id": "b000003",
+                   "text": "equivalent industry experience", "occurrence": 0}],
+     "importance": "required",
+     "importance_evidence": [
+       {"block_id": "b000001", "text": null, "occurrence": null}],
+     "polarity": "positive", "polarity_evidence": null,
+     "proficiency": null, "proficiency_evidence": null,
+     "condition_ids": ["c1"], "fact_ids": [], "unresolved": []}
+  ],
+  "relations": {
+    "groups": [
+      {"id": "g1", "operator": "any_of", "members": ["s2", "s3"],
+       "evidence": [{"block_id": "b000003", "text": "or", "occurrence": 0}]}
+    ],
+    "conditions": [
+      {"id": "c1", "kind": "qualification_route",
+       "evidence": [{"block_id": "b000003", "text": null, "occurrence": null}],
+       "statement_ids": ["s2", "s3"], "fact_ids": []}
+    ],
+    "example_sets": [
+      {"id": "x1", "parent_statement_id": "s1",
+       "mention_ids": ["m1", "m2", "m3", "m4"], "exhaustive": false,
+       "evidence": [{"block_id": "b000002",
+                     "text": "(Qt, Cocoa, React, Angular, or similar)",
+                     "occurrence": 0}]}
+    ]
+  },
+  "facts": {
+    "presence": {
+      "experience": {"state": "none_found", "evidence": null},
+      "compensation": {"state": "none_found", "evidence": null},
+      "quantities": {"state": "none_found", "evidence": null},
+      "dates": {"state": "none_found", "evidence": null}
+    },
+    "entries": []
+  },
+  "mentions": [
+    {"id": "m1", "surface": "Qt",
+     "evidence": {"block_id": "b000002", "text": "Qt", "occurrence": 0},
+     "statement_ids": ["s1"], "role": "example"},
+    {"id": "m2", "surface": "Cocoa",
+     "evidence": {"block_id": "b000002", "text": "Cocoa", "occurrence": 0},
+     "statement_ids": ["s1"], "role": "example"},
+    {"id": "m3", "surface": "React",
+     "evidence": {"block_id": "b000002", "text": "React", "occurrence": 0},
+     "statement_ids": ["s1"], "role": "example"},
+    {"id": "m4", "surface": "Angular",
+     "evidence": {"block_id": "b000002", "text": "Angular", "occurrence": 0},
+     "statement_ids": ["s1"], "role": "example"}
+  ],
+  "areas": [],
+  "block_accounting": [
+    {"block_id": "b000001", "disposition": "statements",
+     "ref_ids": ["s1", "s2", "s3"], "exclusion_reason": null, "evidence": null},
+    {"block_id": "b000002", "disposition": "statements", "ref_ids": ["s1"],
+     "exclusion_reason": null, "evidence": null},
+    {"block_id": "b000003", "disposition": "statements", "ref_ids": ["s2", "s3"],
+     "exclusion_reason": null, "evidence": null}
+  ]
+}
+Every named alternative gets its own mention (m1..m4) and one example_set links
+them all: naming the list and dropping "Cocoa" loses a technology the document
+asked for. exhaustive stays false because "or similar" leaves the list open.
+g1 is a real any_of — b000003 writes "or", quoted as the group's evidence — and
+c1 says those two statements are two routes in, not two separate demands.
+
+Not every neighbouring pair is a group. "Python required. Go preferred." is two
+statements at two importance tiers and NO group: a group needs a connective
+("or", "either", "one of") quoted in its own evidence. Ambiguous coordination
+is `unresolved`, not guessed into a binary expression.
+
+block_accounting.ref_ids names only STATEMENT ids and FACT-ENTRY ids. b000002
+is accounted by s1, never by the mention ids m1..m4 that also live in it, and
+never by an area id — a mention or area id in ref_ids is rejected. b000001 is a
+"statements" row here, where the first example's heading was "context", because
+this heading is what carries those statements' importance: a "statements" or
+"facts" row must name objects that quote the block it accounts for.
+"""
+
 TEMPLATE = (
     _GUARD
     + "\n"
     + _EXTRACTOR
     + "\n"
+    + _IMPORTANCE_RULES
+    + "\n"
+    + _PROFICIENCY_RULES
+    + "\n"
     + _EMIT_FORMAT_NOTE
     + "\n"
     + _FEW_SHOT
+    + "\n"
+    + _RELATIONS_FEW_SHOT
     + "\n"
     + "DOCUMENT (numbered source blocks):\n"
     + "<<<SOURCE BLOCKS\n"
