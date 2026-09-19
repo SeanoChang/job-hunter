@@ -207,13 +207,18 @@ def test_mention_rows_take_importance_from_the_linked_statement() -> None:
     assert all(importance != "required" for _, _, importance in rows)
 
 
-def test_mention_rows_are_empty_until_a_record_is_search_eligible(
+def test_mention_rows_serve_for_any_record_regardless_of_eligibility(
     v2_record_with_mentions: dict[str, Any],
 ) -> None:
-    """The quality gate at the write path: an unaudited record still stores its
-    profile blob, it just never enters the mention index."""
+    """Two-tier serving (2026-09-18 ruling): the skill listing serves for
+    every record this function is handed — validated-status admission lives
+    in the store — and eligibility no longer starves it. Audited and
+    unaudited records project identical rows; `search_eligible` stays in the
+    quality block for claim-tier consumers."""
     assert v2_record_with_mentions["quality"]["search_eligible"] is False
-    assert serve.mention_rows(v2_record_with_mentions) == []
+    assert serve.mention_rows(v2_record_with_mentions) == [
+        ("CPA", "qualification", "preferred")
+    ]
     assert serve.mention_rows(_audited(v2_record_with_mentions)) == [
         ("CPA", "qualification", "preferred")
     ]

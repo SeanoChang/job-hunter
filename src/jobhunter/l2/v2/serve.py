@@ -369,16 +369,16 @@ def mention_rows(record: dict[str, Any]) -> list[tuple[str, str, str]]:
     document spells them and are never re-split: v2 mentions are atomic by
     contract, so v1's `split_mention` decoration-stripping has nothing to do.
 
-    A record that is not `search_eligible` yields no rows at all, and the
-    eligibility read here is the SETTLED one (`quality_of`) — the same object
-    `profile_of` stores, so the blob and the aggregate can never describe
-    different records. An offline record is still ineligible: `assemble` leaves
-    the two audit dimensions `not_checked`, and only a completed
-    `semantic-audit/v1` phase, folded in by `runner.settle`, clears them. So v2
-    populates the profile blob well before it populates the aggregate. That
-    asymmetry is the policy, not an oversight: the blob describes one document
-    and says how sure it is, while the aggregate is a corpus-wide assertion
-    about who demands what.
+    Every record this function is handed yields rows (2026-09-18 two-tier
+    ruling): the store's validated-status gate is the only admission test for
+    the skill LISTING, because a validated record's mentions already passed
+    the validator's grounding checks and an unaudited-but-validated record
+    listing its skills is useful where a starved aggregate is not (133 of
+    1,562 validated docs served rows under the old `search_eligible` gate).
+    `search_eligible` keeps meaning what it says — the audited tier that backs
+    claim-level assertions — and travels in the stored quality block
+    (`quality_of`, the same settled object `profile_of` stores), so consumers
+    that need the stronger tier still have it per document.
 
     What the three columns cannot carry, they drop: a mention's ROLE, an
     alternative route, an applicability condition and a negative polarity all
@@ -409,7 +409,14 @@ def mention_rows(record: dict[str, Any]) -> list[tuple[str, str, str]]:
     """
     rows: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str, str]] = set()
-    for projected in _project_rows({**record, "quality": quality_of(record)}):
+    # two-tier serving (2026-09-18 ruling): the skill LISTING serves for every
+    # record the store accepts (validated status, gated there) — grounding is
+    # validator-enforced and needs no audit. `search_eligible` stays the gate
+    # for claim-level assertions, carried in the stored quality block; it no
+    # longer starves the aggregate (133 of 1,562 validated docs served rows).
+    for projected in _project_rows(
+        {**record, "quality": quality_of(record)}, include_ineligible=True
+    ):
         row = (
             projected["surface"],
             projected["kind"],

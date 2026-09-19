@@ -470,13 +470,17 @@ def test_the_v2_prompt_and_schema_are_archived_write_once(
 def test_an_unaudited_record_stores_its_profile_but_indexes_no_mentions(
     pg: Conn, store: ArchiveStore  # noqa: F811
 ) -> None:
-    """The quality gate at the write path: C04 names three certifications, and
-    none of them enters the aggregate until an audit clears the record. The
-    profile blob still serves.
+    """Two-tier serving (2026-09-18 ruling): a VALIDATED record's mentions
+    enter the aggregate whether or not an audit has cleared it — the skill
+    listing needs only the grounding the validator already enforced, and the
+    listing was starving (133 of 1,562 validated docs served rows).
+    `search_eligible` remains what it says: the gate on claim-level
+    assertions, carried in the blob for consumers that need the stronger
+    tier. Validated-status gating itself is unchanged and lives in the store
+    (2026-08-26 ruling: aggregates carry what the corpus asserts).
 
     This is replay's shape, not the drain's — an archived candidate with no
-    audit artifact beside it, which is what every pre-`semantic-audit/v1`
-    attempt in the archive looks like. Absent is `not_checked`, never a pass.
+    audit artifact beside it. Absent is `not_checked`, never a pass.
     """
     markdown = source("C04")
     dh = seed_case(pg, "C04")
@@ -503,7 +507,7 @@ def test_an_unaudited_record_stores_its_profile_but_indexes_no_mentions(
     # this is how a record the drain could not audit gets its audit later
     assert row["flags"] == flags("not_checked", audit_retry=True)
     assert [m["surface"] for m in row["profile"]["mentions"]] == ["CPA", "ACCA", "ACA"]
-    assert mention_rows_in(pg) == []
+    assert sorted({m for m, _, _ in mention_rows_in(pg)}) == ["ACA", "ACCA", "CPA"]
 
 
 def test_settle_writes_statement_derived_importance_into_the_aggregate(
@@ -607,7 +611,7 @@ def test_a_blocking_finding_leaves_an_agreeing_record_validated_but_ineligible(
     quality = row["profile"]["quality"]
     assert quality["semantics"] == "findings" and quality["completeness"] == "no_findings"
     assert quality["sampling"] == "complete" and quality["search_eligible"] is False
-    assert mention_rows_in(pg) == []
+    assert sorted({m for m, _, _ in mention_rows_in(pg)}) == ["ACA", "ACCA", "CPA"]
     assert [m["surface"] for m in row["profile"]["mentions"]] == ["CPA", "ACCA", "ACA"]
 
     artifact = next(iter(audits_in(store).values()))
@@ -753,7 +757,7 @@ def test_an_audit_the_judge_refuses_is_an_error_not_a_pass(
     row = pg.execute("SELECT profile FROM extractions").fetchone()
     assert row is not None
     assert row["profile"]["quality"]["semantics"] == "error"
-    assert mention_rows_in(pg) == []
+    assert sorted({m for m, _, _ in mention_rows_in(pg)}) == ["ACA", "ACCA", "CPA"]
     artifact = next(iter(audits_in(store).values()))
     assert artifact["outcome"] == "audit_error"
     assert any("s_no_such_id" in e for e in artifact["errors"])
@@ -961,7 +965,7 @@ def test_an_audit_error_is_re_audited_on_the_next_run_and_then_settles(
     assert errored["status"] == "validated"
     assert errored["profile"]["quality"]["semantics"] == "error"
     assert errored["profile"]["quality"]["search_eligible"] is False
-    assert mention_rows_in(pg) == []
+    assert sorted({m for m, _, _ in mention_rows_in(pg)}) == ["ACA", "ACCA", "CPA"]
     candidate = errored["chosen_attempt"]
     assert set(audits_in(store)) == {audit_key(candidate)}
 
@@ -1026,7 +1030,7 @@ def test_two_audit_errors_end_the_candidates_budget(
     # and no `audit_retry` — the budget is gone, so the queue must stop
     # offering this row a slot it cannot use
     assert still["flags"] == flags("error")
-    assert mention_rows_in(pg) == []
+    assert sorted({m for m, _, _ in mention_rows_in(pg)}) == ["ACA", "ACCA", "CPA"]
 
 
 def test_a_parked_cohort_is_never_promoted_by_an_automated_re_audit(
@@ -1368,7 +1372,7 @@ def test_replay_never_publishes_a_retired_versions_verdict(
     quality = row["profile"]["quality"]
     assert (quality["semantics"], quality["completeness"]) == ("not_checked", "not_checked")
     assert quality["search_eligible"] is False
-    assert mention_rows_in(pg) == []
+    assert sorted({m for m, _, _ in mention_rows_in(pg)}) == ["ACA", "ACCA", "CPA"]
     # the fold answered under the version in force and found no audit at it
     assert row["flags"] == flags("not_checked", audit_retry=True)
     assert [d for d, _ in reaudit_window(pg, limit=10)] == [dh]
@@ -1453,9 +1457,10 @@ def test_a_blocking_finding_off_the_dispute_adjudicates_and_asks_for_repair(
     assert row["status"] == "validated" and row["agreement"]["failures"] == ["negation"]
     quality = row["profile"]["quality"]
     assert quality["sampling"] == "adjudicated" and quality["semantics"] == "findings"
-    assert quality["search_eligible"] is False  # the finding still gates the aggregate
+    # the finding still gates CLAIM-tier eligibility; the skill listing serves
+    assert quality["search_eligible"] is False
     assert row["flags"] == flags("ok", repair="eligibility")
-    assert mention_rows_in(pg) == []
+    assert sorted({m for m, _, _ in mention_rows_in(pg)}) == ["ACA", "ACCA", "CPA"]
 
 
 def test_a_human_ruling_takes_the_document_out_of_the_repair_queue(
@@ -1668,7 +1673,7 @@ def test_a_repaired_candidate_whose_audit_never_reached_is_audited_next_run(
     owed = row_of(pg)
     assert owed["status"] == "validated"  # the base candidate, exactly as audited
     assert owed["profile"]["quality"]["search_eligible"] is False
-    assert mention_rows_in(pg) == []
+    assert sorted({m for m, _, _ in mention_rows_in(pg)}) == ["ACA", "ACCA", "CPA"]
     assert owed["flags"] == flags("ok", audit_retry=True)
 
     second = AuditingEngine([], clean_audit, repair=polarity_repair)
@@ -1715,7 +1720,7 @@ def test_a_refused_verdict_on_a_repaired_candidate_ends_the_round(
     assert row["status"] == "validated" and row["flags"] == flags("ok")
     assert row["profile"]["quality"]["search_eligible"] is False
     assert any(s["polarity"] == "negative" for s in row["profile"]["statements"])
-    assert mention_rows_in(pg) == []
+    assert sorted({m for m, _, _ in mention_rows_in(pg)}) == ["ACA", "ACCA", "CPA"]
 
     later = AuditingEngine([], clean_audit, repair=polarity_repair)
     assert run(v2_settings(), pg, store, engine=later,
@@ -1837,7 +1842,7 @@ def test_the_repair_campaign_comes_back_for_the_settled_backlog(
     assert parked["profile"]["quality"]["search_eligible"] is False
     assert parked["flags"] == flags("ok", repair="eligibility")
     assert repairs_in(store) == {}  # nothing reached a repairer; the round stands
-    assert mention_rows_in(pg) == []
+    assert sorted({m for m, _, _ in mention_rows_in(pg)}) == ["ACA", "ACCA", "CPA"]
 
     second = AuditingEngine([], clean_audit, repair=polarity_repair)
     summary = run(v2_settings(), pg, store, engine=second, max_docs=10, max_usd=5.0)

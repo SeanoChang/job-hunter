@@ -282,4 +282,4 @@ def test_rebuild_drops_an_audit_that_does_not_describe_the_replayed_candidate(
     quality = row["profile"]["quality"]
     assert (quality["semantics"], quality["completeness"]) == ("not_checked", "not_checked")
     assert quality["search_eligible"] is False
-    assert v2.mention_rows_in(pg) == []
+    assert sorted({m for m, _, _ in v2.mention_rows_in(pg)}) == ["ACA", "ACCA", "CPA"]
