@@ -1616,6 +1616,88 @@ def _reaudit_queue(
     return [(r["document_hash"], r["chosen_attempt"]) for r in rows]
 
 
+def _drive_pass(
+    settings: Settings,
+    summary: ExtractSummary,
+    queued: list[tuple[str, str]],
+    take: Callable[[tuple[str, str], threading.RLock | None], str | None],
+    max_usd: float,
+    breaker_abort: str,
+) -> str | None:
+    """Run one pre-drain pass's queue under the drain's own concurrency.
+
+    The policy is the serial loop's, verbatim: the money cap is checked before
+    each item (strict >, so a cap of 0 is "free work only"), `BREAKER_LIMIT`
+    consecutive unanswered calls abort with `breaker_abort`, a throttle aborts
+    with `AUDIT_THROTTLED`, and an answered item resets the streak. What the
+    parallel branch adds is the drain's worker shape (2026-09-19): each
+    worker holds the shared gate for ALL state and releases it only around
+    engine waits (`_ungated`, inside the phase helpers `take` calls), so a
+    backlog of owed audits and repair rounds — pure engine-bound work — stops
+    serializing a wide drain behind one call at a time. `take` returns "ok"
+    (answered), "unanswered", "skip" (nothing consumed), or `AUDIT_THROTTLED`.
+    """
+    unanswered = 0
+    if settings.l2_concurrency <= 1:
+        for item in queued:
+            if summary.spend_usd > max_usd:
+                break
+            status = take(item, None)
+            if status == AUDIT_THROTTLED:
+                summary.throttled = True
+                return AUDIT_THROTTLED
+            if status == "unanswered":
+                unanswered += 1
+                if unanswered >= BREAKER_LIMIT:
+                    summary.aborted = breaker_abort
+                    return breaker_abort
+                continue
+            if status == "ok":
+                unanswered = 0
+        return None
+
+    gate = threading.RLock()
+    stop = threading.Event()
+    items = iter(queued)
+    # one mutable cell per shared fact, mutated only under the gate — the same
+    # shape as the drain's breaker_box
+    state: dict[str, Any] = {"unanswered": 0, "abort": None}
+
+    def _worker() -> None:
+        while not stop.is_set():
+            with gate:
+                if summary.spend_usd > max_usd or stop.is_set():
+                    return
+                item = next(items, None)
+            if item is None:
+                return
+            status = take(item, gate)
+            with gate:
+                if status == AUDIT_THROTTLED:
+                    summary.throttled = True
+                    state["abort"] = AUDIT_THROTTLED
+                    stop.set()
+                    return
+                if status == "unanswered":
+                    state["unanswered"] += 1
+                    if state["unanswered"] >= BREAKER_LIMIT:
+                        summary.aborted = breaker_abort
+                        state["abort"] = breaker_abort
+                        stop.set()
+                        return
+                elif status == "ok":
+                    state["unanswered"] = 0
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    workers = min(settings.l2_concurrency, max(len(queued), 1))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for f in [pool.submit(_worker) for _ in range(workers)]:
+            f.result()  # a worker's bug must surface, not vanish
+    abort = state["abort"]
+    return abort if isinstance(abort, str) else None
+
+
 def _reaudit_pass(
     settings: Settings,
     session: _Session,
@@ -1675,11 +1757,9 @@ def _reaudit_pass(
         )
     )
     session.do(lambda c: c.commit())  # [A1]: the probes below are archive traffic
-    unanswered = 0
-    for dh, candidate in queued:
-        # strict >, like the drain: a cap of 0 is "free work only", not "stop"
-        if summary.spend_usd > max_usd:
-            break
+
+    def _take(item: tuple[str, str], gate: threading.RLock | None) -> str | None:
+        dh, candidate = item
         # `d=dh` binds the loop variable at definition (ruff B023); the
         # annotations are what keep `session.do`'s type inference working
 
@@ -1705,10 +1785,10 @@ def _reaudit_pass(
             # place that can put the row back in agreement with it.
             session.do(_settle)
             session.do(lambda c: c.commit())
-            continue
+            return "skip"
         markdown = session.do(_markdown)
         if markdown is None:
-            continue  # the normalizer moved under it; the new text will be drained
+            return "skip"  # the normalizer moved; the new text will be drained
         session.do(lambda c: c.commit())
         if owed_repair:
             # the round's second half, finished by the next pass. No repair
@@ -1717,21 +1797,15 @@ def _reaudit_pass(
             # the repaired candidate settles in the base's place.
             phase = AuditPhase(unreachable=_audit_repaired(
                 settings, session, journal, engine, dh, markdown, summary, now,
-                active, None, candidate,
+                active, gate, candidate,
             ))
         else:
             phase = _audit_candidate(settings, session, journal, engine, dh, markdown,
-                                     summary, now, active, None)
+                                     summary, now, active, gate)
         if phase.unreachable == AUDIT_THROTTLED:
-            summary.throttled = True
-            return AUDIT_THROTTLED  # nothing archived: every queued pass is still there
+            return AUDIT_THROTTLED  # nothing archived: every queued pass stands
         if phase.unreachable is not None:
-            unanswered += 1
-            if unanswered >= BREAKER_LIMIT:
-                summary.aborted = "audit_unreachable"
-                return "audit_unreachable"
-            continue  # this document's pass is intact; the next run takes it
-        unanswered = 0
+            return "unanswered"  # this document's pass is intact for the next run
         stopped: str | None = None
         if phase.trigger is not None:
             # The verdict this trigger reads was reached in THIS pass and has
@@ -1743,15 +1817,22 @@ def _reaudit_pass(
             # the permanence this whole pass exists to remove.
             summary.repair_triggered += 1
             stopped = _repair_candidate(settings, session, journal, engine, dh, markdown,
-                                        summary, now, bundle=active, gate=None,
+                                        summary, now, bundle=active, gate=gate,
                                         trigger=phase.trigger)
         session.do(_settle)
         session.do(lambda c: c.commit())
         summary.reaudited += 1
         if stopped == AUDIT_THROTTLED:
-            summary.throttled = True
             return AUDIT_THROTTLED  # the fresh verdict is settled; the run stops
-    return None
+        return "ok"
+
+    def _gated_take(item: tuple[str, str], gate: threading.RLock | None) -> str | None:
+        if gate is None:
+            return _take(item, None)
+        with gate:  # held for all state; the phase helpers release around engine waits
+            return _take(item, gate)
+
+    return _drive_pass(settings, summary, queued, _gated_take, max_usd, "audit_unreachable")
 
 
 def _repair_queue(
@@ -1848,10 +1929,9 @@ def _repair_pass(
         )
     )
     session.do(lambda c: c.commit())  # [A1]: the probes below are archive traffic
-    unanswered = 0
-    for dh, candidate in queued:
-        if summary.spend_usd > max_usd:  # strict >, like the drain
-            break
+
+    def _take(item: tuple[str, str], gate: threading.RLock | None) -> str | None:
+        dh, candidate = item
 
         def _markdown(c: Conn, d: str = dh) -> str | None:
             return extraction.markdown_for(c, d, NORMALIZER_VERSION)
@@ -1865,28 +1945,30 @@ def _repair_pass(
             # do, and do not count it: the archive is what says the round is gone.
             session.do(_settle)
             session.do(lambda c: c.commit())
-            continue
+            return "skip"
         markdown = session.do(_markdown)
         if markdown is None:
-            continue  # the normalizer moved under it; the new text will be drained
+            return "skip"  # the normalizer moved; the new text will be drained
         session.do(lambda c: c.commit())
         summary.repair_triggered += 1
         stopped = _repair_candidate(settings, session, journal, engine, dh, markdown,
-                                    summary, now, active, None,
+                                    summary, now, active, gate,
                                     RepairTrigger(dh, candidate, REPAIR_ELIGIBILITY))
         session.do(_settle)
         session.do(lambda c: c.commit())
         if stopped == AUDIT_THROTTLED:
-            summary.throttled = True
             return AUDIT_THROTTLED
         if stopped is not None:
-            unanswered += 1
-            if unanswered >= BREAKER_LIMIT:
-                summary.aborted = "repair_unreachable"
-                return "repair_unreachable"
-            continue  # this candidate's round is intact; the next run takes it
-        unanswered = 0
-    return None
+            return "unanswered"  # this candidate's round is intact for the next run
+        return "ok"
+
+    def _gated_take(item: tuple[str, str], gate: threading.RLock | None) -> str | None:
+        if gate is None:
+            return _take(item, None)
+        with gate:  # held for all state; the phase helpers release around engine waits
+            return _take(item, gate)
+
+    return _drive_pass(settings, summary, queued, _gated_take, max_usd, "repair_unreachable")
 
 
 def run(

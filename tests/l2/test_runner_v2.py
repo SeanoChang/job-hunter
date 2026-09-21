@@ -946,6 +946,53 @@ def test_a_cold_catch_up_reproduces_every_decision_with_no_engine_calls(
 # --- the audit retry pass and the repair trigger (validator/18) -------------
 
 
+def test_the_reaudit_pass_overlaps_engine_calls_across_workers(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """The passes share the drain's concurrency (2026-09-19): a backlog of
+    owed audits is engine-bound work, and a serial pass starves a wide
+    drain's budget for hours before the first extraction call.
+
+    Two documents are parked with audit errors, then re-audited by an engine
+    that answers an audit only when BOTH audits are in flight at once — a
+    serial pass can never satisfy the rendezvous, a parallel one must.
+    """
+    import threading
+
+    docs = {}
+    for case in ("C04", "C09"):
+        dh = seed_case(pg, case)
+        engine = AuditingEngine([result(emit_of(case))], unparseable_audit)
+        run(v2_settings(), pg, store, engine=engine, only_doc=dh,
+            max_docs=10, max_usd=5.0)
+        docs[case] = dh
+    for dh in docs.values():
+        row = pg.execute(
+            "SELECT profile FROM extractions WHERE document_hash=%s", (dh,)
+        ).fetchone()
+        assert row is not None and row["profile"]["quality"]["semantics"] == "error"
+
+    barrier = threading.Barrier(2, timeout=10)
+
+    class Rendezvous(AuditingEngine):
+        def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
+            if "CANDIDATE HASH:" in prompt and "BASE CANDIDATE HASH:" not in prompt:
+                barrier.wait()  # both re-audits must be in flight together
+            return super().complete(prompt, schema, model)
+
+    second = Rendezvous([], clean_audit)
+    summary = run(v2_settings(JOB_HUNTER_L2_CONCURRENCY="4"), pg, store,
+                  engine=second, max_docs=10, max_usd=5.0)
+    assert second.calls == [] and len(second.audits) == 2
+    assert summary.reaudited == 2 and summary.aborted is None
+    for dh in docs.values():
+        row = pg.execute(
+            "SELECT profile FROM extractions WHERE document_hash=%s", (dh,)
+        ).fetchone()
+        assert row is not None
+        assert row["profile"]["quality"]["search_eligible"] is True
+
+
 def test_an_audit_error_is_re_audited_on_the_next_run_and_then_settles(
     pg: Conn, store: ArchiveStore  # noqa: F811
 ) -> None:
