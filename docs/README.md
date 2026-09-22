@@ -41,6 +41,13 @@ dispositions of the 2026-08-17 external review:
 
 ## Design documents
 
+- `superpowers/specs/2026-09-22-parsing-contract-v3-design.md` — **approved
+  2026-09-22, amends v2**: the parser stops issuing verdicts — importance
+  and proficiency labels leave the contract in favour of a code-derived
+  section heading and a quoted modal phrase; every verified extraction
+  serves; the gate keeps negation and numeric conflict only; sampling
+  monitors rather than adjudicates. Plan:
+  `superpowers/plans/2026-09-22-v20-list-everything.md`.
 - `superpowers/specs/2026-09-07-parsing-contract-v2-design.md` — **approved,
   normative for schema-v2 semantics** (amended [A1]–[A4] after independent
   verification, 2026-09-07): typed statements, scoped facts, claim-linked
