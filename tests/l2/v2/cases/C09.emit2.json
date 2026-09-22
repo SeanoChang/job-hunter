@@ -27,9 +27,18 @@
             "occurrence": 0
           }
         ],
-        "modality_evidence": null,
+        "importance": "required",
+        "importance_evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ],
         "polarity": "positive",
         "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [],
         "unresolved": []
@@ -46,9 +55,18 @@
             "occurrence": 0
           }
         ],
-        "modality_evidence": null,
+        "importance": "required",
+        "importance_evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ],
         "polarity": "positive",
         "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
         "condition_ids": [
           "c_equivalent_route"
         ],

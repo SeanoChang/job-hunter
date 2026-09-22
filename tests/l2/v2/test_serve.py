@@ -32,7 +32,21 @@ MODEL = "fixture-hand-authored"
 
 
 def case_emit(case: str) -> dict[str, Any]:
-    loaded: dict[str, Any] = json.loads((CASES / f"{case}.emit.json").read_text(encoding="utf-8"))
+    """The FROZEN schema-2 emit of a case (`<case>.emit2.json`).
+
+    The case corpus carries both shapes since the v20 bump: `<case>.emit.json`
+    is the schema-3 derivation the active bundle runs on, and `.emit2.json` is
+    the hand-authored schema-2 original it was derived from. Every case-driven
+    test in this file is a pin on the SCHEMA-2 projection — the byte-identity
+    guards, the demoted `importance` metric, the legacy `profile_mentions`
+    columns — and schema 2 is a shipped corpus partition `rebuild` still
+    replays, so those pins stay on the frozen emit. The schema-3 projection is
+    covered from the `v3_record` fixtures (conftest) instead, which is where a
+    record carrying no verdict at all comes from.
+    """
+    loaded: dict[str, Any] = json.loads(
+        (CASES / f"{case}.emit2.json").read_text(encoding="utf-8")
+    )
     body: dict[str, Any] = loaded["emit"]
     return body
 
@@ -42,6 +56,7 @@ def case_record(case: str, emit: dict[str, Any] | None = None) -> dict[str, Any]
     return assemble(
         case_emit(case) if emit is None else emit, markdown,
         document_hash=sha256_hex(markdown.encode("utf-8")), observed_model=MODEL, at=AT,
+        schema_version="2",
     )
 
 
@@ -293,6 +308,29 @@ def test_profile_of_serves_a_schema_3_record(v3_record: dict[str, Any]) -> None:
     assert serve.profile_of(profile) == profile  # still idempotent over its own output
 
 
+def test_the_blob_stamps_the_records_own_schema_version(
+    v2_record: dict[str, Any], v3_record: dict[str, Any]
+) -> None:
+    """The marker is the contract the two shape-aware readers dispatch on, and
+    `agreement._gates` reads it to pick a settlement policy — so it has to be
+    the record's OWN shape, not the module's default. A v11 record stamped "2"
+    would send schema-3 statements to every schema-2 reader there is.
+    """
+    assert serve.profile_of(v3_record)["schema"] == "3"
+    assert serve.profile_of(v2_record)["schema"] == "2"  # the frozen replay path
+
+
+def test_the_schema_stamp_survives_a_reprojection_of_the_stored_blob(
+    v3_record: dict[str, Any],
+) -> None:
+    """A stored blob carries no `extraction` envelope (it stays in the archive),
+    so re-projecting one has to read the marker it already declares — otherwise
+    every re-projection of a schema-3 blob would relabel it."""
+    blob = serve.profile_of(v3_record)
+    assert "extraction" not in blob
+    assert serve.profile_of(blob)["schema"] == "3"
+
+
 def test_mention_rows_for_a_schema_3_record_carry_the_sentinel(
     v3_record_with_mentions: dict[str, Any],
 ) -> None:
@@ -309,6 +347,45 @@ def test_summary_of_a_schema_3_record_groups_under_the_sentinel(
     out = serve.summary(serve.profile_of(v3_record))
     assert out["areas"] == [{"name": "Sales experience", "kind": "qualification",
                              "importance": serve.NO_IMPORTANCE, "level": None}]
+
+
+# --- the marker's readers ----------------------------------------------------
+
+
+def test_the_stamp_readers_recognise_every_shape_this_module_serves(
+    v2_record: dict[str, Any], v3_record: dict[str, Any]
+) -> None:
+    """The stamp is only worth writing if the readers recognise it.
+
+    `profile_of` stamps the record's own version, so a reader testing the
+    marker for equality with one version stops recognising the live shape the
+    moment the contract bumps. Both shapes this module projects have to read as
+    v2-family; a blob from before the marker existed still must not.
+    """
+    assert serve.reads_as_v2(serve.profile_of(v3_record))
+    assert serve.reads_as_v2(serve.profile_of(v2_record))
+    assert not serve.reads_as_v2({"demand_profile": {"areas": []}})  # a v1 blob
+    assert sorted(serve.V2_SHAPES) == ["2", "3"]
+
+
+def test_pulse_summarises_a_schema_3_blob_through_the_v2_projection(
+    v3_record_with_mentions: dict[str, Any],
+) -> None:
+    """`pulse.profile_summary` dispatches on the stamp, so it has to follow it.
+
+    Falling through to the v1 `demand_profile` walk is not a degraded answer,
+    it is a wrong one: the walk drops `mentions` entirely and reports each
+    statement as its own area carrying `NO_IMPORTANCE` as if that were a
+    verdict the posting made — the exact fabrication parsing contract v3 exists
+    to remove. Lives here rather than in `tests/test_pulse.py` because what is
+    pinned is the stamp's contract with its reader.
+    """
+    from jobhunter.pulse import profile_summary
+
+    blob = serve.profile_of(v3_record_with_mentions)
+    assert blob["schema"] == "3"
+    assert profile_summary(blob) == serve.summary(blob)
+    assert profile_summary(blob)["mentions"] == ["CPA"]
 
 
 # --- quality.sample_notes: what the cohort split on (spec §4) ----------------

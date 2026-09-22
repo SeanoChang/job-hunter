@@ -39,7 +39,25 @@ from jobhunter.l2.v2.project import mention_rows as _project_rows
 from jobhunter.l2.v2.quality import assess
 from jobhunter.l2.v2.types import NO_IMPORTANCE, PROFICIENCY
 
+#: The shape a blob declares when the record it was built from declares none.
+#: Schema 2 is the oldest v2-family shape and the one every blob written before
+#: the v20 bump carries, so it is what an un-named record reads back as. It is
+#: NOT what `profile_of` stamps for a schema-3 record: the marker is the
+#: record's own `extraction.schema_version` (`_schema_of`).
 SCHEMA_VERSION = "2"
+
+#: The blob key the shape marker is written under. `agreement._gates` keys the
+#: settlement policy on it (its `_CONTRACT_KEY`), so the two are pinned by a
+#: test rather than by coincidence.
+_SCHEMA_KEY = "schema"
+
+#: Every shape marker this module's projections read. It is a SET because a
+#: reader that dispatches on one version stops seeing the shape the moment the
+#: contract bumps — `profile_of` stamps the record's own version, so a blob of
+#: the live shape carried a marker no reader recognised and fell through to the
+#: v1 walk, which drops mentions and invents an importance the shape does not
+#: have. The membership test is `reads_as_v2`, and both readers use it.
+V2_SHAPES: frozenset[str] = frozenset({"2", "3"})
 
 #: The reserved record key `runner.settle` attaches its verdict under, and the
 #: only thing in this module that knows settlement happened (spec §6).
@@ -166,6 +184,39 @@ def quality_of(record: dict[str, Any]) -> dict[str, Any]:
     return assessed
 
 
+def reads_as_v2(profile: dict[str, Any]) -> bool:
+    """True when this stored blob is one `summary` and the v2 renderers read.
+
+    The single dispatch point between the two record families a profile blob
+    can hold. Nothing sniffs structure: the marker `profile_of` stamped is the
+    only signal, and a blob written before the marker existed has none, so it
+    takes the v1 walk — byte-identical to what it has always returned.
+    """
+    return profile.get(_SCHEMA_KEY) in V2_SHAPES
+
+
+def _schema_of(record: dict[str, Any]) -> str:
+    """The shape marker for this record: the shape it declares, not this
+    module's default.
+
+    Two callers, two shapes of input. A RECORD carries the shape in its
+    extraction envelope, and that is the authority — a v11 record stamped "2"
+    would route schema-3 statements to every schema-2 reader there is, and
+    `agreement._gates` would pick a settlement policy off a lie. A stored BLOB
+    has no envelope (it stays in the archived attempt) but carries the marker
+    it was written with, so re-projecting one keeps its own stamp, which is
+    what `profile_of`'s idempotence promises. Neither present is schema 2: the
+    default is the shape every blob written before the v20 bump holds.
+    """
+    extraction = record.get("extraction")
+    if isinstance(extraction, dict):
+        declared = extraction.get("schema_version")
+        if isinstance(declared, str) and declared:
+            return declared
+    marker = record.get(_SCHEMA_KEY)
+    return marker if isinstance(marker, str) and marker else SCHEMA_VERSION
+
+
 def profile_of(record: dict[str, Any]) -> dict[str, Any]:
     """The stored profile blob for a v2 record: the served slice plus a shape marker.
 
@@ -189,7 +240,7 @@ def profile_of(record: dict[str, Any]) -> dict[str, Any]:
     are these six.
     """
     return {
-        "schema": SCHEMA_VERSION,
+        _SCHEMA_KEY: _schema_of(record),
         "statements": record["statements"],
         "relations": record["relations"],
         "facts": record["facts"],

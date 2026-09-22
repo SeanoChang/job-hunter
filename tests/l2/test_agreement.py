@@ -294,12 +294,15 @@ def sample(
     groups: list[dict[str, Any]] | None = None,
     mentions: list[dict[str, Any]] | None = None,
     entries: list[dict[str, Any]] | None = None,
+    schema: str = SCHEMA_VERSION,
 ) -> dict[str, Any]:
     """One v2 sample as settlement sees it: the declared contract, the stored
     slice's `statements`, and the claim index the gate aligns.
 
     `schema` is here for the same reason `profile_of` stamps it — it is what
-    `agreement._gates` reads to judge this cohort under validator/20.
+    `agreement._gates` reads to judge this cohort under validator/20. Since the
+    v20 bump the stamp is the RECORD's own shape ("3" for a v11 record, "2" for
+    a frozen replay), so it is a parameter here too.
     """
     record = {
         "statements": list(statements),
@@ -307,7 +310,7 @@ def sample(
         "mentions": mentions or [],
         "facts": {"entries": entries or []},
     }
-    return {"schema": SCHEMA_VERSION, "statements": record["statements"],
+    return {"schema": schema, "statements": record["statements"],
             "demand_profile": claim_index(record)}
 
 
@@ -748,6 +751,35 @@ def test_the_same_split_settles_differently_under_the_two_contracts() -> None:
     assert v1.report["failures"] == ["f1"] and v1.passed is False
 
 
+def test_a_schema_3_cohort_is_judged_under_validator_20s_two_gates() -> None:
+    """The stamp moved with the bump (`serve.profile_of` now stamps the
+    record's own `extraction.schema_version`), and `_gates` has to keep reading
+    it as a v2-family contract: a schema-3 cohort that splits on F1 settles,
+    and one that splits on polarity still parks. A gate set chosen by the
+    literal string "2" would silently hand every v11 document validator/12's
+    policy and park the corpus on demoted metrics.
+    """
+    split = agree([sample(statement3("s1", (0, 10)), statement3("s2", (20, 30)), schema="3"),
+                   sample(statement3("s1", (0, 10)), schema="3")])
+    assert split.report["mean_f1"] < F1_MIN
+    assert split.report["failures"] == [] and split.passed is True
+
+    flipped = agree([sample(statement3("s1", (0, 100)), schema="3"),
+                     sample(statement3("s1", (0, 100), polarity="negative"), schema="3")])
+    assert flipped.report["failures"] == ["negation"] and flipped.passed is False
+
+
+def test_a_schema_3_cohort_still_parks_on_a_numeric_conflict() -> None:
+    """The other gate, on the new stamp: 144 months against 12 is a misread
+    whatever shape the record declares."""
+    a = sample(statement3("s1", (0, 100), fact_ids=("f1",)), schema="3",
+               entries=[experience("f1", (0, 100), months=144, sids=["s1"])])
+    b = sample(statement3("s1", (0, 100), fact_ids=("f1",)), schema="3",
+               entries=[experience("f1", (0, 100), months=12, sids=["s1"])])
+    result = agree([a, b])
+    assert result.report["failures"] == ["numeric_conflict"] and result.passed is False
+
+
 def test_the_contract_key_is_what_the_v1_projection_actually_emits() -> None:
     """`_gates` is only honest if the two real producers differ this way.
 
@@ -757,11 +789,15 @@ def test_the_contract_key_is_what_the_v1_projection_actually_emits() -> None:
     and the same file's F1/importance tests run `serve.profile_of` output
     through `agree` and get validator/20's verdict end to end.
     """
+    from jobhunter.l2.agreement import _CONTRACT_KEY
     from jobhunter.l2.bundles import _v1_profile_of
+    from jobhunter.l2.v2.serve import _SCHEMA_KEY
 
     v1_blob = _v1_profile_of({"facts": {}, "demand_profile": {"areas": []}})
     assert "schema" not in v1_blob
     assert sample(statement("s1", (0, 100)))["schema"] == SCHEMA_VERSION
+    # the key the gate dispatches on IS the key the projection stamps
+    assert _CONTRACT_KEY == _SCHEMA_KEY == "schema"
 
 
 def test_a_v1_cohort_still_fails_on_negation_and_never_on_numeric_conflict() -> None:

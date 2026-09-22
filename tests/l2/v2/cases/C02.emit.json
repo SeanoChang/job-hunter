@@ -29,12 +29,9 @@
             "occurrence": null
           }
         ],
-        "importance": null,
-        "importance_evidence": null,
+        "modality_evidence": null,
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [
           "f_pay"
@@ -53,8 +50,7 @@
             "occurrence": null
           }
         ],
-        "importance": "required",
-        "importance_evidence": [
+        "modality_evidence": [
           {
             "block_id": "b000004",
             "text": "requires",
@@ -63,8 +59,6 @@
         ],
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [],
         "unresolved": []

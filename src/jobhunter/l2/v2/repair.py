@@ -69,10 +69,11 @@ from jobhunter.l2.v2.source import RefBindError, annotate, blocks_by_id, resolve
 #       a module constant, because the archive holds schema-2 candidates until
 #       migration reaches them (spec §7) and a repair addresses the objects the
 #       candidate it repairs actually has — and the shape ADVERTISED to the
-#       engine tracks `assemble.SCHEMA_VERSION` for the same reason, so the
-#       schema a round is answered under and the schema it is judged under
-#       move together. Policy — one round, one re-audit, old-object-hash
-#       guards, failed repair mutates nothing — is unchanged.
+#       engine is the round's own schema version, passed in by the runner from
+#       `bundle.schema_version`, so the schema a round is answered under and
+#       the schema it is judged under move together. Policy — one round, one
+#       re-audit, old-object-hash guards, failed repair mutates nothing — is
+#       unchanged.
 REPAIR_VERSION = "semantic-repair/v2"
 
 #: spec §4: "Operations add/replace/remove objects in statements, relations,
@@ -411,18 +412,22 @@ def emit_schema(schema_version: str = SCHEMA_VERSION) -> dict[str, Any]:
     kind↔object pairing is then the one thing left for `apply` to enforce, and
     it must enforce it anyway: a schema is a hint to the engine, never the gate.
 
-    The default is `assemble.SCHEMA_VERSION`, the shape this tuple currently
-    assembles, because that is the shape of the records the caller pairs this
-    contract with: the runner registers repair contracts by SCHEMA version and
-    asks for the schema without one (`_REPAIR_CONTRACTS`, `_repair_pass`), so
-    the default IS the live advertisement, and it has to move when the bundle
-    does rather than when this module does. `apply` still holds every operation
-    to the BASE RECORD's own shape whatever was advertised here — but a schema
-    that disagrees with it cannot be recovered from: the engine answers under
-    it (structured output, not a hint), the answer is refused, and
-    `x_repair_key` is write-once, so the candidate's one round is spent on a
-    round it could not have won. Replaying an older candidate therefore passes
-    that record's version explicitly.
+    The version travels from the bundle to here: the runner registers this one
+    module under every live SCHEMA version (`_REPAIR_CONTRACTS`) and
+    `_repair_pass` calls it with `bundle.schema_version`, so what a round
+    advertises is the shape that round's bundle assembles, and nothing in this
+    module has to move when the bundle bumps. That matters because `apply`
+    holds every operation to the BASE RECORD's own shape whatever was
+    advertised here, and a schema that disagrees with it cannot be recovered
+    from: the engine answers under it (structured output, not a hint), the
+    answer is refused, and `x_repair_key` is write-once, so the candidate's one
+    round is spent on a round it could not have won.
+
+    The default is `assemble.SCHEMA_VERSION` — schema 2, the oldest live shape
+    and the one the archived corpus holds, the same convention as
+    `emit_guard.engine_emit_schema`. It is a convenience for callers reading
+    the base contract (tests, a replay of an archived candidate), never an
+    advertisement: no caller in `src/` takes it.
     """
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

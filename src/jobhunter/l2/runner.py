@@ -930,28 +930,39 @@ def _hash_of(record: dict[str, Any]) -> str:
 
 @dataclass(frozen=True)
 class _RepairContract:
-    """The `semantic-repair/v1` pieces the repair phase drives (spec §4)."""
+    """The `semantic-repair/v2` pieces the repair phase drives (spec §4).
+
+    `emit_schema` takes the SCHEMA VERSION the round is repairing: one repair
+    module serves both live record shapes (its operations name the same object
+    kinds; only the objects inside them differ), so the advertised schema is a
+    parameter rather than a per-contract constant.
+    """
 
     version: str
     render: Callable[[str, str, dict[str, Any], list[dict[str, Any]]], str]
-    emit_schema: Callable[[], dict[str, Any]]
+    emit_schema: Callable[[str], dict[str, Any]]
     apply: Callable[[dict[str, Any], dict[str, Any], str, str], dict[str, Any]]
 
 
 #: Repair contracts by SCHEMA version, because that is what a typed repair
-#: operation addresses: the operations name schema-2 objects (`statement`,
+#: operation addresses: the operations name record objects (`statement`,
 #: `fact_entry`, `presence`) and carry the old-object hashes of that record
 #: shape, so the contract belongs to the shape rather than to a prompt or a
 #: validator — the same reason `_bundle_for` falls back to matching by schema.
 #: A bundle with an audit phase but no contract for its shape simply never
-#: repairs; its findings still gate eligibility, exactly as they did.
+#: repairs; its findings still gate eligibility, exactly as they did — which is
+#: precisely why schema 3 needs an entry of its own: without one, every v11
+#: document with a blocking finding would be parked and never offered a round.
+#: `semantic-repair/v2` is one module covering both shapes, so both entries name
+#: it and the schema version reaches it at the call.
 _REPAIR_CONTRACTS: dict[str, _RepairContract] = {
-    "2": _RepairContract(
+    version: _RepairContract(
         version=_v2_repair.REPAIR_VERSION,
         render=_v2_repair.render,
         emit_schema=_v2_repair.emit_schema,
         apply=_v2_repair.apply,
-    ),
+    )
+    for version in ("2", "3")
 }
 
 
@@ -2480,7 +2491,11 @@ def _repair_candidate(
     candidate_hash = _hash_of(record)
     model = candidate.requested_model
     prompt = contract.render(markdown, candidate_hash, record, list(findings))
-    schema = contract.emit_schema()
+    # the shape the round repairs, said out loud: `apply` holds every operation
+    # to the BASE RECORD's own shape, and an engine answering under a schema
+    # that disagrees spends the candidate's one write-once round on a
+    # `repair_error` it could not have avoided
+    schema = contract.emit_schema(bundle.schema_version)
     # [A1]: a repair call is a minute of model time, and a managed Postgres
     # kills a session that holds a transaction across one (SQLSTATE 25P03).
     session.do(lambda c: c.commit())

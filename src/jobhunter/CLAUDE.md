@@ -121,13 +121,17 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
     pure modules: `prompt.py` (`demand-profile/v6` — the spec §4 extractor text
     over a numbered `blocks/1` listing, so the model cites block ids and exact
     substrings and never computes offsets) and `serve.py` (what a record looks
-    like once it leaves the archive: the stored slice with its `"schema": "2"`
-    marker, the claim index the agreement gate compares, `profile_mentions`
-    rows whose importance comes from each mention's linked STATEMENT — the C04
-    fix — and a `summary()` whose keys match `pulse.profile_summary` so every
-    current renderer works unchanged). `pulse.py` and `extract show` dispatch
-    on `profile["schema"] == "2"`; storage is NOT migrated. No model calls and
-    no database/archive I/O inside `l2/v2/` itself.
+    like once it leaves the archive: the stored slice plus a `"schema"` marker
+    holding the RECORD's own `extraction.schema_version` — `"2"` at this
+    increment, `"3"` since the v20 bump — the claim index the agreement gate
+    compares, `profile_mentions` rows whose importance comes from each
+    mention's linked STATEMENT — the C04 fix — and a `summary()` whose keys
+    match `pulse.profile_summary` so every current renderer works unchanged).
+    `pulse.py` and `extract show` dispatch on `serve.reads_as_v2(profile)` —
+    membership in `serve.V2_SHAPES`, never equality with one version, so a
+    contract bump does not silently drop the live shape to the v1 walk;
+    storage is NOT migrated. No model calls and no database/archive I/O inside
+    `l2/v2/` itself.
     **The mention projection is gated on `search_eligible` and therefore
     yields nothing today.** `assemble.py` calls `quality.assess(source=…,
     evidence="pass")` and leaves `semantics`/`completeness` at `not_checked`,

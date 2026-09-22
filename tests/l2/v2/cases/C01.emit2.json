@@ -1,13 +1,13 @@
 {
-  "case": "C09",
-  "company": "Visa",
-  "source_url": "https://visa.wd5.myworkdayjobs.com/Visa/job/PH---Pasay-Philippines---Manila/Director--Elite-Care--Client-Services_REF087215W-1",
-  "original_document_hash": "02fd591c71d5cef9e0d0e49fbd121160663a587eace05adeaae38bb1767584a4",
+  "case": "C01",
+  "company": "Zendesk",
+  "source_url": "https://zendesk.wd1.myworkdayjobs.com/zendesk/job/London-United-Kingdom/Senior-Enterprise-Account-Executive--UKI_R35318",
+  "original_document_hash": "0628bcc118e711ddad0901f8ef2a3da82f47dd8daa121cc421ee57b93d4a2b27",
   "excerpt_lines": [
-    31,
-    32
+    20,
+    22
   ],
-  "note": "Audit defect 9: the degree/experience alternation was flattened into an AND. The any_of group cites the connective and the experience fact is route-scoped.",
+  "note": "Audit defect 1: 'a minimum of 8 years' became an exact 96-month range in v1. The emit cites the value and the comparison phrase separately; code derives the floor.",
   "emit": {
     "source_assessment": {
       "usability": "usable",
@@ -16,85 +16,39 @@
     },
     "statements": [
       {
-        "id": "s_degree",
+        "id": "s_sales_experience",
         "kind": "qualification",
         "subject": "candidate",
-        "topic": "Degree-level education",
+        "topic": "Cloud/software B2B sales or solution engineering experience",
         "evidence": [
           {
             "block_id": "b000002",
-            "text": "Educated to degree level",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "required",
+        "importance_evidence": [
+          {
+            "block_id": "b000002",
+            "text": "a minimum of",
             "occurrence": 0
           }
         ],
-        "modality_evidence": null,
         "polarity": "positive",
         "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
         "condition_ids": [],
-        "fact_ids": [],
-        "unresolved": []
-      },
-      {
-        "id": "s_experience_route",
-        "kind": "qualification",
-        "subject": "candidate",
-        "topic": "Equivalent payments-industry experience",
-        "evidence": [
-          {
-            "block_id": "b000002",
-            "text": "or equivalent experience (minimum 12 years in the payments or financial services industry, preferably in incident management or operational resilience).",
-            "occurrence": 0
-          }
-        ],
-        "modality_evidence": null,
-        "polarity": "positive",
-        "polarity_evidence": null,
-        "condition_ids": [
-          "c_equivalent_route"
-        ],
         "fact_ids": [
-          "f_route_years"
+          "f_sales_years"
         ],
         "unresolved": []
       }
     ],
     "relations": {
-      "groups": [
-        {
-          "id": "g_education_route",
-          "operator": "any_of",
-          "members": [
-            "s_degree",
-            "s_experience_route"
-          ],
-          "evidence": [
-            {
-              "block_id": "b000002",
-              "text": "degree level or equivalent experience",
-              "occurrence": 0
-            }
-          ]
-        }
-      ],
-      "conditions": [
-        {
-          "id": "c_equivalent_route",
-          "kind": "qualification_route",
-          "evidence": [
-            {
-              "block_id": "b000002",
-              "text": "or equivalent experience",
-              "occurrence": 0
-            }
-          ],
-          "statement_ids": [
-            "s_experience_route"
-          ],
-          "fact_ids": [
-            "f_route_years"
-          ]
-        }
-      ],
+      "groups": [],
+      "conditions": [],
       "example_sets": []
     },
     "facts": {
@@ -104,7 +58,7 @@
           "evidence": [
             {
               "block_id": "b000002",
-              "text": "12 years",
+              "text": "8 years",
               "occurrence": 0
             }
           ]
@@ -124,20 +78,18 @@
       },
       "entries": [
         {
-          "id": "f_route_years",
+          "id": "f_sales_years",
           "family": "experience",
           "statement_ids": [
-            "s_experience_route"
+            "s_sales_experience"
           ],
-          "condition_ids": [
-            "c_equivalent_route"
-          ],
+          "condition_ids": [],
           "scope": {
             "kind": "domain",
             "evidence": [
               {
                 "block_id": "b000002",
-                "text": "in the payments or financial services industry",
+                "text": "cloud/software B2B sales or solution engineering",
                 "occurrence": 0
               }
             ]
@@ -148,14 +100,14 @@
             "value": [
               {
                 "block_id": "b000002",
-                "text": "12 years",
+                "text": "8 years",
                 "occurrence": 0
               }
             ],
             "comparison": [
               {
                 "block_id": "b000002",
-                "text": "minimum",
+                "text": "a minimum of",
                 "occurrence": 0
               }
             ],
@@ -170,12 +122,11 @@
     "mentions": [],
     "areas": [
       {
-        "id": "a_qualifications",
-        "name": "Qualifications",
-        "kind": "credential",
+        "id": "a_role_fit",
+        "name": "What You Bring to the Role",
+        "kind": "capability",
         "statement_ids": [
-          "s_degree",
-          "s_experience_route"
+          "s_sales_experience"
         ],
         "evidence": [
           {
@@ -198,8 +149,7 @@
         "block_id": "b000002",
         "disposition": "statements",
         "ref_ids": [
-          "s_degree",
-          "s_experience_route"
+          "s_sales_experience"
         ],
         "exclusion_reason": null,
         "evidence": null
@@ -208,7 +158,7 @@
         "block_id": "b000002",
         "disposition": "facts",
         "ref_ids": [
-          "f_route_years"
+          "f_sales_years"
         ],
         "exclusion_reason": null,
         "evidence": null

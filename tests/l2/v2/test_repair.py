@@ -442,21 +442,20 @@ def test_emit_schema_admits_a_real_patch_and_closes_the_kind_enum(
     assert not validator.is_valid(patch) and not legacy.is_valid(ok)
 
 
-def test_the_advertised_schema_defaults_to_the_shape_this_tuple_assembles() -> None:
-    """The argumentless call is the LIVE advertisement, so its default has to
-    move with the bundle, not with this module.
+def test_the_default_schema_is_the_oldest_live_shape_not_an_advertisement() -> None:
+    """The bare call advertises nothing: no caller in `src/` makes one.
 
-    The runner registers repair contracts by SCHEMA version and asks for the
-    engine-facing schema without one, so `emit_schema()` is what a real
-    provider constrains the repairer to (structured output, not a hint) — while
-    `apply` judges the answer against the base record's own shape. A default
-    that names a shape the tuple does not assemble yet makes those two
-    disagree, and the disagreement is unrecoverable: `x_repair_key` is
-    write-once, so the candidate's one round is spent on a round no obedient
-    model could have won. Pinning the default to `assemble.SCHEMA_VERSION`
-    keeps them in step through the bundle's own bump.
+    What a repair round is answered under is the round's own bundle — the
+    runner registers this module under every live SCHEMA version and passes
+    `bundle.schema_version` at the call — and the pin on that is
+    `test_runner_v2_audit4.py::test_the_repair_schema_the_runner_advertises_`
+    `admits_the_repair_it_accepts`, which asserts the advertised schema IS the
+    active bundle's. The default here is `assemble.SCHEMA_VERSION`, schema 2:
+    the oldest live shape and the one the archive holds, so a bare call reads
+    the base contract rather than whatever the bundle happens to be today. That
+    is the convention `emit_guard.engine_emit_schema` keeps too.
     """
-    assert emit_schema() == emit_schema(SCHEMA_VERSION)
+    assert emit_schema() == emit_schema(SCHEMA_VERSION) == emit_schema("2")
     # and the shape is genuinely version-sensitive, so this is not a tautology
     assert emit_schema("2") != emit_schema("3")
 
