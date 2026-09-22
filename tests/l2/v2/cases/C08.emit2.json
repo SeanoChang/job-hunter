@@ -1,0 +1,45 @@
+{
+  "case": "C08",
+  "company": "Ninja Van / Priceline (two postings, one empty canonical document)",
+  "source_url": "https://jobs.lever.co/ninjavan/755b4819-f532-4cc4-b9ee-fa1ef524fa3c",
+  "original_document_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "excerpt_lines": [],
+  "note": "Audit defect 8: an empty canonical document shared by two unrelated postings. The only honest record over it is empty and ineligible.",
+  "emit": {
+    "source_assessment": {
+      "usability": "empty",
+      "evidence": null,
+      "note": "The canonical document is empty; there is nothing to read."
+    },
+    "statements": [],
+    "relations": {
+      "groups": [],
+      "conditions": [],
+      "example_sets": []
+    },
+    "facts": {
+      "presence": {
+        "experience": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "compensation": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "quantities": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "dates": {
+          "state": "none_found",
+          "evidence": null
+        }
+      },
+      "entries": []
+    },
+    "mentions": [],
+    "areas": [],
+    "block_accounting": []
+  }
+}

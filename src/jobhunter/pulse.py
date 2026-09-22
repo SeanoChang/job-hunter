@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from jobhunter.cursors import Watermark
+from jobhunter.l2.v2.serve import reads_as_v2 as _reads_as_v2
 from jobhunter.l2.v2.serve import summary as _v2_summary
 from jobhunter.timeutil import iso, parse_iso
 
@@ -45,16 +46,21 @@ def profile_summary(profile: dict[str, Any]) -> dict[str, Any]:
     """Areas, the top mentions across them, and the three headline facts.
 
     The one dispatch point between the two record shapes a stored profile
-    blob can carry: `profile["schema"] == "2"` routes to `l2.v2.serve.summary`
-    (the v2 counterpart, same output keys), anything else — including every
-    row written before the marker existed — takes the v1 walk below,
-    byte-identical to what it has always returned. Nothing sniffs structure;
-    the marker is the only signal.
+    blob can carry: `serve.reads_as_v2` — the marker naming ANY shape
+    `l2.v2.serve` projects — routes to `l2.v2.serve.summary` (the v2
+    counterpart, same output keys), anything else, including every row written
+    before the marker existed, takes the v1 walk below, byte-identical to what
+    it has always returned. Nothing sniffs structure; the marker is the only
+    signal. The test is membership rather than equality with one version
+    because `serve.profile_of` stamps the record's OWN schema, so a reader
+    pinned to a version stops recognising the live shape at each contract bump
+    and degrades in silence — the v1 walk drops mentions and reports the
+    no-verdict sentinel as if it were the posting's own word.
 
     Reads defensively: `profile` is model output that passed the validator of
     its day, so a field the current schema guarantees may still be absent in a
     row written under an older one."""
-    if profile.get("schema") == "2":
+    if _reads_as_v2(profile):
         return _v2_summary(profile)
     areas = (profile.get("demand_profile") or {}).get("areas") or []
     mentions: dict[str, None] = {}  # insertion-ordered set: first mention wins

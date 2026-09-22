@@ -1495,6 +1495,7 @@ def extract_show(
 ) -> None:
     """Read the extracted demand profile: facts, areas, claims, evidence."""
     from jobhunter.l2.quotes import line_col
+    from jobhunter.l2.v2.serve import reads_as_v2
     from jobhunter.l2.v2.serve import summary as v2_summary
     from jobhunter.markdown import NORMALIZER_VERSION
     from jobhunter.store import extraction as xstore
@@ -1534,7 +1535,10 @@ def extract_show(
         f"{row['title'] or '?'} — {row['company'] or '?'}",
         f"{doc[:12]}  {row['status']}  {row['model']}  {row['prompt_version']}",
     ]
-    if profile.get("schema") == "2":
+    # membership, not equality with one version: `serve.profile_of` stamps the
+    # record's own schema, so a reader pinned to "2" stops recognising the live
+    # shape at every contract bump and silently falls back to the v1 walk
+    if reads_as_v2(profile):
         out += _extract_show_v2(profile, v2_summary, at)
     else:
         out += ["", "facts"]

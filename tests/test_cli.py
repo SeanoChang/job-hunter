@@ -498,6 +498,48 @@ def test_extract_show_renders_a_v2_row_without_keyerror(
     assert data["profile"]["schema"] == "2"
 
 
+def test_extract_show_renders_a_schema_3_row_through_the_v2_branch(
+    xenv: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    """The live shape takes the v2 branch too (T-20260922-TBBY).
+
+    `serve.profile_of` stamps the record's own schema version, so the marker
+    every v11 blob carries is "3". The branch above dispatched on equality with
+    "2", which sent the live shape down the v1 `demand_profile` walk: areas and
+    claims instead of statements, and `NO_IMPORTANCE` printed in the verdict
+    column as though the posting had said it. This drives the shape the runner
+    actually stores.
+    """
+    from jobhunter.l2.state import DerivedState
+    from jobhunter.l2.v2 import serve
+    from jobhunter.store import extraction
+    from tests.l2.test_runner_v2 import seed_case
+    from tests.l2.v2.test_cases import build
+
+    dh = seed_case(pg, "C01")
+    record, _ = build("C01")
+    profile = serve.profile_of(record)
+    assert profile["schema"] == "3"
+    extraction.upsert_state(
+        pg, document_hash=dh, model="fixture-hand-authored",
+        prompt_version="demand-profile/v11", schema_version="3", validator_version="20",
+        state=DerivedState("validated", None), profile=profile,
+        mentions=serve.mention_rows(record), updated_at="2026-09-22T00:00:00Z",
+    )
+    pg.commit()
+    r = runner.invoke(cli.app, ["extract", "show", dh, "-o", "table"])
+    assert r.exit_code == 0, r.stdout + r.stderr
+    assert "statements (1)" in r.stdout
+    assert "[qualification]" in r.stdout
+    assert "quality" in r.stdout and "search_eligible" in r.stdout
+    assert "areas (" not in r.stdout  # never the v1 walk over the live shape
+    assert serve.NO_IMPORTANCE not in r.stdout  # nor the verdict it would invent
+
+    rj = runner.invoke(cli.app, ["extract", "show", dh, "-o", "json"])
+    assert rj.exit_code == 0, rj.stdout + rj.stderr
+    assert json.loads(rj.stdout)["data"]["profile"]["schema"] == "3"
+
+
 def test_reject_requires_note(xenv: Path) -> None:
     from tests.l2.test_runner import DH
 

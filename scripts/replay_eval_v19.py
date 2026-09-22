@@ -32,12 +32,20 @@ import psycopg
 
 from jobhunter.l2.agreement import agree
 from jobhunter.l2.assemble import AssembleError
-from jobhunter.l2.bundles import get_bundle
+from jobhunter.l2.bundles import get_bundle_for_tuple
 from jobhunter.l2.runner import NORMALIZER_VERSION, normalize_emit, validate_emit
 
 DB = os.environ.get(
     "JOB_HUNTER_DATABASE_URL", "postgresql://jobhunter:jobhunter@localhost:5432/jobhunter"
 )
+
+#: The archive this script reads is the validator-18 corpus, and every row in
+#: it was extracted under `(demand-profile/v10, 2)`. Since the v20 bump the
+#: NAME "v2" resolves to the active tuple — `(demand-profile/v11, 3, 20)` —
+#: whose assembly and emit schema would reject every archived response here as
+#: schema-invalid and report the whole corpus as newly failing. Replay reads
+#: the tuple off the archive, exactly as `rebuild` does.
+REPLAY_TUPLE = ("demand-profile/v10", "2")
 ARCHIVE = Path(os.environ.get("JOB_HUNTER_ARCHIVE_DIR", "data/archive")) / "extractions/attempts"
 FNAME = re.compile(r"^[^-]+-(?P<doc>[0-9a-f]{12})-s(?P<s>\d+)a(?P<a>\d+)\.json\.gz$")
 
@@ -75,7 +83,7 @@ def main() -> int:
     ap.add_argument("--control", type=int, default=0)
     ap.add_argument("--dry-run", action="store_true")  # documentation: always true
     args = ap.parse_args()
-    bundle = get_bundle("v2")
+    bundle = get_bundle_for_tuple(*REPLAY_TUPLE)
 
     with psycopg.connect(DB) as conn:
         rows = conn.execute(

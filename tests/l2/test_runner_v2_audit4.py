@@ -35,6 +35,7 @@ from jobhunter.l2.bundles import get_bundle
 from jobhunter.l2.engines import EngineResult, EngineThrottled
 from jobhunter.l2.runner import run, settle
 from jobhunter.l2.v2.audit import AUDIT_VERSION
+from jobhunter.l2.v2.repair import emit_schema as repair_emit_schema
 from jobhunter.timeutil import iso
 from tests.l2.test_runner import store  # noqa: F401  (the LocalFS archive fixture)
 from tests.l2.test_runner_v2 import (
@@ -207,17 +208,18 @@ def test_the_repair_schema_the_runner_advertises_admits_the_repair_it_accepts(
 ) -> None:
     """The shape handed to the repair engine is the shape the record takes.
 
-    `_REPAIR_CONTRACTS` is keyed by SCHEMA version and the runner calls
-    `contract.emit_schema()` with no argument, so whatever that default is
-    becomes the output schema for every record of the shape the contract is
-    registered under. `apply` then holds the answer to the BASE RECORD's own
+    `_REPAIR_CONTRACTS` is keyed by SCHEMA version and one module serves every
+    live shape, so the runner passes `bundle.schema_version` to
+    `contract.emit_schema` — what a round advertises is the shape that round's
+    bundle assembles. `apply` then holds the answer to the BASE RECORD's own
     shape. If those two disagree the round is unwinnable and unrepeatable —
     `x_repair_key` is write-once, and the failure artifact is written at it —
     so a model obeying the advertised schema spends the document's one repair
     round on a `repair_error` it could not have avoided.
 
-    The assertion is that pairing: the emit this run's `apply` ACCEPTED must
-    validate against the schema this run HANDED the engine.
+    Two assertions, because the pairing can fail in either direction: the
+    schema this run HANDED the engine is the active bundle's, and the emit this
+    run's `apply` ACCEPTED validates against it.
     """
     seed_case(pg, "C04")
     engine = SchemaSpyEngine([result(polarity_split_c04())],
@@ -228,6 +230,9 @@ def test_the_repair_schema_the_runner_advertises_admits_the_repair_it_accepts(
 
     (advertised,) = engine.repair_schemas
     (prompt,) = engine.repairs
+    # the bundle's schema version reached the contract, not a module default
+    assert advertised == repair_emit_schema(get_bundle("v2").schema_version)
+    assert advertised != repair_emit_schema("2")  # and the two are distinguishable
     accepted = json.loads(obedient_polarity_repair(prompt))  # the emit `apply` just took
     validator = jsonschema.Draft202012Validator(advertised)
     assert validator.is_valid(accepted), [

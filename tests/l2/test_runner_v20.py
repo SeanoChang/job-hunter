@@ -56,7 +56,9 @@ def _unparseable() -> EngineResult:
 def _kind_variant() -> dict[str, Any]:
     """A second reading of C01 that differs only in statement kind — the
     single largest review class in the 2026-09-22 sample (172 pairs), and one
-    the verifier accepts on both sides because both kinds carry importance."""
+    the verifier accepts on both sides: the only statement field schema 3 lets
+    code re-derive is `section_heading`, and both kinds derive the same one
+    from the same evidence span (parsing contract v3 §2.1)."""
     emit = copy.deepcopy(emit_of("C01"))
     emit["statements"][0]["kind"] = "employment_constraint"
     return emit

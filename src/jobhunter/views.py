@@ -337,10 +337,11 @@ def claims_view(
     Each row says which tier it came from (`extraction_status`: a review row
     serves alongside a validated one, parsing contract v3 §4) and carries the
     two fields a schema-3 claim replaced its verdict with. Those come from the
-    served blobs of the documents on THIS page — one blob per DISTINCT document,
-    at most `limit` of them, in one query, loaded the way `pulse` already loads a
-    blob per profiled event — never one fetch per row and never a second pass
-    over the corpus.
+    served blobs of the documents on THIS page — one narrowed slice per DISTINCT
+    document (`queries.mention_contexts`: the mention entries for this surface
+    and the statements they link, not the whole record), at most `limit` of
+    them, in one query — never one fetch per row and never a second pass over
+    the corpus.
 
     `section_heading` and `modality` are present (possibly null) on a schema-3
     row and ABSENT on an older one, which is how a renderer tells the two apart
@@ -361,8 +362,8 @@ def claims_view(
         **engine)
     truncated = len(rows) > limit
     rows = rows[:limit]
-    served = queries.served_profiles(
-        conn, sorted({r["document_hash"] for r in rows}), **engine)
+    served = queries.mention_contexts(
+        conn, sorted({r["document_hash"] for r in rows}), mention=mention, **engine)
     data: list[dict[str, Any]] = []
     for r in rows:
         blob = served.get(r["document_hash"]) or {}

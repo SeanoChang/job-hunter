@@ -380,13 +380,13 @@ def test_claims_view_loads_one_blob_per_distinct_document_on_the_page(
     _seed_v3_profile(pg, dh, monkeypatch, record=make_multi_kind_serving_record())
     settings = Settings.load()
     calls: list[list[str]] = []
-    real = views.queries.served_profiles
+    real = views.queries.mention_contexts
 
     def counting(conn: Any, doc_hashes: list[str], **kw: Any) -> dict[str, Any]:
         calls.append(list(doc_hashes))
         return real(conn, doc_hashes, **kw)
 
-    monkeypatch.setattr(views.queries, "served_profiles", counting)
+    monkeypatch.setattr(views.queries, "mention_contexts", counting)
     rows = views.claims_view(pg, settings, mention="CPA", limit=1).rows()
     assert len(rows) == 1  # the page, bounded; two rows exist for this mention
     assert calls == [[dh]]  # one call, one hash, no second pass

@@ -196,9 +196,14 @@ def test_rebuild_settles_validator_17_attempts_under_the_current_policy(
     pg: Conn, store: ArchiveStore  # noqa: F811
 ) -> None:
     """The re-settle campaign, without one extraction call: a validator-17
-    attempt replays under validator 18, its candidate re-derives identically, and
+    attempt replays under validator 20, its candidate re-derives identically, and
     the audit the archive already holds — joined by the CANDIDATE HASH it names,
-    never by an attempt key — is the verdict it settles with."""
+    never by an attempt key — is the verdict it settles with.
+
+    This is the FROZEN `(demand-profile/v10, 2)` partition — the shape the whole
+    archived corpus is in — so the attempt, its record and its raw response are
+    all schema 2, and `get_bundle_for_tuple` is what has to find the judge.
+    """
     from datetime import UTC, datetime
 
     from jobhunter.archive import keys
@@ -209,17 +214,18 @@ def test_rebuild_settles_validator_17_attempts_under_the_current_policy(
 
     markdown = v2.source("C04")
     dh = v2.seed_case(pg, "C04")
-    record = assemble(v2.emit_of("C04"), markdown, document_hash=dh,
-                      observed_model=v2.MODEL, at="2026-09-12T06:12:04Z")
+    record = assemble(v2.emit2_of("C04"), markdown, document_hash=dh,
+                      observed_model=v2.MODEL, at="2026-09-12T06:12:04Z",
+                      schema_version="2")
     # the candidate as validator 17 sealed it, hash and all
     record["extraction"]["validator_version"] = "17"
     record["extraction"]["candidate_hash"] = candidate_hash(record)
     started = datetime(2026, 9, 12, 6, 12, 4, tzinfo=UTC)
     attempt = _attempt(
         attempt_key=keys.x_attempt_key(started, dh, 1, 1), document_hash=dh,
-        prompt_version=v2.V2_TUPLE[0], schema_version="2", validator_version="17",
+        prompt_version=v2.V2_SCHEMA2_TUPLE[0], schema_version="2", validator_version="17",
         requested_model=v2.MODEL, observed_model=v2.MODEL, record=record,
-        raw_response=json.dumps(v2.emit_of("C04")),
+        raw_response=json.dumps(v2.emit2_of("C04")),
         started_at="2026-09-12T06:12:04Z", finished_at="2026-09-12T06:12:09Z",
     )
     store.put(attempt.attempt_key, to_bytes(attempt))
@@ -232,12 +238,14 @@ def test_rebuild_settles_validator_17_attempts_under_the_current_policy(
     row = pg.execute("SELECT * FROM extractions").fetchone()
     assert row is not None
     assert (row["prompt_version"], row["schema_version"], row["validator_version"]) \
-        == v2.V2_TUPLE
+        == v2.V2_SCHEMA2_TUPLE
     assert row["status"] == "validated" and row["chosen_attempt"] == attempt.attempt_key
     quality = row["profile"]["quality"]
     assert (quality["semantics"], quality["completeness"]) == ("no_findings", "no_findings")
     assert quality["search_eligible"] is True  # the carried audit is what clears it
-    assert v2.mention_rows_in(pg) == v2.C04_ROWS
+    # a schema-2 record still carries the statement's verdict, and replay must
+    # project the shape it replayed, not the shape the live path writes today
+    assert v2.mention_rows_in(pg) == v2.C04_ROWS_V2
     prov = pg.execute("SELECT validator_version FROM extraction_attempts").fetchone()
     assert prov is not None and prov["validator_version"] == "17"  # provenance untouched
 
@@ -248,7 +256,10 @@ def test_rebuild_drops_an_audit_that_does_not_describe_the_replayed_candidate(
     """The join is the candidate hash, and that is what makes it safe: when
     today's validators re-judge an archived response into a DIFFERENT candidate,
     the audit of the old one is not the new one's verdict. A record nothing
-    audited is `not_checked`, never a pass — and never eligible."""
+    audited is `not_checked`, never a pass — and never eligible.
+
+    Driven on the frozen schema-2 partition, like the replay above.
+    """
     from datetime import UTC, datetime
 
     from jobhunter.archive import keys
@@ -259,16 +270,17 @@ def test_rebuild_drops_an_audit_that_does_not_describe_the_replayed_candidate(
 
     markdown = v2.source("C04")
     dh = v2.seed_case(pg, "C04")
-    audited = assemble(v2.emit_of("C04"), markdown, document_hash=dh,
-                       observed_model=v2.MODEL, at="2026-09-12T06:12:04Z")
+    audited = assemble(v2.emit2_of("C04"), markdown, document_hash=dh,
+                       observed_model=v2.MODEL, at="2026-09-12T06:12:04Z",
+                       schema_version="2")
     started = datetime(2026, 9, 12, 6, 12, 4, tzinfo=UTC)
     attempt = _attempt(
         attempt_key=keys.x_attempt_key(started, dh, 1, 1), document_hash=dh,
-        prompt_version=v2.V2_TUPLE[0], schema_version="2",
-        validator_version=v2.V2_TUPLE[2],
+        prompt_version=v2.V2_SCHEMA2_TUPLE[0], schema_version="2",
+        validator_version=v2.V2_SCHEMA2_TUPLE[2],
         requested_model=v2.MODEL, observed_model=v2.MODEL, record=audited,
         # what the re-judge produces is not what was audited
-        raw_response=json.dumps(v2.polarity_split_c04()),
+        raw_response=json.dumps(v2.polarity_split_c04_v2()),
         started_at="2026-09-12T06:12:04Z", finished_at="2026-09-12T06:12:09Z",
     )
     store.put(attempt.attempt_key, to_bytes(attempt))

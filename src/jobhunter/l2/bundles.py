@@ -23,13 +23,17 @@ which is what lets a mixed archive fold correctly.
 
 Registering a bundle is the only way to make it selectable; `config.py` refuses
 a name the registry does not carry, so a typo in the environment fails at
-startup rather than at the first document.
+startup rather than at the first document. A tuple a bump retires keeps a
+FROZEN registration instead (`_FROZEN`): resolvable by tuple for replay, not
+by name for a run, because the documents already extracted under it have to
+keep folding under the shapes that judged them.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from jobhunter.l2.assemble import AssembleError
@@ -50,9 +54,13 @@ from jobhunter.l2.v2.audit import render as _v2_audit_render
 from jobhunter.l2.v2.emit_guard import engine_emit_schema as _v2_engine_emit_schema
 from jobhunter.l2.v2.facts import VALIDATOR_VERSION as _V2_VALIDATOR_VERSION
 from jobhunter.l2.v2.prompt import PROMPT_VERSION as _V2_PROMPT_VERSION
+from jobhunter.l2.v2.prompt import PROMPT_VERSION_V10 as _V2_PROMPT_VERSION_V10
 from jobhunter.l2.v2.prompt import TEMPLATE as _V2_TEMPLATE
+from jobhunter.l2.v2.prompt import TEMPLATE_V10 as _V2_TEMPLATE_V10
 from jobhunter.l2.v2.prompt import prompt_sha as _v2_prompt_sha
+from jobhunter.l2.v2.prompt import prompt_sha_v10 as _v2_prompt_sha_v10
 from jobhunter.l2.v2.prompt import render as _v2_render
+from jobhunter.l2.v2.prompt import render_v10 as _v2_render_v10
 from jobhunter.l2.v2.verify import verify as _verify_v2
 from jobhunter.l2.verify import verify as _verify_v1
 from jobhunter.store.extraction import split_mention
@@ -89,8 +97,9 @@ class Bundle:
     profile_of: Callable[[dict[str, Any]], dict[str, Any]]
     mention_rows: Callable[[dict[str, Any]], list[tuple[str, str, str]]]
     # (mention, area_kind, importance)
-    # engine-facing emit schema, when tighter than the stored contract (the
-    # v2 kind-importance union); None means emit_schema(schema_version).
+    # engine-facing emit schema, when tighter than the stored contract (under
+    # schema 2, the kind-importance union); None means
+    # emit_schema(schema_version).
     engine_emit_schema: Callable[[], dict[str, Any]] | None = None
     # how a verify Finding renders into a retry error string; None means the
     # bare v1 form "check:code at path" (frozen v1 attempt bytes depend on it).
@@ -179,8 +188,9 @@ def _v2_render_finding(f: Finding) -> str:
     return f"{f.check}:{f.code} at {f.path}{tail}"
 
 
-def _v2_assemble(emit: dict[str, Any], markdown: str, **kwargs: Any) -> dict[str, Any]:
-    """`l2.v2.assemble` behind the runner's failure vocabulary.
+def _v2_assemble_at(schema_version: str) -> Callable[..., dict[str, Any]]:
+    """`l2.v2.assemble` at ONE schema version, behind the runner's failure
+    vocabulary.
 
     The keyword shape already matches (`document_hash`, `observed_model`, `at`,
     `normalizer_version`); what does not match is the exception. Each contract
@@ -188,54 +198,111 @@ def _v2_assemble(emit: dict[str, Any], markdown: str, **kwargs: Any) -> dict[str
     `attribution_failed` and to feed `.errors` into the next prompt. Re-raising
     v2's as v1's here keeps that decision in one place instead of teaching the
     loop a second exception per bundle — the whole point of the abstraction.
+
+    The schema version is bound here rather than defaulted in `assemble`,
+    because the record shape is the BUNDLE's choice: a tuple that archives
+    attempts keyed "3" and assembles schema-2 records would key a corpus
+    partition by a shape it does not hold.
     """
-    try:
-        return _assemble_v2(emit, markdown, **kwargs)
-    except _V2AssembleError as exc:
-        raise AssembleError(exc.errors) from exc
+
+    def assemble(emit: dict[str, Any], markdown: str, **kwargs: Any) -> dict[str, Any]:
+        kwargs.setdefault("schema_version", schema_version)
+        try:
+            return _assemble_v2(emit, markdown, **kwargs)
+        except _V2AssembleError as exc:
+            raise AssembleError(exc.errors) from exc
+
+    return assemble
 
 
-_V2 = Bundle(
-    name="v2",
+def _v2_verify_at(schema_version: str) -> Callable[[dict[str, Any], str], Report]:
+    """`l2.v2.verify` reading records at this bundle's schema version."""
+
+    def verify(record: dict[str, Any], markdown: str) -> Report:
+        return _verify_v2(record, markdown, schema_version=schema_version)
+
+    return verify
+
+
+def _v2_bundle(
+    *,
+    prompt_version: str,
+    template: str,
+    prompt_sha: Callable[[], str],
+    render: Callable[[str, list[str], str | None], str],
+    schema_version: str,
+) -> Bundle:
+    """One v2-family registration: same six functions, one prompt and one
+    record shape. Only the prompt and the schema differ between the active
+    tuple and the frozen one, so they are built from the same call — a
+    hand-copied second `Bundle(...)` is how a replay tuple silently acquires a
+    different judge from the one that wrote it.
+    """
+    return Bundle(
+        name="v2",
+        prompt_version=prompt_version,
+        schema_version=schema_version,
+        validator_version=_V2_VALIDATOR_VERSION,
+        template=template,
+        prompt_sha=prompt_sha,
+        render=render,
+        assemble=_v2_assemble_at(schema_version),
+        verify=_v2_verify_at(schema_version),
+        profile_of=_v2_serve.profile_of,
+        mention_rows=_v2_serve.mention_rows,
+        engine_emit_schema=partial(_v2_engine_emit_schema, schema_version),
+        render_finding=_v2_render_finding,
+        audit_version=_V2_AUDIT_VERSION,
+        # 17 -> 18 changed settlement (dispute-set adjudication) only; assembly,
+        # binding and the emit contract are byte-identical, so 17 attempts fold.
+        # 18 -> 19 DOES change derivation and the check table. Only rebuild.py
+        # re-judges (it re-assembles and re-verifies the archived raw emit, so a
+        # unit-anchor emit lands at whatever 19 makes of it); the LIVE fold
+        # serves attempt rows and records exactly as archived — an already-
+        # extracted document keeps its 18-derived values until a replay, which is
+        # why Task 6 measures by replay, never by the live path. Dropping 18 here
+        # would strand those documents mid-ladder instead — the 2026-09-14
+        # stranded-repair defect this field exists for.
+        # 19 -> 20 is the same settlement shape, and the whole live corpus sits
+        # at 19: leaving it out is not a smaller change than adding it — it
+        # silently no-ops every live settle of every already-extracted document.
+        compat_validators=("17", "18", "19"),
+        audit_render=_v2_audit_render,
+        audit_emit_schema=_v2_audit_emit_schema,
+        audit_judge=_v2_audit_judge,
+        # stays at the field default 0.80: the 2026-09-11 analysis showed the
+        # borderline-F1 review cases include real polarity conflicts, and
+        # recalibration without adjudicated examples only relabels the queue
+    )
+
+
+#: the tuple a v2 run extracts under (parsing contract v3): statements carry a
+#: code-derived heading and a quoted modal phrase instead of verdicts.
+_V2 = _v2_bundle(
     prompt_version=_V2_PROMPT_VERSION,
-    schema_version="2",
-    validator_version=_V2_VALIDATOR_VERSION,
     template=_V2_TEMPLATE,
     prompt_sha=_v2_prompt_sha,
     render=_v2_render,
-    assemble=_v2_assemble,
-    verify=_verify_v2,
-    profile_of=_v2_serve.profile_of,
-    mention_rows=_v2_serve.mention_rows,
-    engine_emit_schema=_v2_engine_emit_schema,
-    render_finding=_v2_render_finding,
-    audit_version=_V2_AUDIT_VERSION,
-    # 17 -> 18 changed settlement (dispute-set adjudication) only; assembly,
-    # binding and the emit contract are byte-identical, so 17 attempts fold.
-    # 18 -> 19 DOES change derivation and the check table. Only rebuild.py
-    # re-judges (it re-assembles and re-verifies the archived raw emit, so a
-    # unit-anchor emit lands at whatever 19 makes of it); the LIVE fold
-    # serves attempt rows and records exactly as archived — an already-
-    # extracted document keeps its 18-derived values until a replay, which is
-    # why Task 6 measures by replay, never by the live path. Dropping 18 here
-    # would strand those documents mid-ladder instead — the 2026-09-14
-    # stranded-repair defect this field exists for.
-    # 19 -> 20 is the same shape and the whole live corpus sits at 19: the
-    # bump is the statement shape under SCHEMA 3 (parsing contract v3 §2.1),
-    # and this registration is still schema 2, so a 19 attempt's archived
-    # record is exactly what 20 serves it as. Leaving 19 out here is not a
-    # smaller change than adding it — it silently no-ops every live settle of
-    # every already-extracted document.
-    compat_validators=("17", "18", "19"),
-    audit_render=_v2_audit_render,
-    audit_emit_schema=_v2_audit_emit_schema,
-    audit_judge=_v2_audit_judge,
-    # stays at the field default 0.80: the 2026-09-11 analysis showed the
-    # borderline-F1 review cases include real importance/polarity conflicts,
-    # and recalibration without adjudicated examples only relabels the queue
+    schema_version="3",
+)
+
+#: Frozen, replay-only: the tuple the archived v2 corpus was extracted and
+#: judged under. It is not in `_REGISTRY`, so no run can select it by name;
+#: `get_bundle_for_tuple` resolves it, which is all a fold over archived
+#: attempts needs. Retiring a prompt does not retire the attempts written under
+#: it, and a tuple that stops resolving folds under the wrong shapes or under
+#: none at all (the 2026-09-14 stranding defect).
+_V2_SCHEMA2 = _v2_bundle(
+    prompt_version=_V2_PROMPT_VERSION_V10,
+    template=_V2_TEMPLATE_V10,
+    prompt_sha=_v2_prompt_sha_v10,
+    render=_v2_render_v10,
+    schema_version="2",
 )
 
 _REGISTRY: dict[str, Bundle] = {_V1.name: _V1, _V2.name: _V2}
+#: registrations replay may resolve but nothing may select (see `_V2_SCHEMA2`)
+_FROZEN: tuple[Bundle, ...] = (_V2_SCHEMA2,)
 
 
 def registered() -> tuple[str, ...]:
@@ -257,15 +324,27 @@ def get_bundle(name: str) -> Bundle:
 def get_bundle_for_tuple(prompt_version: str, schema_version: str) -> Bundle:
     """The bundle that owns an archived attempt's `(prompt_version, schema_version)`.
 
-    Replay's inverse of `get_bundle`. A tuple no bundle claims — a historical
-    prompt version, or one from a bundle that has since been retired — raises:
-    folding it under today's shapes would relabel history, so the caller decides
-    what to do about it.
+    Replay's inverse of `get_bundle`, over the registered bundles and the
+    frozen ones. An exact tuple wins. Failing that, a FROZEN registration of
+    the same schema wins: a retired prompt (v6..v9, say) still produced a
+    record whose shape is its SCHEMA's, and the frozen registration is the
+    tuple that owns that shape — the alternative is folding a schema-2 record
+    under v1's projections, which raised KeyError('demand_profile') on the
+    first mixed-archive catch-up. The fallback deliberately reaches frozen
+    registrations only: an ACTIVE bundle claiming every unknown tuple at its
+    schema would relabel history under a prompt it never saw.
+
+    A tuple nothing claims raises, so the caller decides what to do about it.
     """
-    for bundle in _REGISTRY.values():
+    for bundle in (*_REGISTRY.values(), *_FROZEN):
         if (bundle.prompt_version, bundle.schema_version) == (prompt_version, schema_version):
             return bundle
-    known = ", ".join(f"{b.prompt_version}/{b.schema_version}" for b in _REGISTRY.values())
+    for bundle in _FROZEN:
+        if bundle.schema_version == schema_version:
+            return bundle
+    known = ", ".join(
+        f"{b.prompt_version}/{b.schema_version}" for b in (*_REGISTRY.values(), *_FROZEN)
+    )
     raise KeyError(
         f"no extraction bundle claims ({prompt_version!r}, {schema_version!r}); "
         f"registered tuples: {known}"
