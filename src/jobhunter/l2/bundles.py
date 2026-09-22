@@ -113,6 +113,28 @@ class Bundle:
     # live settle of a replayed document reads zero attempts and no-ops —
     # the 2026-09-14 stranded-repair defect (2,001 docs).
     compat_validators: tuple[str, ...] = ()
+    # RETIRED `(prompt_version, schema_version)` tuples whose archived attempts
+    # this one ADOPTS, and the derivation that brings their records forward.
+    #
+    # `compat_validators` one axis wider, and for the same reason: a fold reads
+    # `extraction_attempts` scoped to its own tuple, so a partition with no
+    # attempt rows is a partition no fold can move. A SCHEMA bump leaves exactly
+    # that behind — the migrated rows are derived offline by `l2/rebuild` and
+    # filed under this tuple, while their attempts keep the archived identity
+    # they were written with and CANNOT be re-filed under a second one
+    # (`extraction_attempts.attempt_key` is the archive key and the primary key
+    # at once). Without this the migrated corpus would be a dead projection: no
+    # live settle, no re-audit, no human review could ever reach it.
+    #
+    # A FALLBACK, never a union — a document actually extracted under this tuple
+    # is that extraction, and the migration it superseded is history. `adopt` is
+    # what the compat case does not need: the archived record is of the retired
+    # SHAPE, so it is derived forward on read, by the same function the replay
+    # derives it with, and a record it refuses contributes none.
+    migrated_from: tuple[tuple[str, str], ...] = ()
+    # (archived record, its document's markdown) -> this tuple's record shape.
+    # Raises the migration's own refusal for a record it will not derive.
+    adopt: Callable[[dict[str, Any], str], dict[str, Any]] | None = None
     # --- the semantic audit phase (spec §4 Auditor) -------------------------
     # `audit_version is None` means this tuple has NO audit phase: the runner
     # skips it and settlement folds without an audit probe, which is v1's
@@ -224,6 +246,21 @@ def _v2_verify_at(schema_version: str) -> Callable[[dict[str, Any], str], Report
     return verify
 
 
+def _v2_adopt(record: dict[str, Any], markdown: str) -> dict[str, Any]:
+    """A schema-2 v2 record, read as the schema-3 record the migration derives.
+
+    The live path's half of the v20 migration, and deliberately the SAME
+    function `l2/rebuild.derive_schema3` calls: a migrated row is re-folded by
+    the drain (re-audit, repair, a human ruling) and by the replay, and the two
+    must reach byte-identical candidates or the row's hash — what every audit
+    and repair artifact is keyed by — would depend on which one folded it last.
+    """
+    from jobhunter.l2.v2.migrate import record3_of
+    from jobhunter.l2.v2.source import annotate
+
+    return record3_of(record, annotate(markdown))
+
+
 def _v2_bundle(
     *,
     prompt_version: str,
@@ -231,6 +268,7 @@ def _v2_bundle(
     prompt_sha: Callable[[], str],
     render: Callable[[str, list[str], str | None], str],
     schema_version: str,
+    migrated_from: tuple[tuple[str, str], ...] = (),
 ) -> Bundle:
     """One v2-family registration: same six functions, one prompt and one
     record shape. Only the prompt and the schema differ between the active
@@ -267,6 +305,8 @@ def _v2_bundle(
         # at 19: leaving it out is not a smaller change than adding it — it
         # silently no-ops every live settle of every already-extracted document.
         compat_validators=("17", "18", "19"),
+        migrated_from=migrated_from,
+        adopt=_v2_adopt if migrated_from else None,
         audit_render=_v2_audit_render,
         audit_emit_schema=_v2_audit_emit_schema,
         audit_judge=_v2_audit_judge,
@@ -284,6 +324,11 @@ _V2 = _v2_bundle(
     prompt_sha=_v2_prompt_sha,
     render=_v2_render,
     schema_version="3",
+    # the v20 migration (`l2/rebuild`): the archived schema-2 corpus's rows are
+    # derived into this partition, so this tuple's folds must be able to read
+    # the attempts behind them — which stay, forever, at the tuple they were
+    # archived under.
+    migrated_from=((_V2_PROMPT_VERSION_V10, "2"),),
 )
 
 #: Frozen, replay-only: the tuple the archived v2 corpus was extracted and
