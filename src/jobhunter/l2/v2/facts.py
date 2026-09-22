@@ -53,7 +53,19 @@ from typing import Any
 # requirement-language tripwire widens to `context` blocks as the warning
 # `context_requirement_language` (shape (b): whole sections dropped as context
 # when their content maps to no statement kind).
-VALIDATOR_VERSION = "19"
+# validator/20: the parser stops issuing verdicts (parsing contract v3 §2.1).
+# Statements under SCHEMA 3 carry no `importance`/`proficiency` — labels the
+# 2026-09-22 review-queue analysis showed one model disagreeing with itself
+# across runs of identical text, and neither was checkable against the
+# source. In their place: `section_heading`, derived by code from the block
+# structure (`source.heading_of`) and re-derived in verification like any
+# other code-owned field, and `modality_evidence`, the posting's own modal
+# phrase quoted and bound through `source.resolve` as `evidence` is. The
+# derivation grammars below are UNCHANGED from 19; what changed is the
+# statement shape and the checks that read it, which is why the identifier
+# moves. Schema 2 records still verify under this module's schema-2 branch,
+# byte-identical to 19's behaviour.
+VALIDATOR_VERSION = "20"
 
 _CMP_PHRASES: list[tuple[str, str]] = [
     (r"at\s+least|a\s+minimum\s+of|minimum\s+of|minimum|no\s+less\s+than", "gte"),

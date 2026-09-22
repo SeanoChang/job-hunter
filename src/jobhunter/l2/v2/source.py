@@ -9,12 +9,85 @@ fabricated quote would walk through).
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from jobhunter.l2.quotes import find_occurrences
 from jobhunter.l2.v2.types import Block
 
 ANNOTATION_VERSION = "blocks/1"
+
+# --- the heading predicate (parsing contract v3 §2.1) ----------------------
+# A statement's section is block structure the document already carries, so
+# code derives it and the model never emits one: a model's copy of a heading
+# would be one more claim needing verification, for information the annotation
+# already holds. Two shapes cover what postings actually use — an ATX line and
+# a line that is nothing but bold text. Matching is against the block's own
+# bytes, unstripped, which is exactly what keeps "- **Bonus:** Rust" a bullet.
+_ATX_HEADING = re.compile(r"^#{1,6}\s+\S")
+_BOLD_HEADING = re.compile(r"^\*\*([^*\n]{1,80})\*\*:?\s*$")
+_ATX_OPENING = re.compile(r"^#{1,6}\s+")
+_ATX_CLOSING = re.compile(r"\s+#+\s*$")  # whitespace-anchored: "Learn C#" keeps its #
+# emphasis runs, longest first so "**x**" unwraps as bold, not as two italics
+_EMPHASIS_RUNS = ("**", "__", "*", "_")
+
+
+def is_heading(text: str) -> bool:
+    """True when this block's text is a heading under the v3 predicate."""
+    return bool(_ATX_HEADING.match(text) or _BOLD_HEADING.match(text))
+
+
+def _unwrap_emphasis(label: str) -> str:
+    """One emphasis run removed when it wraps the WHOLE label, else the label.
+
+    `## **Requirements**` and `**Requirements**` name the same section, so they
+    must derive the same label — bold-ATX is how most of the recorded corpus
+    spells its headings, and leaving the markers in would give one section two
+    code-owned names depending on incidental markup. The run has to wrap
+    everything and enclose no marker of its own: in `**Required** or
+    **Preferred**` the markers are content, and stripping the outermost pair
+    would mangle the label rather than clean it.
+    """
+    for mark in _EMPHASIS_RUNS:
+        inner = label[len(mark):-len(mark)]
+        if (len(label) > 2 * len(mark) and label.startswith(mark)
+                and label.endswith(mark) and mark not in inner):
+            return inner.strip()
+    return label
+
+
+def _heading_text(text: str) -> str:
+    """A heading block's label: its syntax marks and trailing colon removed.
+
+    Every spelling of a heading's colon — after the ATX run, inside a bold
+    run, after it — is punctuation, not part of the label, so the trim runs on
+    both sides of the unwrap.
+    """
+    label = _ATX_CLOSING.sub("", _ATX_OPENING.sub("", text.strip()))
+    label = _unwrap_emphasis(label.removesuffix(":").strip())
+    return label.removesuffix(":").strip()
+
+
+def heading_of(blocks: list[Block], block_id: str) -> str | None:
+    """The label of the heading `block_id` sits under, or None.
+
+    Scans document order and keeps the last heading seen at or before the
+    block. `at or before` is the one refinement on "nearest preceding": a
+    heading opens the section it names, so a block that IS a heading answers
+    with its own text — the heading above it belongs to the section this one
+    ends, and naming it would file the block under the wrong section. A block
+    with no heading above it, and an id no block carries, both answer None:
+    null over guess.
+    """
+    heading: str | None = None
+    for block in blocks:
+        if is_heading(block.text):
+            # a heading whose label is pure punctuation ("**:**") names no
+            # section: null over an empty string
+            heading = _heading_text(block.text) or None
+        if block.id == block_id:
+            return heading
+    return None
 
 
 class RefBindError(Exception):

@@ -1,16 +1,14 @@
 import pytest
 
-from jobhunter.l2.v2.facts import VALIDATOR_VERSION, derive_quantity
+from jobhunter.l2.v2.facts import derive_quantity
+
+# the validator identifier and its history are pinned in test_facts.py
 
 
 def q(dimension, comparison, lo, hi, inc_lo, inc_hi, unit):
     return {"dimension": dimension, "comparison": comparison, "min_value": lo,
             "max_value": hi, "inclusive_min": inc_lo, "inclusive_max": inc_hi,
             "unit": unit}
-
-
-def test_validator_version_is_19() -> None:
-    assert VALIDATOR_VERSION == "19"
 
 
 @pytest.mark.parametrize(

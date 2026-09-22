@@ -1,5 +1,8 @@
 """Schema bundle 2 loads through the existing version-parameterized loader."""
 
+from importlib import resources
+
+from jobhunter.hashing import sha256_hex
 from jobhunter.l2.schemas import (
     emit_schema,
     normalize_emit,
@@ -7,6 +10,22 @@ from jobhunter.l2.schemas import (
     strict_schema,
     validate_emit,
 )
+
+#: schema 2's bytes as shipped. A frozen identifier bumps — schema 3 is a new
+#: directory — and never changes underneath the corpus keyed to it: every
+#: archived schema-2 record was judged against exactly these bytes.
+SCHEMA_2_SHA256 = {
+    "emit.schema.json": "5c10cad2f747e23d541d768d3e54e36a9ad406a711120a646c5e236ea99ecd9d",
+    "record.schema.json": "ac51b7ab5f73773463d435abbea76b99cb79a51223a3f866b4f5ec15ba205228",
+}
+
+
+def test_schema_2_bytes_are_frozen() -> None:
+    root = resources.files("jobhunter.l2.schemas_data") / "2"
+    actual = {
+        name: sha256_hex((root / name).read_bytes()) for name in sorted(SCHEMA_2_SHA256)
+    }
+    assert actual == SCHEMA_2_SHA256
 
 MINIMAL_EMIT: dict[str, object] = {
     "source_assessment": {"usability": "usable", "evidence": None, "note": None},

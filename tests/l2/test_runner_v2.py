@@ -67,7 +67,7 @@ Conn = psycopg.Connection[dict[str, Any]]
 CASES = pathlib.Path(__file__).parent / "v2" / "cases"
 GLOBS = ("z-ai/*",)
 MODEL = "z-ai/glm-5.2:free"
-V2_TUPLE = ("demand-profile/v10", "2", "19")
+V2_TUPLE = ("demand-profile/v10", "2", "20")
 # C04's three certifications, as `profile_mentions` rows once an audit clears
 # the record: the importance is the linked STATEMENT's, not the area's.
 C04_ROWS = [
@@ -1983,23 +1983,56 @@ def test_every_phase_artifact_is_archived_before_the_extractions_row(
 
 
 
+@pytest.mark.parametrize("archived", get_bundle("v2").compat_validators)
 def test_live_settle_folds_attempts_from_compat_validators(
-    pg: Conn, store: ArchiveStore  # noqa: F811
+    archived: str, pg: Conn, store: ArchiveStore  # noqa: F811
 ) -> None:
     """The rebuild replays archived validator-17 attempts under 18 but keeps
     the attempt rows at their archived identity; the live fold must read those
     compat attempts or every later settle of a replayed doc is a silent no-op
     (found live 2026-09-14: 2,001 docs stranded — repair artifacts archived,
     rows frozen at their pre-repair content, updated_at still the rebuild's).
+
+    Parametrised over the WHOLE field rather than one pinned version: a compat
+    entry the suite never exercises is the same stranding with a newer number
+    on it.
     """
     dh = seed_case(pg, "C01")
     run(v2_settings(), pg, store, engine=AuditingEngine([result(emit_of("C01"))], clean_audit),
         max_docs=10, max_usd=5.0)
-    # the replayed-corpus shape: attempts at the archived tuple, row at 18
-    pg.execute("UPDATE extraction_attempts SET validator_version='17' WHERE document_hash=%s",
-               (dh,))
+    # the replayed-corpus shape: attempts at the archived tuple, row at active
+    pg.execute("UPDATE extraction_attempts SET validator_version=%s WHERE document_hash=%s",
+               (archived, dh))
     pg.commit()
     state = settle(pg, store, dh, GLOBS, "2026-09-14T09:00:00Z", bundle=get_bundle("v2"))
+    assert state.status == "validated"
+
+
+def test_the_validator_below_the_active_one_folds_under_it(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """A document extracted under validator N-1 must still settle at N.
+
+    The bump itself is what strands a corpus: every attempt row already
+    archived carries the OLD validator, and the live fold reads only the
+    active version plus `compat_validators`. This is the test the 19 -> 20
+    bump needed and did not have — the field said ("17", "18") while the whole
+    live corpus sat at 19, so every live settle folded zero attempts and
+    no-oped, exactly the 2026-09-14 stranding shape one bump later.
+    """
+    active = get_bundle("v2")
+    previous = str(int(active.validator_version) - 1)
+    assert previous in active.compat_validators, (
+        f"validator {active.validator_version} does not fold {previous}: every "
+        "document extracted under the previous validator is stranded mid-ladder"
+    )
+    dh = seed_case(pg, "C01")
+    run(v2_settings(), pg, store, engine=AuditingEngine([result(emit_of("C01"))], clean_audit),
+        max_docs=10, max_usd=5.0)
+    pg.execute("UPDATE extraction_attempts SET validator_version=%s WHERE document_hash=%s",
+               (previous, dh))
+    pg.commit()
+    state = settle(pg, store, dh, GLOBS, "2026-09-22T09:00:00Z", bundle=active)
     assert state.status == "validated"
 
 

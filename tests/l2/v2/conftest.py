@@ -172,6 +172,42 @@ def v2_record() -> dict[str, Any]:
     return make_record()
 
 
+# --- schema 3: headings in, verdicts out (parsing contract v3 §2.1) --------
+
+S3_MD = "## Requirements\nA minimum of 8 years of experience in sales.\n"
+S3_DOC_HASH = sha256_hex(S3_MD.encode("utf-8"))
+
+
+def make_s3_emit() -> dict[str, Any]:
+    """`make_emit()`'s document under the schema-3 statement shape.
+
+    The same two blocks, with the section marked up as a real ATX heading so
+    assembly has one to derive: b000001 "## Requirements" / b000002 the
+    requirement line. The statement drops `importance`/`proficiency` and their
+    evidence and quotes the posting's own modal phrase instead.
+    """
+    emit = make_emit()
+    for statement in emit["statements"]:
+        for verdict in ("importance", "importance_evidence",
+                        "proficiency", "proficiency_evidence"):
+            statement.pop(verdict)
+        statement["modality_evidence"] = [
+            {"block_id": "b000002", "text": "A minimum of", "occurrence": 0}
+        ]
+    return emit
+
+
+def make_s3_record() -> dict[str, Any]:
+    return assemble(make_s3_emit(), S3_MD, document_hash=S3_DOC_HASH,
+                    observed_model="gpt-5.6-luna", at=AT, schema_version="3")
+
+
+@pytest.fixture
+def v3_record() -> dict[str, Any]:
+    """A clean schema-3 record: `section_heading` derived, modality quoted."""
+    return make_s3_record()
+
+
 # --- the C02/C07 English-footer shape --------------------------------------
 
 FOOTER_MD = (

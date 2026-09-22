@@ -26,6 +26,7 @@ from jobhunter.l2.v2.source import (
     RefBindError,
     annotate,
     blocks_by_id,
+    heading_of,
     resolve,
 )
 from jobhunter.l2.v2.types import Block
@@ -173,30 +174,55 @@ def _derive(family: Any, evidence: dict[str, Any]) -> dict[str, Any]:
     return {"state": state, "quantity": None, "money": None, "date": date}
 
 
-def _statement(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, Any]:
+def section_heading(blocks: list[Block], evidence: list[dict[str, Any]]) -> str | None:
+    """The heading a statement sits under, from its FIRST bound evidence span.
+
+    Code owns this (parsing contract v3 §2.1): the annotation already carries
+    the document's structure, so a statement's section is derived, never read
+    off the emit. A statement whose evidence bound nowhere has no span to
+    stand on and gets null.
+    """
+    if not evidence:
+        return None
+    return heading_of(blocks, str(evidence[0]["block_id"]))
+
+
+def _statement(binder: _Binder, index: int, node: dict[str, Any], *,
+               schema_version: str, blocks: list[Block]) -> dict[str, Any]:
     path = f"statements[{index}]"
-    return {
+    bound_evidence = binder.refs(f"{path}.evidence", node.get("evidence"))
+    statement: dict[str, Any] = {
         "id": node.get("id"),
         "kind": node.get("kind"),
         "subject": node.get("subject"),
         "topic": node.get("topic"),
-        "evidence": binder.refs(f"{path}.evidence", node.get("evidence")),
-        "importance": node.get("importance"),
-        "importance_evidence": binder.field(path, node, "importance_evidence"),
-        "polarity": node.get("polarity"),
-        "polarity_evidence": binder.field(path, node, "polarity_evidence"),
-        "proficiency": node.get("proficiency"),
-        "proficiency_evidence": binder.field(path, node, "proficiency_evidence"),
-        "condition_ids": list(node.get("condition_ids") or []),
-        "fact_ids": list(node.get("fact_ids") or []),
-        "unresolved": [
-            {
-                "reason": issue.get("reason"),
-                "evidence": binder.refs(f"{path}.unresolved[{j}].evidence", issue.get("evidence")),
-            }
-            for j, issue in enumerate(node.get("unresolved") or [])
-        ],
+        "evidence": bound_evidence,
     }
+    # binding order is the order errors are collected in, so each family binds
+    # where its field sits in the shape
+    if schema_version == "2":
+        statement["importance"] = node.get("importance")
+        statement["importance_evidence"] = binder.field(path, node, "importance_evidence")
+    else:
+        # schema 3: the verdicts are gone and objective context takes their
+        # place — one code-owned heading, one quoted modal phrase
+        statement["section_heading"] = section_heading(blocks, bound_evidence)
+        statement["modality_evidence"] = binder.field(path, node, "modality_evidence")
+    statement["polarity"] = node.get("polarity")
+    statement["polarity_evidence"] = binder.field(path, node, "polarity_evidence")
+    if schema_version == "2":
+        statement["proficiency"] = node.get("proficiency")
+        statement["proficiency_evidence"] = binder.field(path, node, "proficiency_evidence")
+    statement["condition_ids"] = list(node.get("condition_ids") or [])
+    statement["fact_ids"] = list(node.get("fact_ids") or [])
+    statement["unresolved"] = [
+        {
+            "reason": issue.get("reason"),
+            "evidence": binder.refs(f"{path}.unresolved[{j}].evidence", issue.get("evidence")),
+        }
+        for j, issue in enumerate(node.get("unresolved") or [])
+    ]
+    return statement
 
 
 def _group(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, Any]:
@@ -306,12 +332,19 @@ def assemble(
     normalizer_version: str = NORMALIZER_VERSION,
     prompt_version: str = PROMPT_VERSION,
     parent_candidate_hash: str | None = None,
+    schema_version: str = SCHEMA_VERSION,
 ) -> dict[str, Any]:
-    """Bind, derive and seal one emit into a schema-2 record.
+    """Bind, derive and seal one emit into a record of `schema_version`.
+
+    The schema version travels as a parameter for the same reason the prompt
+    version does: the bundle owns the engine tuple, and assembly is one of the
+    six functions it selects. Only the statement shape differs between 2 and
+    3 (parsing contract v3 §2.1); everything else is byte-identical.
 
     Raises AssembleError carrying every binding failure at once.
     """
-    binder = _Binder(blocks_by_id(annotate(markdown)))
+    blocks = annotate(markdown)
+    binder = _Binder(blocks_by_id(blocks))
     # validator/17: emit strings must not smuggle control characters into the
     # record — codex emitted "…at global<NUL>" into a topic (2026-09-12) and
     # the NUL crossed assemble untouched, crashing only at the jsonb boundary
@@ -334,7 +367,8 @@ def assemble(
             "note": assessment.get("note"),
         },
         "statements": [
-            _statement(binder, i, s) for i, s in enumerate(emit.get("statements") or [])
+            _statement(binder, i, s, schema_version=schema_version, blocks=blocks)
+            for i, s in enumerate(emit.get("statements") or [])
         ],
         "relations": {
             "groups": [_group(binder, i, g) for i, g in enumerate(relations.get("groups") or [])],
@@ -361,7 +395,7 @@ def assemble(
         "extraction": {
             "model": observed_model,
             "prompt_version": prompt_version,
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": schema_version,
             "validator_version": VALIDATOR_VERSION,
             "rules_version": RULES_VERSION,
             "at": at,

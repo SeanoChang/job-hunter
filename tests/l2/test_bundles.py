@@ -162,7 +162,7 @@ def test_v2_bundle_is_the_v6_engine_tuple() -> None:
     assert (b.prompt_version, b.schema_version, b.validator_version) == (
         "demand-profile/v10",
         "2",
-        "19",
+        "20",
     )
     assert b.template == prompt_v6.TEMPLATE
     assert b.prompt_sha() == prompt_v6.prompt_sha()
@@ -219,7 +219,7 @@ def test_the_validator_bump_keeps_the_replay_tuple() -> None:
     """Replay keys on (prompt, schema) alone, so 15 -> 16 re-queues the corpus
     under a fresh validator without orphaning the archived v2 attempts."""
     b = get_bundle_for_tuple("demand-profile/v10", "2")
-    assert b is get_bundle("v2") and b.validator_version == "19"
+    assert b is get_bundle("v2") and b.validator_version == "20"
 
 
 def test_get_bundle_for_tuple_maps_both_engine_tuples() -> None:

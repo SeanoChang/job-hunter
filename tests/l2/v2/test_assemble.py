@@ -5,7 +5,16 @@ import pytest
 from jobhunter.hashing import sha256_hex
 from jobhunter.l2.schemas import validate_record
 from jobhunter.l2.v2.assemble import AssembleError, assemble, candidate_hash
-from tests.l2.v2.conftest import AT, DOC_HASH, MD, make_emit
+from tests.l2.v2.conftest import (
+    AT,
+    DOC_HASH,
+    MD,
+    S3_DOC_HASH,
+    S3_MD,
+    make_emit,
+    make_s3_emit,
+    make_s3_record,
+)
 
 # --- validator/19: the unit cited as its own span ---------------------------
 
@@ -82,7 +91,7 @@ def test_assemble_binds_derives_and_validates() -> None:
                                    "inclusive_min": True, "inclusive_max": None,
                                    "unit": "month"}
     assert record["extraction"]["schema_version"] == "2"
-    assert record["extraction"]["validator_version"] == "19"
+    assert record["extraction"]["validator_version"] == "20"
     assert record["document"]["annotation_version"] == "blocks/1"
     assert record["extraction"]["candidate_hash"] == candidate_hash(record)
 
@@ -162,3 +171,73 @@ def test_newlines_and_tabs_in_emitted_strings_stay_legal() -> None:
     emit["statements"][0]["topic"] = "line one\nline\ttwo"
     record = assemble(emit, MD, document_hash=DOC_HASH, observed_model="m", at=AT)
     assert record["statements"][0]["topic"] == "line one\nline\ttwo"
+
+
+# --- schema 3: headings in, verdicts out (parsing contract v3 §2.1) --------
+
+
+def test_schema_3_assembly_writes_the_heading_and_drops_the_verdicts() -> None:
+    record = make_s3_record()
+    assert validate_record(record, "3") == []
+    statement = record["statements"][0]
+    assert statement["section_heading"] == "Requirements"
+    assert not {"importance", "importance_evidence",
+                "proficiency", "proficiency_evidence"} & set(statement)
+    modality = statement["modality_evidence"][0]
+    assert modality["text"] == "A minimum of"
+    assert S3_MD[slice(*modality["span"])] == modality["text"]
+    assert record["extraction"]["schema_version"] == "3"
+    assert record["extraction"]["validator_version"] == "20"
+    assert record["extraction"]["candidate_hash"] == candidate_hash(record)
+
+
+def test_schema_3_section_heading_is_null_when_no_heading_precedes() -> None:
+    # MD's first block is a bare "Requirements" line — a paragraph, not a
+    # heading, so the statement below it sits under nothing
+    record = assemble(make_s3_emit(), MD, document_hash=DOC_HASH,
+                      observed_model="m", at=AT, schema_version="3")
+    assert record["statements"][0]["section_heading"] is None
+
+
+def test_an_emitted_section_heading_is_never_read() -> None:
+    """`section_heading` is code-owned: a model copy is ignored, not trusted
+    (the emit schema rejects it outright — see tests/l2/test_schemas.py)."""
+    emit = make_s3_emit()
+    emit["statements"][0]["section_heading"] = "Benefits"
+    record = assemble(emit, S3_MD, document_hash=S3_DOC_HASH,
+                      observed_model="m", at=AT, schema_version="3")
+    assert record["statements"][0]["section_heading"] == "Requirements"
+
+
+def test_modality_evidence_is_null_when_the_posting_carries_no_modal_phrase() -> None:
+    emit = make_s3_emit()
+    emit["statements"][0]["modality_evidence"] = None
+    record = assemble(emit, S3_MD, document_hash=S3_DOC_HASH,
+                      observed_model="m", at=AT, schema_version="3")
+    assert record["statements"][0]["modality_evidence"] is None
+    assert validate_record(record, "3") == []
+
+
+@pytest.mark.parametrize("field", ["evidence", "modality_evidence"])
+def test_a_miscited_quote_fails_the_same_way_in_either_reference_family(field: str) -> None:
+    """Evidence binding is one mechanism: `modality_evidence` goes through
+    `source.resolve` and reports a mis-cite exactly as `evidence` does."""
+    emit = make_s3_emit()
+    emit["statements"][0][field] = [
+        {"block_id": "b000002", "text": "Ruby", "occurrence": 0}
+    ]
+    with pytest.raises(AssembleError) as exc:
+        assemble(emit, S3_MD, document_hash=S3_DOC_HASH,
+                 observed_model="m", at=AT, schema_version="3")
+    assert exc.value.errors == [
+        f"statements[0].{field}[0]: b000002: not a literal substring: 'Ruby'"
+    ]
+
+
+def test_schema_2_assembly_is_untouched_by_the_schema_3_path() -> None:
+    record = assemble(make_emit(), MD, document_hash=DOC_HASH,
+                      observed_model="gpt-5.6-luna", at=AT)
+    statement = record["statements"][0]
+    assert record["extraction"]["schema_version"] == "2"
+    assert statement["importance"] == "required" and statement["proficiency"] is None
+    assert "section_heading" not in statement and "modality_evidence" not in statement

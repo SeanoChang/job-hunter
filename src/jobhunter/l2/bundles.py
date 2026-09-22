@@ -220,7 +220,13 @@ _V2 = Bundle(
     # why Task 6 measures by replay, never by the live path. Dropping 18 here
     # would strand those documents mid-ladder instead — the 2026-09-14
     # stranded-repair defect this field exists for.
-    compat_validators=("17", "18"),
+    # 19 -> 20 is the same shape and the whole live corpus sits at 19: the
+    # bump is the statement shape under SCHEMA 3 (parsing contract v3 §2.1),
+    # and this registration is still schema 2, so a 19 attempt's archived
+    # record is exactly what 20 serves it as. Leaving 19 out here is not a
+    # smaller change than adding it — it silently no-ops every live settle of
+    # every already-extracted document.
+    compat_validators=("17", "18", "19"),
     audit_render=_v2_audit_render,
     audit_emit_schema=_v2_audit_emit_schema,
     audit_judge=_v2_audit_judge,
