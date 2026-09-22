@@ -1,10 +1,23 @@
+"""The v6..v10 pins, now aimed at the frozen `demand-profile/v10` bytes.
+
+v11 (parsing contract v3) took over the module's active names; v10's template
+stayed behind them, unedited, because the `(demand-profile/v10, "2")` bundle
+still renders it to replay archived attempts. Everything below is that tuple's
+contract — schema 2, importance and proficiency included — and it must keep
+passing exactly as written: a change here is a change to shipped history.
+`tests/l2/v2/test_prompt.py` holds v11's.
+"""
+
 import json
 import re
 
 from jobhunter.hashing import sha256_hex
 from jobhunter.l2.schemas import validate_emit
 from jobhunter.l2.v2.assemble import assemble
-from jobhunter.l2.v2.prompt import PROMPT_VERSION, TEMPLATE, prompt_sha, render
+from jobhunter.l2.v2.prompt import PROMPT_VERSION_V10 as PROMPT_VERSION
+from jobhunter.l2.v2.prompt import TEMPLATE_V10 as TEMPLATE
+from jobhunter.l2.v2.prompt import prompt_sha_v10 as prompt_sha
+from jobhunter.l2.v2.prompt import render_v10 as render
 from jobhunter.l2.v2.source import annotate
 from jobhunter.l2.v2.verify import verify
 
