@@ -209,7 +209,7 @@ def test_v2_registers_the_semantic_audit_phase() -> None:
     from jobhunter.l2.v2 import audit
 
     b = get_bundle("v2")
-    assert b.audit_version == audit.AUDIT_VERSION == "semantic-audit/v3"
+    assert b.audit_version == audit.AUDIT_VERSION == "semantic-audit/v4"
     assert b.audit_render is audit.render
     assert b.audit_emit_schema is audit.emit_schema
     assert b.audit_judge is audit.judge

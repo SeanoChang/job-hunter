@@ -243,13 +243,19 @@ def clean_audit(prompt: str) -> str:
 
 
 def blocking_audit(prompt: str) -> str:
-    """One `importance` finding against the candidate's first statement."""
+    """One blocking semantics finding against the candidate's first statement.
+
+    `unsupported_statement` since semantic-audit/v4: the `importance` code this
+    fixture used left the vocabulary with the field (parsing contract v3 §6),
+    and a finding carrying it is now an audit error rather than a verdict —
+    which is a different test (`test_an_audit_the_judge_refuses_is_an_error`).
+    """
     statement = candidate_in(prompt)["statements"][0]["id"]
     return json.dumps({
         "candidate_hash": candidate_hash_in(prompt),
         "findings": [{
-            "code": "importance", "targets": [statement], "evidence": None,
-            "explanation": "the posting words this as preferred, not required",
+            "code": "unsupported_statement", "targets": [statement], "evidence": None,
+            "explanation": "the cited block does not say what this statement claims",
         }],
         "unresolved": [],
     })
@@ -339,8 +345,8 @@ def refused_audit(prompt: str) -> str:
     """
     return json.dumps({
         "findings": [{
-            "code": "importance", "targets": ["s_no_such_id"], "evidence": None,
-            "explanation": "the posting words this as preferred, not required",
+            "code": "unsupported_statement", "targets": ["s_no_such_id"], "evidence": None,
+            "explanation": "the cited block does not say what this statement claims",
         }],
         "unresolved": [],
     })
@@ -618,7 +624,7 @@ def test_a_blocking_finding_leaves_an_agreeing_record_validated_but_ineligible(
     assert artifact["outcome"] == "ok" and artifact["blocking"] == 1
     finding = artifact["findings"][0]
     # severity and dimension are code-owned; the model emitted neither
-    assert finding["code"] == "importance" and finding["severity"] == "blocking"
+    assert finding["code"] == "unsupported_statement" and finding["severity"] == "blocking"
     assert finding["dimension"] == "semantics"
 
 
@@ -1441,10 +1447,10 @@ def test_the_audit_version_segment_composes_with_the_pass_and_repair_marks() -> 
     at = datetime(2026, 8, 27, 6, 12, 4, tzinfo=UTC)
     attempt = keys.x_attempt_key(at, "9f3ab" + "0" * 59, 1, 2)
     stem = "extractions/audits/2026/08/27T061204Z-9f3ab0000000-s1a2"
-    assert AUDIT_VERSION == "semantic-audit/v3"  # the segment below is its tail
-    assert runner._audit_pass_key(attempt, AUDIT_VERSION, 1) == f"{stem}.a3.json.gz"
-    assert runner._audit_pass_key(attempt, AUDIT_VERSION, 2) == f"{stem}.a3-p2.json.gz"
-    assert runner._repair_audit_key(attempt, AUDIT_VERSION) == f"{stem}.a3-r1.json.gz"
+    assert AUDIT_VERSION == "semantic-audit/v4"  # the segment below is its tail
+    assert runner._audit_pass_key(attempt, AUDIT_VERSION, 1) == f"{stem}.a4.json.gz"
+    assert runner._audit_pass_key(attempt, AUDIT_VERSION, 2) == f"{stem}.a4-p2.json.gz"
+    assert runner._repair_audit_key(attempt, AUDIT_VERSION) == f"{stem}.a4-r1.json.gz"
 
     legacy = keys.LEGACY_AUDIT_VERSION
     assert runner._audit_pass_key(attempt, legacy, 1) == f"{stem}.json.gz"
@@ -1487,10 +1493,13 @@ def test_a_blocking_finding_on_the_dispute_parks_the_cohort_and_asks_for_repair(
 def test_a_blocking_finding_off_the_dispute_adjudicates_and_asks_for_repair(
     pg: Conn, store: ArchiveStore  # noqa: F811
 ) -> None:
-    """validator/18, the scoped half, over the same cohort: an `importance`
-    finding is not the `negation` gate's dimension and names no disputed id, so
-    the disagreement is adjudicated — and the finding goes on gating
-    eligibility, which is the other repair trigger."""
+    """validator/18, the scoped half, over the same cohort: an
+    `unsupported_statement` finding is not the `negation` gate's dimension —
+    that gate maps only `polarity_subject` — and it names no disputed id, so
+    the disagreement is adjudicated. Off-dispute is per gate, not per code:
+    `unsupported_statement` IS on `f1` and `kind`, and this cohort fails
+    neither. The finding goes on gating eligibility, which is the other repair
+    trigger."""
     seed_case(pg, "C04")
     split = polarity_split_c04()
     engine = AuditingEngine(

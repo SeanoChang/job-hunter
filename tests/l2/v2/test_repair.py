@@ -1,8 +1,11 @@
-"""The pure repair contract (`semantic-repair/v1`, spec §4).
+"""The pure repair contract (`semantic-repair/v2`, spec §4).
 
 Every test here is offline: `apply` is a validator over a model emit plus a
 rebuild through `assemble`, so the emits are hand-written and every record
-comes from a real `assemble` call over a real document.
+comes from a real `assemble` call over a real document. Both live record
+shapes are exercised — schema 3, which the contract is written for, and the
+schema-2 candidates the archive still holds until migration reaches them
+(spec §7) — because the shape a repair addresses travels with the record.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ import pytest
 from jobhunter.hashing import sha256_hex
 from jobhunter.l2.schemas import strict_schema
 from jobhunter.l2.v2 import repair
-from jobhunter.l2.v2.assemble import assemble
+from jobhunter.l2.v2.assemble import SCHEMA_VERSION, assemble
 from jobhunter.l2.v2.repair import (
     KINDS,
     OPS,
@@ -59,8 +62,14 @@ def _ref(block_id: str, text: str, occurrence: int = 0) -> dict[str, Any]:
 
 
 def _base_emit() -> dict[str, Any]:
-    """The defective candidate: s2 reads `required` where the source says
-    `preferred` — the `importance` finding the repair round exists to fix."""
+    """The defective candidate: s2's `importance` reads `required` where the
+    source says `preferred`.
+
+    The schema-2 shape, so the wrong value sits in a verdict field parsing
+    contract v3 later removed — which is the point of keeping it: the archive
+    still holds candidates like this, and a repair of one addresses the fields
+    that candidate actually has.
+    """
     return {
         "source_assessment": {"usability": "usable", "evidence": None, "note": None},
         "statements": [
@@ -139,6 +148,73 @@ def record() -> dict[str, Any]:
     return _record()
 
 
+# --- the schema-3 candidate semantic-repair/v2 addresses --------------------
+
+# The same four blocks with the section written as a real ATX heading, so
+# `section_heading` has something to derive and a repair can be watched
+# re-deriving it: b000001 "## Requirements" / b000002 the experience line /
+# b000003 the certification line / b000004 the travel line.
+S3_MD = (
+    "## Requirements\n"
+    "A minimum of 8 years of experience in sales.\n"
+    "Salesforce certification preferred.\n"
+    "Travel up to 20% of the time.\n"
+)
+S3_DOC_HASH = sha256_hex(S3_MD.encode("utf-8"))
+
+
+def _s3_emit() -> dict[str, Any]:
+    """`_base_emit()` under the schema-3 statement shape (contract v3 §2.1).
+
+    The defect moves with the contract: there is no `importance` left to read
+    wrongly, so s2 quotes the wrong words for its modality — "Salesforce" is
+    not the posting's modal phrase, and "preferred", three words along, is.
+    """
+    emit = _base_emit()
+    for statement in emit["statements"]:
+        for verdict in ("importance", "importance_evidence",
+                        "proficiency", "proficiency_evidence"):
+            statement.pop(verdict)
+        statement["modality_evidence"] = None
+    emit["statements"][1]["modality_evidence"] = [_ref("b000003", "Salesforce")]
+    return emit
+
+
+def _s3_record() -> dict[str, Any]:
+    return assemble(_s3_emit(), S3_MD, document_hash=S3_DOC_HASH,
+                    observed_model="gpt-5.6-luna", at=AT, schema_version="3")
+
+
+@pytest.fixture
+def s3_record() -> dict[str, Any]:
+    return _s3_record()
+
+
+def _s3_statement(**over: Any) -> dict[str, Any]:
+    """s2 in the schema-3 emit shape, with whatever this operation changes."""
+    statement: dict[str, Any] = {
+        "id": "s2", "kind": "qualification", "subject": "candidate",
+        "topic": "Salesforce certification", "evidence": [_whole("b000003")],
+        "modality_evidence": [_ref("b000003", "preferred")],
+        "polarity": "positive", "polarity_evidence": None,
+        "condition_ids": [], "fact_ids": [], "unresolved": [],
+    }
+    statement.update(over)
+    return statement
+
+
+def _quoted_s2(record: dict[str, Any], **over: Any) -> dict[str, Any]:
+    """The repaired statement: the modal quote corrected, id and support kept."""
+    return _op(object=_s3_statement(**over),
+               old_object_hash=object_hash(_find(record, "statements", "s2")),
+               evidence=[_ref("b000003", "preferred")])
+
+
+def _s3_apply(record: dict[str, Any], *operations: dict[str, Any]) -> dict[str, Any]:
+    return apply(_emit(record, *operations), record, S3_MD,
+                 record["extraction"]["candidate_hash"])
+
+
 def _find(record: dict[str, Any], collection: str, object_id: str) -> dict[str, Any]:
     node: Any = record
     for key in collection.split("."):
@@ -180,11 +256,11 @@ def _preferred_s2(record: dict[str, Any]) -> dict[str, Any]:
 
 
 FINDINGS = [{
-    "code": "importance", "severity": "blocking", "dimension": "semantics",
+    "code": "unsupported_statement", "severity": "blocking", "dimension": "semantics",
     "targets": ["s2"],
     "evidence": {"block_id": "b000003", "text": "preferred", "occurrence": 0,
                  "span": [58, 67]},
-    "explanation": "the source says preferred; the candidate says required",
+    "explanation": "the quoted modality is not the posting's modal phrase",
 }]
 
 
@@ -192,8 +268,17 @@ FINDINGS = [{
 
 
 def test_version_and_template_sha() -> None:
-    assert REPAIR_VERSION == "semantic-repair/v1"
+    assert REPAIR_VERSION == "semantic-repair/v2"
     assert template_sha() == sha256_hex(TEMPLATE.encode("utf-8"))
+
+
+def test_the_template_names_the_code_derived_heading() -> None:
+    """semantic-repair/v2: the candidate a repairer is shown carries
+    `section_heading` on every statement, and copying it back into a
+    replacement is the one echo this contract refuses instead of stripping —
+    code derives it from the evidence the operation cites, so an object that
+    carries one is proposing a field it does not own."""
+    assert "section_heading" in TEMPLATE
 
 
 def test_spec_repair_text_is_verbatim() -> None:
@@ -230,7 +315,7 @@ def test_render_lists_blocks_the_candidate_and_the_findings(record: dict[str, An
     assert record["extraction"]["candidate_hash"] in out
     findings = json.loads(_section(out, "FINDINGS JSON", "FINDINGS JSON"))
     assert [f["id"] for f in findings] == ["f1"]
-    assert findings[0]["code"] == "importance"
+    assert findings[0]["code"] == "unsupported_statement"
     for placeholder in ("{candidate_hash}", "{source_blocks}", "{candidate_json}",
                         "{findings_json}"):
         assert placeholder not in out
@@ -341,13 +426,39 @@ def test_strict_transform_keeps_the_schema_expressible() -> None:
 
 
 def test_emit_schema_admits_a_real_patch_and_closes_the_kind_enum(
-    record: dict[str, Any],
+    record: dict[str, Any], s3_record: dict[str, Any],
 ) -> None:
-    validator = jsonschema.Draft202012Validator(emit_schema())
-    ok = _emit(record, _preferred_s2(record))
+    validator = jsonschema.Draft202012Validator(emit_schema("3"))
+    ok = _emit(s3_record, _quoted_s2(s3_record))
     assert validator.is_valid(ok), list(validator.iter_errors(ok))
-    assert not validator.is_valid(_emit(record, _op(kind="quality", object=None)))
-    assert not validator.is_valid(_emit(record, _op(op="rewrite")))
+    assert not validator.is_valid(_emit(s3_record, _op(kind="quality", object=None)))
+    assert not validator.is_valid(_emit(s3_record, _op(op="rewrite")))
+    # asked for the shape a replayed schema-2 candidate takes, the same
+    # engine schema admits that candidate's own patch and refuses this one:
+    # the object union is the packaged emit contract of the version named
+    legacy = jsonschema.Draft202012Validator(emit_schema("2"))
+    patch = _emit(record, _preferred_s2(record))
+    assert legacy.is_valid(patch), list(legacy.iter_errors(patch))
+    assert not validator.is_valid(patch) and not legacy.is_valid(ok)
+
+
+def test_the_advertised_schema_defaults_to_the_shape_this_tuple_assembles() -> None:
+    """The argumentless call is the LIVE advertisement, so its default has to
+    move with the bundle, not with this module.
+
+    The runner registers repair contracts by SCHEMA version and asks for the
+    engine-facing schema without one, so `emit_schema()` is what a real
+    provider constrains the repairer to (structured output, not a hint) — while
+    `apply` judges the answer against the base record's own shape. A default
+    that names a shape the tuple does not assemble yet makes those two
+    disagree, and the disagreement is unrecoverable: `x_repair_key` is
+    write-once, so the candidate's one round is spent on a round no obedient
+    model could have won. Pinning the default to `assemble.SCHEMA_VERSION`
+    keeps them in step through the bundle's own bump.
+    """
+    assert emit_schema() == emit_schema(SCHEMA_VERSION)
+    # and the shape is genuinely version-sensitive, so this is not a tautology
+    assert emit_schema("2") != emit_schema("3")
 
 
 # --- apply: the base contract -----------------------------------------------
@@ -730,6 +841,131 @@ def test_a_repaired_candidate_can_be_repaired_again(record: dict[str, Any]) -> N
     assert twice["extraction"]["parent_candidate_hash"] == once["extraction"][
         "candidate_hash"]
     assert twice["mentions"] == []
+
+
+# --- semantic-repair/v2: operations over the schema-3 statement -------------
+
+
+def _statement_def(schema: dict[str, Any]) -> dict[str, Any]:
+    """The statement member of the operation's `object` union — the one object
+    shape schema 3 changed, found by the field only a statement has."""
+    members = schema["properties"]["operations"]["items"]["properties"]["object"]["anyOf"]
+    return next(m for m in members if "topic" in (m.get("properties") or {}))
+
+
+def test_the_emit_schema_offers_the_schema_3_statement() -> None:
+    """The object an operation carries is the emit object of the record's
+    shape, inlined from the packaged schema rather than re-declared — so the
+    v3 contract's delta (verdicts out, quoted modality in) reaches the repair
+    vocabulary by itself."""
+    statement = _statement_def(emit_schema("3"))
+    assert "modality_evidence" in statement["properties"]
+    assert "importance" not in statement["properties"]
+    assert "proficiency" not in statement["properties"]
+    assert "section_heading" not in statement["properties"]
+
+
+def test_a_replace_edits_the_modality_quote_like_evidence(
+    s3_record: dict[str, Any],
+) -> None:
+    """`modality_evidence` is an ordinary bound reference family: an operation
+    may correct it, and assembly binds the new quote exactly as it binds
+    `evidence` — span included, checked by `verify` under schema 3."""
+    before = _find(s3_record, "statements", "s2")["modality_evidence"][0]
+    assert before["text"] == "Salesforce"
+    repaired = _s3_apply(s3_record, _quoted_s2(s3_record))
+    bound = _find(repaired, "statements", "s2")["modality_evidence"][0]
+    assert bound["text"] == "preferred"
+    assert S3_MD[bound["span"][0]:bound["span"][1]] == "preferred"
+    assert verify(repaired, S3_MD, schema_version="3").status == "pass"
+
+
+def test_a_repaired_schema_3_candidate_stays_schema_3(
+    s3_record: dict[str, Any],
+) -> None:
+    """A repair is another candidate in the same extraction's lineage, so the
+    shape it rebuilds into is the base record's own — never the module's idea
+    of a current schema. The heading comes back derived, from an operation
+    that never mentioned one."""
+    repaired = _s3_apply(s3_record, _quoted_s2(s3_record))
+    assert repaired["extraction"]["schema_version"] == "3"
+    assert repaired["extraction"]["parent_candidate_hash"] == s3_record[
+        "extraction"]["candidate_hash"]
+    assert _find(repaired, "statements", "s2")["section_heading"] == "Requirements"
+    for statement_id in ("s1", "s3"):
+        assert _find(repaired, "statements", statement_id) == _find(
+            s3_record, "statements", statement_id)
+
+
+@pytest.mark.parametrize("retired", ["importance", "proficiency"])
+def test_an_operation_naming_a_retired_verdict_field_is_refused(
+    s3_record: dict[str, Any], retired: str
+) -> None:
+    """parsing contract v3 §6: repair operations follow the schema-3 statement
+    shape. The verdicts are not fields the model may put back — a record that
+    accepted one would carry a label nothing downstream can check and nothing
+    upstream asked for."""
+    with pytest.raises(RepairJudgeError) as excinfo:
+        _s3_apply(s3_record, _quoted_s2(s3_record, **{retired: "required"}))
+    assert any(f"'{retired}' was unexpected" in e for e in excinfo.value.errors), (
+        excinfo.value.errors)
+    # and the same operation without it is the accepted one: the refusal is
+    # that field, not the shape around it
+    assert _s3_apply(s3_record, _quoted_s2(s3_record))["statements"]
+
+
+def test_an_operation_naming_the_code_derived_heading_is_refused(
+    s3_record: dict[str, Any],
+) -> None:
+    """`section_heading` is code's, derived from the statement's first evidence
+    span and re-derived by `verify`. The prompt shows it (it is context the
+    repairer reads), and an object that sends it back is proposing a field it
+    does not own — refused, not quietly accepted, because a heading nobody can
+    re-derive from the record's own evidence did not come from the document."""
+    echoed = copy.deepcopy(_find(s3_record, "statements", "s2"))
+    echoed["modality_evidence"] = [_ref("b000003", "preferred")]
+    assert echoed["section_heading"] == "Requirements"
+    op = _op(object=echoed,
+             old_object_hash=object_hash(_find(s3_record, "statements", "s2")),
+             evidence=[_ref("b000003", "preferred")])
+    with pytest.raises(RepairJudgeError) as excinfo:
+        _s3_apply(s3_record, op)
+    assert any("section_heading" in e for e in excinfo.value.errors), excinfo.value.errors
+    # the very same object with the heading dropped is the accepted one — the
+    # bound spans it also echoes are code's too, and those are stripped
+    without = {k: v for k, v in echoed.items() if k != "section_heading"}
+    repaired = _s3_apply(s3_record, {**op, "object": without})
+    assert _find(repaired, "statements", "s2")["section_heading"] == "Requirements"
+
+
+def test_the_old_object_hash_still_guards_a_schema_3_object(
+    s3_record: dict[str, Any],
+) -> None:
+    """The one-round policy's other half is unchanged (spec §6): an edit
+    written against an object the candidate no longer holds is a rejection,
+    never a silent overwrite."""
+    assert _s3_apply(s3_record, _quoted_s2(s3_record))["statements"]  # the hash that matches
+    for over in ({"old_object_hash": None}, {"old_object_hash": OTHER_HASH},
+                 {"old_object_hash": object_hash(_find(s3_record, "statements", "s1"))}):
+        with pytest.raises(RepairJudgeError):
+            _s3_apply(s3_record, {**_quoted_s2(s3_record), **over})
+
+
+def test_a_schema_2_record_still_repairs_under_its_own_shape(
+    record: dict[str, Any],
+) -> None:
+    """Migration is offline and not yet total (spec §7): the archive holds
+    schema-2 candidates, and a repair of one must address schema-2 objects.
+    The shape travels with the record — the contract version does not decide
+    it — so the importance fix above is still the operation this candidate
+    takes, and it still rebuilds a schema-2 record."""
+    repaired = _apply(record, _preferred_s2(record))
+    assert repaired["extraction"]["schema_version"] == "2"
+    assert _find(repaired, "statements", "s2")["importance"] == "preferred"
+    with pytest.raises(RepairJudgeError) as excinfo:
+        _apply(record, _op(object=_s3_statement(),
+                           old_object_hash=object_hash(_find(record, "statements", "s2"))))
+    assert any("importance" in e for e in excinfo.value.errors)
 
 
 # --- purity -----------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""The semantic repair contract (`semantic-repair/v1`, spec §4).
+"""The semantic repair contract (`semantic-repair/v2`, spec §4).
 
 One audited candidate, its findings and the original source go in; a list of
 typed operations comes back, and this module decides whether that list may
@@ -11,11 +11,16 @@ Four rules shape everything below.
 1. Operations address typed objects, never JSON paths. A path patch can reach
    `extraction.candidate_hash` or a span inside an evidence reference; a
    `replace` of statement `s2` cannot. The addressable kinds are closed
-   (`KINDS`), the object a kind carries is the emit-schema-2 object of that
-   kind, and code-owned fields (`span`, `derived`, `normalized_key`, and the
-   `object_hash` the prompt shows) are stripped from whatever the model sends
-   before the object is held to that schema — spec §3: code-owned fields are
-   never accepted from the model.
+   (`KINDS`), the object a kind carries is the emit object of that kind in the
+   BASE RECORD's schema, and code-owned fields (`span`, `derived`,
+   `normalized_key`, and the `object_hash` the prompt shows) are stripped from
+   whatever the model sends before the object is held to that schema — spec
+   §3: code-owned fields are never accepted from the model. `section_heading`
+   is the one code-owned field that is refused rather than stripped: the
+   prompt shows it because it is context worth reading, and assembly derives
+   it from the evidence the operation itself cites, so an object that sends
+   one back is proposing a field no evidence supports (parsing contract v3
+   §2.1, and `verify` re-derives it for the same reason).
 2. The old-object hash is shown, not computed. No model can hash canonical
    JSON, so `render` prints each addressable object's hash beside it and an
    operation echoes it back. That is what makes a stale edit — one written
@@ -56,7 +61,19 @@ from jobhunter.l2.v2.source import RefBindError, annotate, blocks_by_id, resolve
 
 # version history (bump, never edit in place):
 #   v1: the spec §4 contract as written
-REPAIR_VERSION = "semantic-repair/v1"
+#   v2: parsing contract v3 §6 — operations follow the schema-3 statement
+#       shape. `modality_evidence` is an editable reference family like
+#       `evidence`; `importance`/`proficiency` are not fields any more and an
+#       object carrying one is refused; `section_heading` is code's and is
+#       refused too. The shape is taken from the BASE RECORD rather than from
+#       a module constant, because the archive holds schema-2 candidates until
+#       migration reaches them (spec §7) and a repair addresses the objects the
+#       candidate it repairs actually has — and the shape ADVERTISED to the
+#       engine tracks `assemble.SCHEMA_VERSION` for the same reason, so the
+#       schema a round is answered under and the schema it is judged under
+#       move together. Policy — one round, one re-audit, old-object-hash
+#       guards, failed repair mutates nothing — is unchanged.
+REPAIR_VERSION = "semantic-repair/v2"
 
 #: spec §4: "Operations add/replace/remove objects in statements, relations,
 #: fact entries, mentions, and areas, or replace a fact-presence object,
@@ -104,7 +121,18 @@ _IMMUTABLE = frozenset({"document", "extraction", "quality"})
 
 #: fields code owns and recomputes: bound spans, derived fact values,
 #: normalized mention keys, and the old-object hash the prompt itself added.
+#: Stripped from a model-sent object rather than refused, because every one of
+#: them is printed inside the candidate the model is shown and echoing what you
+#: were given is not a proposal (the semantic-audit/v3 hash-echo lesson).
 _CODE_OWNED = frozenset({"span", "derived", "normalized_key", "object_hash"})
+
+#: The record-only fields on top of those: `section_heading` (schema 3) is
+#: derived by assembly and re-derived by `verify`, so it exists in the record
+#: and never in an emit. It is dropped when WE turn a record back into the emit
+#: it came from — and refused, by the emit schema itself, when a MODEL sends
+#: one, which is the difference between echoing code's bookkeeping and claiming
+#: a document structure no cited evidence supports.
+_RECORD_ONLY = _CODE_OWNED | {"section_heading"}
 
 _HASH_KEY = "object_hash"
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -177,9 +205,12 @@ substring among its repeats within the SAME block. Each source block is listed
 as "bNNNNNN: <text>".
 
 Never send a span, a derived value, a normalized key or an object_hash inside
-an object: code computes all of them from the evidence you cite. Never invent
-an id, and never address the document, the extraction envelope or the quality
-assessment — they are not yours to change.
+an object: code computes all of them from the evidence you cite. A statement's
+"section_heading" is code's too — derived from the document structure above the
+statement's first evidence span — and an object that carries one is rejected,
+so drop that field from any statement you copy out of the candidate. Never
+invent an id, and never address the document, the extraction envelope or the
+quality assessment — they are not yours to change.
 """
 
 TEMPLATE = (
@@ -294,7 +325,7 @@ def _typed(node: dict[str, Any]) -> dict[str, Any]:
 
 
 def _inline(node: Any, defs: dict[str, Any]) -> Any:
-    """Emit schema 2 with `$ref` resolved in place and every enum typed.
+    """One packaged emit schema with `$ref` resolved in place and every enum typed.
 
     Inlined rather than re-declared so the objects a repair may carry are the
     packaged emit contract itself — one grammar, not a copy that can drift —
@@ -311,8 +342,8 @@ def _inline(node: Any, defs: dict[str, Any]) -> Any:
     return node
 
 
-def _object_def(kind: str) -> dict[str, Any]:
-    schema = packaged_emit_schema(SCHEMA_VERSION)
+def _object_def(kind: str, schema_version: str) -> dict[str, Any]:
+    schema = packaged_emit_schema(schema_version)
     defs = schema["$defs"]
     node = (
         schema["properties"]["source_assessment"]
@@ -323,13 +354,13 @@ def _object_def(kind: str) -> dict[str, Any]:
     return inlined
 
 
-def _evidence_def() -> dict[str, Any]:
-    schema = packaged_emit_schema(SCHEMA_VERSION)
+def _evidence_def(schema_version: str) -> dict[str, Any]:
+    schema = packaged_emit_schema(schema_version)
     inlined: dict[str, Any] = _inline(schema["$defs"]["evidence"], schema["$defs"])
     return inlined
 
 
-def _operation_schema() -> dict[str, Any]:
+def _operation_schema(schema_version: str) -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
@@ -348,10 +379,14 @@ def _operation_schema() -> dict[str, Any]:
                                "source_assessment and for every addition",
             },
             "object": {
-                "anyOf": [*(_object_def(kind) for kind in KINDS), {"type": "null"}],
+                "anyOf": [
+                    *(_object_def(kind, schema_version) for kind in KINDS),
+                    {"type": "null"},
+                ],
                 "description": "the complete object in this kind's emit shape; "
                                "null for a removal. No spans, no derived values, "
-                               "no normalized keys, no object_hash.",
+                               "no normalized keys, no object_hash, no "
+                               "section_heading.",
             },
             "old_object_hash": {
                 "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$",
@@ -360,7 +395,7 @@ def _operation_schema() -> dict[str, Any]:
             },
             "finding_id": {"type": "string", "minLength": 1, "maxLength": 40,
                            "description": "the id of the finding this addresses"},
-            "evidence": {**_evidence_def(),
+            "evidence": {**_evidence_def(schema_version),
                          "description": "source references justifying the change"},
             "reason": {"type": "string", "minLength": 1, "maxLength": 600,
                        "description": "why the source requires this change"},
@@ -368,17 +403,30 @@ def _operation_schema() -> dict[str, Any]:
     }
 
 
-def emit_schema() -> dict[str, Any]:
+def emit_schema(schema_version: str = SCHEMA_VERSION) -> dict[str, Any]:
     """The engine-facing repair schema: closed op and object kinds.
 
-    Written against emit schema 2's own definitions (inlined, typed) so the
-    object a repair carries is the object the extractor emits — the kind↔object
-    pairing is then the one thing left for `apply` to enforce, and it must
-    enforce it anyway: a schema is a hint to the engine, never the gate.
+    Written against the packaged emit schema's own definitions (inlined, typed)
+    so the object a repair carries is the object the extractor emits — the
+    kind↔object pairing is then the one thing left for `apply` to enforce, and
+    it must enforce it anyway: a schema is a hint to the engine, never the gate.
+
+    The default is `assemble.SCHEMA_VERSION`, the shape this tuple currently
+    assembles, because that is the shape of the records the caller pairs this
+    contract with: the runner registers repair contracts by SCHEMA version and
+    asks for the schema without one (`_REPAIR_CONTRACTS`, `_repair_pass`), so
+    the default IS the live advertisement, and it has to move when the bundle
+    does rather than when this module does. `apply` still holds every operation
+    to the BASE RECORD's own shape whatever was advertised here — but a schema
+    that disagrees with it cannot be recovered from: the engine answers under
+    it (structured output, not a hint), the answer is refused, and
+    `x_repair_key` is write-once, so the candidate's one round is spent on a
+    round it could not have won. Replaying an older candidate therefore passes
+    that record's version explicitly.
     """
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "job-hunter L2 semantic repair emit schema (semantic-repair/v1)",
+        "title": "job-hunter L2 semantic repair emit schema (semantic-repair/v2)",
         "type": "object",
         "additionalProperties": False,
         "required": ["base_candidate_hash", "operations"],
@@ -389,7 +437,7 @@ def emit_schema() -> dict[str, Any]:
             },
             "operations": {
                 "type": "array",
-                "items": _operation_schema(),
+                "items": _operation_schema(schema_version),
                 "description": "the typed repair operations, one per change",
             },
         },
@@ -397,18 +445,35 @@ def emit_schema() -> dict[str, Any]:
 
 
 @cache
-def _object_validator(kind: str) -> jsonschema.Draft202012Validator:
-    return jsonschema.Draft202012Validator(_object_def(kind))
+def _object_validator(kind: str, schema_version: str) -> jsonschema.Draft202012Validator:
+    return jsonschema.Draft202012Validator(_object_def(kind, schema_version))
 
 
 @cache
-def _reference_validator() -> jsonschema.Draft202012Validator:
+def _reference_validator(schema_version: str) -> jsonschema.Draft202012Validator:
     """A source reference held to the packaged `reference` definition — the same
     grammar the extractor emits under, so an operation's own citation is typed
     exactly like the citations inside the objects it carries."""
-    schema = packaged_emit_schema(SCHEMA_VERSION)
+    schema = packaged_emit_schema(schema_version)
     inlined: dict[str, Any] = _inline(schema["$defs"]["reference"], schema["$defs"])
     return jsonschema.Draft202012Validator(inlined)
+
+
+def _schema_version_of(record: dict[str, Any]) -> str:
+    """The shape of the candidate being repaired, off its own envelope.
+
+    A repair rebuilds the record it was handed (rule 4), so the schema is the
+    base record's, never the contract's idea of a current one: the archive
+    holds schema-2 candidates until migration reaches them (spec §7) and an
+    operation against one addresses schema-2 objects. A record with no readable
+    version falls back to the shape this tuple assembles — the same default
+    `emit_schema` advertises, so the two halves of a round never disagree about
+    a record that could not say — and `apply`'s object checks then say what is
+    wrong in the language of the fields.
+    """
+    extraction = record.get("extraction")
+    version = extraction.get("schema_version") if isinstance(extraction, dict) else None
+    return version if isinstance(version, str) and version else SCHEMA_VERSION
 
 
 class RepairJudgeError(Exception):
@@ -460,20 +525,32 @@ def _ids(record: dict[str, Any], kind: str) -> dict[str, int]:
     }
 
 
+def _strip(node: Any, fields: frozenset[str] | set[str]) -> Any:
+    """`node` with `fields` dropped at every depth."""
+    if isinstance(node, dict):
+        return {k: _strip(v, fields) for k, v in node.items() if k not in fields}
+    if isinstance(node, list):
+        return [_strip(item, fields) for item in node]
+    return node
+
+
 def _to_emit(node: Any) -> Any:
-    """The emit shape of a record node: every code-owned field dropped.
+    """A MODEL-sent node, normalized: every code-owned field dropped.
 
     Spans, derived fact values and normalized mention keys are computed by
     assembly from the cited evidence, and `object_hash` is printed by `render`;
     none of the four is ever read back from a model, so all four are removed
-    both when the base record is turned back into an emit and when an
-    operation's object is normalized.
+    before the object is held to its schema. `section_heading` deliberately is
+    not: it is refused there rather than stripped (rule 1).
     """
-    if isinstance(node, dict):
-        return {k: _to_emit(v) for k, v in node.items() if k not in _CODE_OWNED}
-    if isinstance(node, list):
-        return [_to_emit(item) for item in node]
-    return node
+    return _strip(node, _CODE_OWNED)
+
+
+def _record_to_emit(node: Any) -> Any:
+    """A node of OUR record, back in emit shape: code-owned and record-only
+    fields dropped, so the rebuild feeds `assemble` the emit the record came
+    from rather than the record itself."""
+    return _strip(node, _RECORD_ONLY)
 
 
 def _text(path: str, value: Any, errors: list[str]) -> None:
@@ -498,7 +575,8 @@ def _schema_defects(
     return bool(problems)
 
 
-def _op_evidence(path: str, value: Any, blocks: dict[str, Any], errors: list[str]) -> None:
+def _op_evidence(path: str, value: Any, blocks: dict[str, Any], errors: list[str],
+                 schema_version: str) -> None:
     """Spec §4: "Every addition, replacement, or removal needs source evidence".
 
     The reference is typed before it is bound: `resolve` reads `text` and
@@ -522,7 +600,9 @@ def _op_evidence(path: str, value: Any, blocks: dict[str, Any], errors: list[str
         # a citation copied out of the candidate JSON carries the bound span
         # code printed there: stripped, exactly as an object's fields are
         cited = _to_emit(ref)
-        if _schema_defects(f"{path}[{i}]", _reference_validator(), cited, errors):
+        if _schema_defects(
+            f"{path}[{i}]", _reference_validator(schema_version), cited, errors
+        ):
             continue
         try:
             resolve(cited, blocks, lenient=True)
@@ -530,7 +610,8 @@ def _op_evidence(path: str, value: Any, blocks: dict[str, Any], errors: list[str
             errors.append(f"{path}[{i}]: {exc.message}")
 
 
-def _object(path: str, op: str, kind: str, value: Any, errors: list[str]) -> dict[str, Any] | None:
+def _object(path: str, op: str, kind: str, value: Any, errors: list[str],
+            schema_version: str) -> dict[str, Any] | None:
     if op == "remove":
         if value is not None:
             errors.append(f"{path}.object: a removal carries no object")
@@ -549,7 +630,9 @@ def _object(path: str, op: str, kind: str, value: Any, errors: list[str]) -> dic
         )
         return None
     obj = _to_emit(value)
-    broken = _schema_defects(f"{path}.object", _object_validator(kind), obj, errors)
+    broken = _schema_defects(
+        f"{path}.object", _object_validator(kind, schema_version), obj, errors
+    )
     return None if broken else obj
 
 
@@ -656,6 +739,7 @@ def _operation(
     blocks: dict[str, Any],
     slots: set[str],
     errors: list[str],
+    schema_version: str,
 ) -> _Op | None:
     if not isinstance(node, dict):
         errors.append(f"{path}: expected a repair operation object, got {_excerpt(node)}")
@@ -663,7 +747,7 @@ def _operation(
     op, kind = node.get("op"), node.get("kind")
     _text(f"{path}.finding_id", node.get("finding_id"), errors)
     _text(f"{path}.reason", node.get("reason"), errors)
-    _op_evidence(f"{path}.evidence", node.get("evidence"), blocks, errors)
+    _op_evidence(f"{path}.evidence", node.get("evidence"), blocks, errors, schema_version)
     if not isinstance(op, str) or op not in OPS:
         errors.append(f"{path}.op: unknown operation {_excerpt(op)}")
         return None
@@ -673,7 +757,7 @@ def _operation(
     if kind in _REPLACE_ONLY and op != "replace":
         errors.append(f"{path}.op: a {kind} is part of the record — it can only be replaced")
         return None
-    obj = _object(path, op, kind, node.get("object"), errors)
+    obj = _object(path, op, kind, node.get("object"), errors, schema_version)
     placed = _locate(path, op, kind, node, record, obj, errors)
     if placed is None:
         return None
@@ -688,7 +772,8 @@ def _operation(
 
 
 def _operations(
-    value: Any, record: dict[str, Any], blocks: dict[str, Any], errors: list[str]
+    value: Any, record: dict[str, Any], blocks: dict[str, Any], errors: list[str],
+    schema_version: str,
 ) -> list[_Op]:
     if not isinstance(value, list):
         errors.append(f"operations: expected a list, got {_excerpt(value)}")
@@ -699,7 +784,9 @@ def _operations(
     slots: set[str] = set()
     resolved: list[_Op] = []
     for i, node in enumerate(value):
-        one = _operation(f"operations[{i}]", node, record, blocks, slots, errors)
+        one = _operation(
+            f"operations[{i}]", node, record, blocks, slots, errors, schema_version
+        )
         if one is not None:
             resolved.append(one)
     return resolved
@@ -712,7 +799,7 @@ def _rebuild(record: dict[str, Any], ops: list[_Op]) -> dict[str, Any]:
     collection, so no index shifts under an earlier deletion, and additions are
     appended in the order the model sent them.
     """
-    working: dict[str, Any] = {key: _to_emit(record[key]) for key in _EMIT_KEYS}
+    working: dict[str, Any] = {key: _record_to_emit(record[key]) for key in _EMIT_KEYS}
     for kind in _LISTS:
         kind_ops = [o for o in ops if o.kind == kind]
         if not kind_ops:
@@ -754,6 +841,11 @@ def apply(
     Document identity, the extractor's provenance and the prompt/schema
     versions are carried through from the base record: a repair produces
     another candidate in the same extraction's lineage, not a new extraction.
+    The record's own `schema_version` is therefore what every operation is
+    checked against and what the repaired candidate is rebuilt into — a
+    schema-2 candidate out of the archive takes schema-2 operations and comes
+    back a schema-2 record (spec §7: migration is offline, and until it has
+    run both shapes are live).
 
     Anything else raises `RepairJudgeError` with the whole defect list, and
     the base record is left exactly as it was found.
@@ -776,13 +868,16 @@ def apply(
     # a record the rebuild cannot round-trip is a judged failure, not a crash
     # inside the phase: the caller archives this exactly as it archives a bad
     # operation list, and settles the base candidate.
+    schema_version = _schema_version_of(record)
     missing = [key for key in _EMIT_KEYS if key not in record]
     if missing:
-        errors.append(f"record: not a schema-2 record; missing {', '.join(missing)}")
+        errors.append(
+            f"record: not a schema-{schema_version} record; missing {', '.join(missing)}"
+        )
     if errors:
         raise RepairJudgeError(errors)
     blocks = blocks_by_id(annotate(markdown))
-    ops = _operations(emit.get("operations"), record, blocks, errors)
+    ops = _operations(emit.get("operations"), record, blocks, errors, schema_version)
     if errors:
         raise RepairJudgeError(errors)
     document = record.get("document")
@@ -797,6 +892,7 @@ def apply(
             normalizer_version=str(document.get("normalizer_version")),
             prompt_version=str(extraction.get("prompt_version")),
             parent_candidate_hash=candidate_hash,
+            schema_version=schema_version,
         )
     except AssembleError as exc:
         raise RepairJudgeError(
