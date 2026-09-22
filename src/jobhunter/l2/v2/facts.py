@@ -65,6 +65,21 @@ from typing import Any
 # statement shape and the checks that read it, which is why the identifier
 # moves. Schema 2 records still verify under this module's schema-2 branch,
 # byte-identical to 19's behaviour.
+#   Second clause, same identifier (parsing contract v3 §3): SETTLEMENT keeps
+# two checks and demotes the rest. `agreement.agree` fails a cohort only on
+# `negation` — aligned claims disagreeing about polarity — and on
+# `numeric_conflict` — aligned claims that both PARSED a number from the same
+# span and disagree about its dimension, bounds or unit. F1, the importance
+# ratio (gone with the field) and validator/19's five semantic dimensions are
+# still computed on every aligned pair and reported under `report["metrics"]`,
+# where `serve.profile_of` carries them into the blob as
+# `quality.sample_notes`; none of them parks a document. The evidence is the
+# same 300-doc sample: 294 of 300 parked documents split on label variance over
+# identical text — 172 `compensation_statement`/`employer_context` pairs, 1,399
+# of 1,536 value splits being one number under two scope tags, `gps` against
+# `global positioning systems (gps)` — and calibrating those five was tried and
+# refuted at 10 recovered of 267. `state.GATE_DIMENSION_CODES` shrinks to the
+# two gates with it, because rule 3 can only restate a failure that can happen.
 VALIDATOR_VERSION = "20"
 
 _CMP_PHRASES: list[tuple[str, str]] = [

@@ -35,6 +35,17 @@ DATE_KINDS = ("application_deadline", "interview_date", "other")
 # employment constraints; hiring policies impose applicant rules the same way)
 IMPORTANCE_KINDS = frozenset({"qualification", "employment_constraint", "hiring_policy"})
 
+#: What a statement with NO importance projects as in the legacy columns.
+#: Responsibilities, compensation statements and employer context carry a null
+#: importance under schema 2 (spec §3), and under schema 3 no statement carries
+#: one at all (parsing contract v3 §2.1) — the field was a verdict the model
+#: assigned from descriptor text and nothing in the source could check it. The
+#: `profile_mentions` column is NOT NULL, and `contextual` is v1's existing word
+#: for "named by the posting, not demanded by it", which is exactly what a
+#: statement with no verdict asserts. Lives here rather than in `serve` because
+#: `project` needs it too and `serve` imports `project`.
+NO_IMPORTANCE = "contextual"
+
 
 @dataclass(frozen=True)
 class Block:

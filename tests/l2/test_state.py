@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from jobhunter.l2.agreement import Dispute, cohort_hook
+from jobhunter.l2.agreement import DIMENSIONS, GATES, Dispute, agree, cohort_hook
 from jobhunter.l2.state import (
     GATE_DIMENSION_CODES,
     DerivedState,
@@ -12,7 +12,7 @@ from jobhunter.l2.state import (
     derive_state,
 )
 from jobhunter.l2.v2.quality import assess
-from tests.l2.test_agreement import sample, statement
+from tests.l2.test_agreement import REVIEW_SPLITS, sample, statement, statement3
 from tests.l2.test_attempts import _attempt
 
 GLOBS = ["z-ai/glm-5.2*", "nvidia/*"]
@@ -622,20 +622,17 @@ DISPUTE = Dispute(frozenset({"s9"}), frozenset({"b9"}))
 
 
 def test_the_gate_dimension_map_is_the_policy_table() -> None:
+    """Validator/20: only two dimensions can fail a cohort, so only two can
+    have an audit finding restate them. The map is keyed by what `agree` puts
+    in `report["failures"]`, and a demoted dimension never appears there — an
+    entry for one would be a rule about a gate that cannot fire. The demoted
+    dimensions are still computed and still reported, in `report["metrics"]`,
+    which is where the audit's scoping reads them if it ever needs them."""
     assert GATE_DIMENSION_CODES == {
-        "importance": ("importance",),
         "negation": ("polarity_subject",),
-        "f1": ("omission", "unsupported_statement", "relationship"),
-        # the validator/19 comparator dimensions (2026-09-16): without these a
-        # cohort whose ONLY failure is a meaning split has an empty dispute
-        # set and adjudicates straight past a blocking finding of exactly
-        # that dimension
-        "kind": ("unsupported_statement",),
-        "polarity_target": ("polarity_subject",),
-        "scoped_values": ("numeric_scope_unit",),
-        "alternatives": ("relationship",),
-        "entity_links": ("mention_linkage",),
+        "numeric_conflict": ("numeric_scope_unit",),
     }
+    assert tuple(GATE_DIMENSION_CODES) == GATES
 
 
 @pytest.mark.parametrize("gate", sorted(GATE_DIMENSION_CODES))
@@ -647,12 +644,22 @@ def test_a_failed_gate_makes_its_own_dimension_touch_the_dispute(gate: str) -> N
         off_dispute = [finding(code, "s1")]
         assert audit_touches_dispute(off_dispute, DISPUTE, [gate]) is True
         assert audit_touches_dispute(off_dispute, DISPUTE, []) is False
-        # gates that share the code (f1 and alternatives both map
-        # relationship) legitimately touch on it; only gates whose dimension
-        # set excludes the code must stay silent
+        # only gates whose dimension set excludes the code must stay silent
         other = [g for g in GATE_DIMENSION_CODES
                  if code not in GATE_DIMENSION_CODES[g]]
         assert audit_touches_dispute(off_dispute, DISPUTE, other) is False
+
+
+def test_a_demoted_dimension_is_never_a_failed_gate() -> None:
+    """The map's silence about a demoted dimension is only safe because `agree`
+    can no longer report one as a failure: the pairing is what keeps rule 3
+    complete."""
+    for dimension in DIMENSIONS:
+        assert dimension not in GATE_DIMENSION_CODES
+    for _name, build, dimension in REVIEW_SPLITS:
+        report = agree(list(build())).report
+        assert report["failures"] == []
+        assert report["metrics"]["splits"][dimension] > 0
 
 
 def test_a_blocking_finding_on_a_disputed_target_touches() -> None:
@@ -804,6 +811,14 @@ def test_a_reopened_incomplete_adjudication_goes_back_to_incomplete() -> None:
 # Naive statement-id overlap between finder samples false-cleared 4 of 9 docs.
 # Each row below is one refuted shape, run through the REAL agreement gate and
 # the REAL dispute set over v2 samples — only the audit is scripted.
+#
+# Under validator/20 a cohort only OPENS a dispute when it fails one of the two
+# gates, so every shape below carries a polarity split on the statement both
+# samples align, alongside the structural disagreement it was written for. That
+# is not a weakening of the shape: the dispute set is still built by rules 1 and
+# 2 from the unaligned statements and the sibling-only blocks, and it is still
+# what decides whether the audit's blocking finding clears the cohort. What
+# changed is only which disagreements are worth asking the question about.
 
 
 def _v2_cohort(medoid, sibling, audit):
@@ -820,8 +835,9 @@ def test_0df0f921_a_finding_on_an_unaligned_medoid_statement_is_not_clearable() 
     the dispute in the medoid's own namespace, which cross-sample id matching
     never produced."""
     medoid = sample(statement("m_a", (0, 100)), statement("m_b", (200, 300), block="b2"))
-    sibling = sample(statement("s_a", (0, 100)))
+    sibling = sample(statement("s_a", (0, 100), polarity="negative"))
     parked = _v2_cohort(medoid, sibling, _blocking(finding("mention_linkage", "m_b")))
+    assert parked.agreement and parked.agreement["failures"] == ["negation"]
     assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
     cleared = _v2_cohort(medoid, sibling, _blocking(finding("mention_linkage", "m_a")))
     assert (cleared.status, cleared.sampling) == ("validated", "adjudicated")
@@ -833,7 +849,8 @@ def test_9d59cb88_an_omission_on_a_sibling_only_block_is_not_clearable() -> None
     medoid never cited, and the finding points straight at it."""
     medoid = sample(statement("m_a", (0, 100), block="b1"))
     sibling = sample(
-        statement("s_a", (0, 100), block="b1"), statement("s_b", (400, 500), block="b7")
+        statement("s_a", (0, 100), block="b1", polarity="negative"),
+        statement("s_b", (400, 500), block="b7"),
     )
     parked = _v2_cohort(medoid, sibling, _blocking(finding("bad_exclusion", "b7")))
     assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
@@ -844,34 +861,94 @@ def test_9d59cb88_an_omission_on_a_sibling_only_block_is_not_clearable() -> None
 def test_7b354fd4_a_shared_id_string_is_not_agreement() -> None:
     """Both samples name a statement `s1`. They are different statements about
     different text, and the medoid's is the one in dispute."""
-    medoid = sample(statement("s1", (0, 100), block="b1"), statement("s2", (200, 300)))
-    sibling = sample(statement("s1", (200, 300)), statement("s2", (900, 1000), block="b9"))
-    parked = _v2_cohort(medoid, sibling, _blocking(finding("importance", "s1")))
+    medoid = sample(statement("s1", (0, 100), block="b1"),
+                    statement("s2", (200, 300)))
+    sibling = sample(statement("s1", (200, 300), polarity="negative"),
+                     statement("s2", (900, 1000), block="b9"))
+    parked = _v2_cohort(medoid, sibling, _blocking(finding("mention_linkage", "s1")))
     assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
-    cleared = _v2_cohort(medoid, sibling, _blocking(finding("importance", "s2")))
+    cleared = _v2_cohort(medoid, sibling, _blocking(finding("mention_linkage", "s2")))
     assert (cleared.status, cleared.sampling) == ("validated", "adjudicated")
 
 
-def test_27c9a9af_an_importance_split_is_carried_by_the_gate_dimension() -> None:
-    """Both samples cite the same text and disagree about what it demands: the
-    dispute set is empty by construction, and only rule 3 stands between the
-    cohort and a false clear."""
-    medoid = sample(statement("m_a", (0, 100), importance="required"))
-    sibling = sample(statement("s_a", (0, 100), importance="preferred"))
-    parked = _v2_cohort(medoid, sibling, _blocking(finding("importance", "m_a")))
-    assert parked.agreement and parked.agreement["failures"] == ["importance"]
+def test_27c9a9af_a_polarity_split_is_carried_by_the_gate_dimension() -> None:
+    """Both samples cite the same text and read its polarity differently: every
+    claim aligns, so the dispute set is empty by construction and only rule 3
+    stands between the cohort and a false clear.
+
+    This shape was an IMPORTANCE split under validator/19. The field is gone
+    with schema 3 and the dimension went with it, so the surviving question is
+    the same one about polarity — and `polarity_subject` is the audit code that
+    restates it.
+    """
+    medoid = sample(statement("m_a", (0, 100)))
+    sibling = sample(statement("s_a", (0, 100), polarity="negative"))
+    parked = _v2_cohort(medoid, sibling, _blocking(finding("polarity_subject", "m_a")))
+    assert parked.agreement and parked.agreement["failures"] == ["negation"]
     assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
     # a finding in another dimension over an empty dispute is off-dispute
     cleared = _v2_cohort(medoid, sibling, _blocking(finding("mention_linkage", "m_a")))
     assert (cleared.status, cleared.sampling) == ("validated", "adjudicated")
 
 
-def test_7f4303c2_an_omission_restating_an_f1_split_is_not_clearable() -> None:
-    """The omission cites a block the medoid DOES cite, so no disputed id
-    appears in it — but the cohort failed on statement-set F1 and `omission` is
-    exactly that failure's dimension."""
+def test_7f4303c2_an_f1_split_no_longer_parks_a_document_at_all() -> None:
+    """Under validator/19 this cohort failed statement-set F1 and `omission`
+    was that failure's own dimension, so rule 3 kept the document. Under 20 F1
+    is a metric: the medoid found one more statement than its sibling, which is
+    thoroughness variance, and the cohort never opens a dispute to scope.
+
+    The auditor's omission has not stopped mattering — it still counts as a
+    blocking finding and still takes `search_eligible` away. It stopped
+    deciding whether the record publishes at all.
+    """
     medoid = sample(statement("m_a", (0, 100), block="b1"), statement("m_b", (200, 300)))
     sibling = sample(statement("s_a", (0, 100), block="b1"))
-    parked = _v2_cohort(medoid, sibling, _blocking(finding("omission", "b1")))
-    assert parked.agreement and parked.agreement["failures"] == ["f1"]
-    assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
+    settled = _v2_cohort(medoid, sibling, _blocking(finding("omission", "b1")))
+    assert settled.agreement and settled.agreement["failures"] == []
+    assert settled.agreement["metrics"]["f1"] < 1.0
+    assert (settled.status, settled.sampling) == ("validated", "complete")
+    assert _eligible(settled) is False  # the finding still gates eligibility
+
+
+# --- validator/20 settlement: the 2026-09-22 review classes -----------------
+
+
+@pytest.mark.parametrize(
+    "name,build,dimension", REVIEW_SPLITS, ids=[r[0] for r in REVIEW_SPLITS]
+)
+def test_a_review_split_cohort_settles_validated_under_20(
+    name: str, build: Any, dimension: str
+) -> None:
+    """Each of these parked a document under validator/19 — 294 of the 300
+    sampled review documents were exactly this — and each settles under 20 with
+    the split carried in the report's metrics instead."""
+    a, b = build()
+    events = [_slot(1, 1, record=a), _slot(2, 2, record=b)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("validated", "complete")
+    assert state.agreement and state.agreement["failures"] == []
+    assert state.agreement["metrics"]["splits"][dimension] > 0
+
+
+def test_a_polarity_split_still_settles_needs_review() -> None:
+    a = sample(statement3("s1", (0, 100)))
+    b = sample(statement3("s1", (0, 100), polarity="negative"))
+    events = [_slot(1, 1, record=a), _slot(2, 2, record=b)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("needs_review", "disagreement")
+    assert state.agreement and state.agreement["failures"] == ["negation"]
+
+
+def test_a_numeric_conflict_still_settles_needs_review() -> None:
+    from tests.l2.test_agreement import experience
+
+    def with_months(months: int) -> dict[str, Any]:
+        return sample(
+            statement3("s1", (0, 100), fact_ids=("f1",)),
+            entries=[experience("f1", (0, 100), months=months, sids=["s1"])],
+        )
+
+    events = [_slot(1, 1, record=with_months(144)), _slot(2, 2, record=with_months(12))]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("needs_review", "disagreement")
+    assert state.agreement and state.agreement["failures"] == ["numeric_conflict"]

@@ -137,25 +137,29 @@ class AuditDetail(Protocol):
 
 
 #: Rule 3 of the validator/18 policy: which finding codes restate which failed
-#: gate. A cohort that split on importance and an auditor reporting a wrong
-#: importance are the same disagreement, whatever object each of them points
-#: at — the dispute set cannot name a disagreement about the MEANING of text
-#: both samples cited, so the gate's own dimension has to.
+#: gate. A cohort that split on polarity and an auditor reporting a misread
+#: polarity are the same disagreement, whatever object each of them points at —
+#: the dispute set cannot name a disagreement about the MEANING of text both
+#: samples cited, so the gate's own dimension has to.
+#:
+#: Validator/20 leaves two entries, because a v2 cohort can only report two
+#: failures (`agreement.GATES`). The dimensions it demoted — f1, kind, polarity
+#: target, scoped values, alternatives, entity links — never reach `failures`,
+#: so a mapping for them would be a rule about a gate that cannot fire; they are
+#: still computed and still published, in `report["metrics"]`, which is where a
+#: reader that wants them goes. An audit finding that restates one of them still
+#: counts as a blocking finding and still takes `search_eligible` away; what it
+#: no longer does is decide publication for a cohort that never failed.
+#:
+#: `agreement.LEGACY_GATES` can still report the demoted names, and this map is
+#: deliberately silent about them: only a v1 cohort is judged under that set,
+#: and v1 has no audit phase (`Bundle.audit_version is None`), so its failures
+#: never reach rule 3 at all — `_audit_scoped_clear` returns False the moment
+#: the probe is None. An entry here would be a rule for an adjudication that
+#: cannot happen.
 GATE_DIMENSION_CODES: dict[str, tuple[str, ...]] = {
-    "importance": ("importance",),
     "negation": ("polarity_subject",),
-    "f1": ("omission", "unsupported_statement", "relationship"),
-    # the validator/19 comparator dimensions. A cohort split only on meaning
-    # has an EMPTY dispute set (every claim aligns), so without these entries
-    # a blocking finding of exactly the disputed dimension would count as
-    # off-dispute and the cohort would adjudicate past it (2026-09-16
-    # review). Codes may repeat across gates: a `relationship` finding
-    # restates an f1 split and an alternatives split alike.
-    "kind": ("unsupported_statement",),
-    "polarity_target": ("polarity_subject",),
-    "scoped_values": ("numeric_scope_unit",),
-    "alternatives": ("relationship",),
-    "entity_links": ("mention_linkage",),
+    "numeric_conflict": ("numeric_scope_unit",),
 }
 
 #: what a dimension may say once its audit completed; `error` is never a pass

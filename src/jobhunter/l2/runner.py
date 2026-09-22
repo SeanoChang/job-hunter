@@ -1216,6 +1216,11 @@ def _settled(record: dict[str, Any], state: DerivedState) -> dict[str, Any]:
             # gates on "no blocking findings or blocking unresolved fields"
             "blocking": state.blocking,
             "human_review": state.human_review,
+            # the cohort's own report, so the projections can publish what the
+            # samples split on (parsing contract v3 §4; `serve._sample_notes`
+            # turns the demoted metrics into `quality.sample_notes`). None
+            # when no cohort ran, and the projections then write no notes.
+            "agreement": state.agreement,
         },
     }
 
@@ -2943,15 +2948,23 @@ def _extract_doc_inner(
                             findings=findings, ladder_exhausted=False, started_at=t0,
                             tokens=(result.input_tokens, result.output_tokens),
                             cost=result.cost_usd, record=record)
-            # k-sampling (spec §4.5): 5% deterministic audit by hash slot, plus
-            # any document whose slot-1 pass needed a reprompt — the cheapest
-            # predictor of a hard document. Samples are single-shot generations
-            # under their own slots; the agreement gate settles the verdict.
+            # k-sampling (spec §4.5, narrowed by parsing contract v3 §5): the
+            # 5% deterministic audit slot by hash, and nothing else. Samples
+            # are single-shot generations under their own slots; the agreement
+            # gate settles the verdict.
+            #
+            # The reprompt branch is gone. It escalated any document whose
+            # slot-1 pass needed a retry, on the theory that a retry is the
+            # cheapest predictor of a hard document — but the v10 retry
+            # contract already makes a reprompt an EDIT of the prior candidate,
+            # and the 2026-09-22 analysis found the 373-of-1,000 "incomplete
+            # cohort" review class was nothing but those escalations running
+            # their sample budgets out. Sampling is monitoring now, not
+            # adjudication, so it runs where it can be measured.
             audit = settings.l2_audit_mod <= 1 or (
                 int(dh[:8], 16) % settings.l2_audit_mod == 0
             )
-            reprompted = bool(prior_errors) or content_no > 1
-            if audit or reprompted:
+            if audit:
                 verdict = _take_samples(
                     settings, session, engine, model, markdown, schema,
                     summary, archive_attempt, now, dh, bundle, gate,

@@ -7,11 +7,19 @@ production defect this plan exists to kill: `store/extraction.py`'s
 preferred certification sitting next to a required degree in one
 presentation area reads back as required). Mentions are atomic by contract;
 this module never re-splits one.
+
+Under schema 3 there is no importance to carry: the field was a verdict the
+model assigned from descriptor text, nothing in the source could check it, and
+parsing contract v3 §2.1 removed it. A schema-3 statement projects the
+`NO_IMPORTANCE` sentinel — "named by the posting, not demanded by it" — and a
+schema-2 one projects exactly what it always did.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from jobhunter.l2.v2.types import NO_IMPORTANCE
 
 
 def _group_ids_by_statement(record: dict[str, Any]) -> dict[str, list[str]]:
@@ -46,7 +54,10 @@ def mention_rows(record: dict[str, Any], include_ineligible: bool = False) -> li
                 "role": mention["role"],
                 "kind": statement["kind"],
                 "subject": statement["subject"],
-                "importance": statement["importance"],
+                # never INDEXED: a schema-3 statement has no such key, and its
+                # absence is the contract saying the statement carries no
+                # verdict — not that one is missing
+                "importance": statement.get("importance", NO_IMPORTANCE),
                 "polarity": statement["polarity"],
                 "condition_ids": list(statement["condition_ids"]),
                 "group_ids": list(group_ids_by_statement.get(statement_id, [])),

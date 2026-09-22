@@ -394,12 +394,24 @@ class AuditingEngine(FakeEngine):
 
 
 def divergent_c01() -> dict[str, Any]:
-    """A C01 emit citing a different span for the same requirement."""
+    """A C01 emit citing a different span for the same requirement, and reading
+    that requirement as negated.
+
+    Two disagreements, answering two different needs. The span moves so the
+    statement claims do not align and the cohort's F1 separates the samples —
+    which is what puts the MEDOID off slot 1. The polarity flips because under
+    validator/20 an F1 split is a metric and polarity is one of the two things
+    that still parks a document; the experience fact hanging off the statement
+    cites the same "8 years" in both samples, so those claims do align and the
+    split is visible where it has to be.
+    """
     emit = copy.deepcopy(emit_of("C01"))
     emit["statements"][0]["evidence"] = [
         {"block_id": "b000002", "occurrence": 0,
          "text": "a proven track record of exceeding sales targets"}
     ]
+    emit["statements"][0]["polarity"] = "negative"
+    emit["statements"][0]["polarity_evidence"] = None
     return emit
 
 
@@ -418,12 +430,20 @@ def polarity_split_c04() -> dict[str, Any]:
 
 
 def divergent_c09() -> dict[str, Any]:
-    """A C09 emit citing the tail of the alternative route, not the whole clause."""
+    """A C09 emit citing the tail of the alternative route, not the whole
+    clause — and reading the degree requirement as negated.
+
+    Same shape as `divergent_c01` and for the same reason: the span move is the
+    F1 separation, the polarity flip on the OTHER statement (whose span both
+    samples cite identically) is what validator/20 still gates on.
+    """
     emit = copy.deepcopy(emit_of("C09"))
     emit["statements"][1]["evidence"] = [
         {"block_id": "b000002", "occurrence": 0,
          "text": "incident management or operational resilience"}
     ]
+    emit["statements"][0]["polarity"] = "negative"
+    emit["statements"][0]["polarity_evidence"] = None
     return emit
 
 
