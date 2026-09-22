@@ -89,8 +89,14 @@ def _fold_with_map(s: str) -> tuple[str, list[int]]:
     for i, ch in enumerate(s):
         if ch in _EMPHASIS_CHARS:
             continue
-        out.append(_typo(ch).casefold())
-        idx.append(i)
+        folded = _typo(ch).casefold()
+        out.append(folded)
+        # one map entry per FOLDED character: casefold can expand ('ß' ->
+        # 'ss'), and a per-original-char map left the haystack longer than
+        # the map — a match reaching past the last mapped position indexed
+        # off its end and killed the drain (2026-09-22). Every expanded
+        # position maps back to the one original character it came from.
+        idx.extend([i] * len(folded))
     return "".join(out), idx
 
 

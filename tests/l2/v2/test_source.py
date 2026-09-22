@@ -126,6 +126,25 @@ def test_emphasis_fold_binds_original_bytes() -> None:
     assert md[bound["span"][0]:bound["span"][1]] == bound["text"]
 
 
+def test_casefold_expansion_stays_inside_the_fold_map() -> None:
+    # 2026-09-22 drain crash: casefold can EXPAND a character ('ß' -> 'ss'),
+    # so the folded haystack outgrew a per-original-char index map and a match
+    # reaching past the last original character indexed off its end
+    # (IndexError at source.py:110, killing the whole parallel drain). The
+    # map must carry one entry per FOLDED character; the bound span still
+    # covers the original bytes.
+    md = "# T\n\nDu bringst sehr gutes Deutsch mit und arbeitest mit **Fleiß**"
+    blocks = blocks_by_id(annotate(md))
+    bound = resolve(
+        {"block_id": "b000002",
+         "text": "arbeitest mit FLEISS",
+         "occurrence": 0},
+        blocks,
+    )
+    assert bound["text"] == "arbeitest mit **Fleiß"
+    assert md[bound["span"][0]:bound["span"][1]] == bound["text"]
+
+
 def test_single_occurrence_slip_is_owned_by_code() -> None:
     # parsing-rules/6: a block with exactly one occurrence makes any emitted
     # index a labeling slip; two occurrences still refuse a bad index
