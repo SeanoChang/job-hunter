@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from jobhunter.store.db import Conn
+from jobhunter.store.extraction import SERVING_STATUSES
 from jobhunter.timeutil import parse_iso
 
 # Every event row an agent sees: the event, the board it belongs to, and the
@@ -344,7 +345,35 @@ def claims_by_mention(
     corpus as empty. That costs the (mention, importance) index a scan the size
     of the mention table, which is the cheaper of the two mistakes.
 
-    Scoped to the engine tuple in force, like `validated_profiles`: the table
+    The table carries a row set for every document the store serves — validated
+    and needs_review alike since parsing contract v3 §4 — so this path needs no
+    status filter of its own: `extraction.upsert_state` is the single admission
+    test, and a row that stopped serving has already been deleted.
+
+    `importance` is the LEGACY (schema-2 and v1) filter, and it reads the column
+    literally — which can only ever select the older partition because of what
+    the surfaces refuse to pass it. v1's vocabulary had three words; two of
+    them, `required` and `preferred`, exist in that partition alone, so a
+    literal match on either selects nothing else. The third cannot be trusted
+    to: `NO_IMPORTANCE` IS the string `contextual`, so a literal `contextual`
+    matches every schema-3 row in the corpus too, where it means "this record
+    issues no verdict" rather than "this mention is merely contextual" — the
+    union of a verdict and the absence of one, handed back as a verdict.
+
+    Scoping the SQL to the older schemas instead would be a lie of a different
+    kind (the column really does hold that value), so the filter stays literal
+    and the sentinel never reaches it: `cli_q.IMPORTANCES` no longer lists it,
+    and both surfaces that offer the flag — `q claims` and the MCP `claims`
+    tool — refuse it as a usage error naming what it is. The reading an agent
+    wants from a schema-3 row is its statement's section heading and quoted
+    modal phrase, which `views.claims_view` attaches per (mention, area_kind).
+
+    `schema_version` comes back on the row because two nulls in those two fields
+    mean different things either side of the cutover — a legacy record that
+    issues verdicts, or a schema-3 statement that sits under no heading and
+    quotes no modal phrase — and only the schema separates them.
+
+    Scoped to the engine tuple in force, like `served_profiles`: the table
     keeps one row set per tuple the archive ever produced (`extract rebuild`
     replays historical configs deliberately), and a retired prompt is not what
     this corpus demands today. Without the scope the same posting comes back
@@ -377,7 +406,8 @@ def claims_by_mention(
         params["board"] = board
     return conn.execute(
         "SELECT DISTINCT m.document_hash, m.mention, m.area_kind, m.importance, "
-        "p.uid, p.source, p.board, p.last_seen_at, v.title, v.company, v.url "
+        "m.schema_version, p.uid, p.source, p.board, p.last_seen_at, "
+        "v.title, v.company, v.url "
         "FROM profile_mentions m "
         "JOIN documents d ON d.document_hash = m.document_hash "
         "JOIN posting_versions v ON v.version_hash = d.version_hash "
@@ -388,7 +418,7 @@ def claims_by_mention(
     ).fetchall()
 
 
-def validated_profiles(
+def served_profiles(
     conn: Conn,
     doc_hashes: list[str],
     *,
@@ -397,20 +427,112 @@ def validated_profiles(
     schema_version: str,
     validator_version: str,
 ) -> dict[str, dict[str, Any]]:
-    """document_hash -> profile, for validated rows under the engine tuple in
-    force. Anything else (needs_review, quarantined, another model) is not a
-    fact this corpus asserts, so it is not returned at all."""
+    """document_hash -> `{status, profile}`, for the rows that serve under the
+    engine tuple in force.
+
+    Serving is `extraction.SERVING_STATUSES` — validated AND needs_review
+    (parsing contract v3 §4) — because validator/20 parks a document on two
+    gates only, so a review row is a verified extraction carrying a note, not
+    an unverified one. What it is stays on the payload: the status rides along
+    with the blob so every caller can label the answer instead of implying the
+    stronger tier. A quarantined row, a pending one and another model's row are
+    still absent entirely.
+    """
     if not doc_hashes:
         return {}
     rows = conn.execute(
-        "SELECT document_hash, profile FROM extractions "
-        "WHERE document_hash = ANY(%(hashes)s::text[]) AND status = 'validated' "
+        "SELECT document_hash, status, profile FROM extractions "
+        "WHERE document_hash = ANY(%(hashes)s::text[]) "
+        "AND status = ANY(%(statuses)s::text[]) "
         "AND prompt_version = %(pv)s AND schema_version = %(sv)s "
         "AND validator_version = %(vv)s AND model ~ %(model_regex)s "
         "AND profile IS NOT NULL",
         {
             "hashes": list(doc_hashes), "pv": prompt_version, "sv": schema_version,
             "vv": validator_version, "model_regex": model_regex,
+            "statuses": sorted(SERVING_STATUSES),
         },
     ).fetchall()
-    return {r["document_hash"]: r["profile"] for r in rows}
+    return {r["document_hash"]: {"status": r["status"], "profile": r["profile"]} for r in rows}
+
+
+#: A jsonb value guaranteed to be an array: stored blobs are only guaranteed to
+#: match the schema of the day they were written, and `jsonb_array_elements` of
+#: anything else is a query-killing error rather than a missing row.
+_ARRAY = "CASE WHEN jsonb_typeof({0}) = 'array' THEN {0} ELSE '[]'::jsonb END"
+
+_MENTION_CONTEXT_SQL = f"""
+SELECT e.document_hash,
+       e.status,
+       jsonb_build_object(
+           'mentions', COALESCE(m.arr, '[]'::jsonb),
+           'statements', COALESCE(s.arr, '[]'::jsonb)
+       ) AS profile
+FROM extractions e
+LEFT JOIN LATERAL (
+    SELECT jsonb_agg(entry ORDER BY ord) AS arr
+    FROM jsonb_array_elements({_ARRAY.format("e.profile -> 'mentions'")})
+         WITH ORDINALITY AS t(entry, ord)
+    WHERE lower(entry ->> 'surface') = lower(%(mention)s)
+) m ON TRUE
+LEFT JOIN LATERAL (
+    SELECT jsonb_agg(stmt ORDER BY ord) AS arr
+    FROM jsonb_array_elements({_ARRAY.format("e.profile -> 'statements'")})
+         WITH ORDINALITY AS t(stmt, ord)
+    WHERE stmt ->> 'id' IN (
+        SELECT sid
+        FROM jsonb_array_elements(COALESCE(m.arr, '[]'::jsonb)) AS linked(entry),
+             LATERAL jsonb_array_elements_text(
+                 {_ARRAY.format("linked.entry -> 'statement_ids'")}) AS ids(sid)
+    )
+) s ON TRUE
+WHERE e.document_hash = ANY(%(hashes)s::text[])
+  AND e.status = ANY(%(statuses)s::text[])
+  AND e.prompt_version = %(pv)s AND e.schema_version = %(sv)s
+  AND e.validator_version = %(vv)s AND e.model ~ %(model_regex)s
+  AND e.profile IS NOT NULL
+"""
+
+
+def mention_contexts(
+    conn: Conn,
+    doc_hashes: list[str],
+    *,
+    mention: str,
+    model_regex: str,
+    prompt_version: str,
+    schema_version: str,
+    validator_version: str,
+) -> dict[str, dict[str, Any]]:
+    """document_hash -> `{status, profile}` for ONE mention surface, where the
+    profile is the two slices `views.mention_context` reads and nothing else.
+
+    `q claims` needs three facts per row off the blob — the serving tier, the
+    section heading, the quoted modal phrase — and `served_profiles` would ship
+    the whole record to supply them: stored blobs average ~43 KB, so a page at
+    `--limit 500` is ~20 MB fetched and parsed to emit a few hundred short rows,
+    over the Cloud Run → Neon link as much as locally. Narrowing happens where
+    the data is: the mention entries spelling this surface, and the statements
+    those entries link, come back verbatim and in record order — the same
+    objects `served_profiles` would have handed over, minus the ones no reader
+    on this page would have looked at.
+
+    Serving is the same `extraction.SERVING_STATUSES` gate `served_profiles`
+    applies, and the status rides along for the same reason: a review row serves
+    beside a validated one and the reader must be able to say which it read.
+
+    A document whose record names the surface nowhere still answers, with two
+    empty lists — the row exists and its status is a fact about it; only the
+    context is absent.
+    """
+    if not doc_hashes:
+        return {}
+    rows = conn.execute(
+        _MENTION_CONTEXT_SQL,
+        {
+            "hashes": list(doc_hashes), "mention": mention, "pv": prompt_version,
+            "sv": schema_version, "vv": validator_version, "model_regex": model_regex,
+            "statuses": sorted(SERVING_STATUSES),
+        },
+    ).fetchall()
+    return {r["document_hash"]: {"status": r["status"], "profile": r["profile"]} for r in rows}

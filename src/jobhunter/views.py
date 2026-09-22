@@ -173,18 +173,36 @@ def document_view(conn: Conn, document_hash: str, *, slice_: str | None = None) 
     return Page({"document_hash": document_hash, "markdown": markdown[start:end]})
 
 
-def profile_row(conn: Conn, document_hash: str) -> dict[str, Any] | None:
+def active_tuple(settings: Settings) -> tuple[str, str, str]:
+    """`(prompt_version, schema_version, validator_version)` of the bundle the
+    settings name — the one definition of "the engine tuple in force", shared by
+    every read path that scopes to it.
+
+    The WRITE path has taken its tuple from the selected bundle since the v2
+    contract landed (`l2/bundles.py`, `JOB_HUNTER_L2_BUNDLE`). The read paths
+    used to compute theirs from the three v1 module constants instead, which was
+    invisible only while `v1` was the selected bundle: the moment the settings
+    name any other one, every extraction is written under that bundle's tuple
+    while `q profile`, `q claims` and `pulse` keep asking for v1's, so a corpus
+    extracting normally reads back empty. One helper, three call sites, so the
+    read surface follows whatever bundle the settings name — including back
+    again, since rollback is selecting the previous bundle and never deleting
+    rows.
+    """
+    from jobhunter.l2.bundles import get_bundle
+
+    bundle = get_bundle(settings.l2_bundle)
+    return bundle.prompt_version, bundle.schema_version, bundle.validator_version
+
+
+def profile_row(conn: Conn, settings: Settings, document_hash: str) -> dict[str, Any] | None:
     """The row a profile is reported from: the engine tuple in force first —
     a retired prompt's "validated" never outranks the current engine's verdict
     — then validated over the newest state, so a quarantined document can
     explain itself instead of looking absent. A row only a retired tuple left
     behind still surfaces, with `current_tuple` false so the payload can label
     it historical."""
-    from jobhunter.l2.prompt import PROMPT_VERSION
-    from jobhunter.l2.runner import SCHEMA_VERSION
-    from jobhunter.l2.transforms import VALIDATOR_VERSION
-
-    tup = (PROMPT_VERSION, SCHEMA_VERSION, VALIDATOR_VERSION)
+    tup = active_tuple(settings)
     return conn.execute(
         "SELECT e.status, e.model, e.prompt_version, e.validator_version, e.profile,"
         " e.updated_at, v.title, v.company, v.url,"
@@ -203,9 +221,18 @@ def profile_row(conn: Conn, document_hash: str) -> dict[str, Any] | None:
 def profile_payload(
     document_hash: str, row: dict[str, Any], *, full: bool = False
 ) -> dict[str, Any]:
-    """One validated row as a payload: the digest, or the stored profile
-    verbatim under `full` — quotes and spans are what `full` buys."""
+    """One serving row as a payload: the digest, or the stored profile verbatim
+    under `full` — quotes and spans are what `full` buys.
+
+    `status` and `quality` ride on the envelope, not inside the digest, because
+    a `needs_review` row serves the same slice a validated one does (parsing
+    contract v3 §4) and the two facts that separate them are which status it
+    holds and what its samples split on (`quality.sample_notes`). An agent that
+    had to pass `--full` to learn it was reading a review row would read most of
+    them without knowing.
+    """
     profile = row["profile"]
+    quality = profile.get("quality") if isinstance(profile, dict) else None
     return {
         "document_hash": document_hash, "status": row["status"], "model": row["model"],
         "prompt_version": row["prompt_version"],
@@ -213,18 +240,83 @@ def profile_payload(
         "historical": not row["current_tuple"],
         "updated_at": iso(row["updated_at"]),
         "title": row["title"], "company": row["company"], "url": row["url"],
+        "quality": quality,
         "profile": profile if full else profile_summary(profile),
     }
 
 
-def profile_view(conn: Conn, document_hash: str, *, full: bool = False) -> Page | None:
-    """The demand profile of one document. None when nothing validated it —
+def profile_view(
+    conn: Conn, settings: Settings, document_hash: str, *, full: bool = False
+) -> Page | None:
+    """The demand profile of one document. None when nothing serves it —
     `profile_row` says which of the two reasons that is, and callers that owe
-    the reader a teaching message read it themselves."""
-    row = profile_row(conn, document_hash)
-    if row is None or row["status"] != "validated" or row["profile"] is None:
+    the reader a teaching message read it themselves.
+
+    Serving is the store's own predicate (`extraction.SERVING_STATUSES`): the
+    aggregate and the blob are refilled for the same rows this answers from, so
+    `q claims` can never name a document `q profile` then refuses to explain.
+    """
+    from jobhunter.store.extraction import SERVING_STATUSES
+
+    row = profile_row(conn, settings, document_hash)
+    if row is None or row["status"] not in SERVING_STATUSES or row["profile"] is None:
         return None
     return Page(profile_payload(document_hash, row, full=full))
+
+
+def mention_context(profile: Any, surface: str, area_kind: str) -> dict[str, Any]:
+    """What a schema-3 record says AROUND one (mention, kind) row: the section
+    heading that row's statement sits under, and the modal phrase it quotes.
+
+    The three columns of `profile_mentions` predate both fields and schema.sql
+    is not this increment's to change, so the context is read back off the
+    served blob — the only place it is durable.
+
+    `area_kind` is half the key, not decoration. `serve.mention_rows` emits one
+    row per (mention, STATEMENT) pair and puts the statement's kind in
+    `area_kind`, so a mention supporting a qualification and a responsibility is
+    two rows differing only there. Answering both from the first statement the
+    mention links puts one statement's heading and modal phrase in the other's
+    mouth — exactly the misattribution schema 3 exists to prevent — so the match
+    is on the pair: among the statements this surface links, the first IN RECORD
+    ORDER whose `kind` is `area_kind`. Record order (the blob's `statements`
+    list, not the mention's link list) is the tie-break when a mention links
+    several statements of one kind, because three columns can carry only one
+    answer and the choice has to be the same on every read.
+
+    Returns the two keys only when such a statement exists; `{}` otherwise —
+    absence IS the signal that this row speaks the older vocabulary and its
+    verdict columns are the ones to read (a v1 blob has no `statements` at all,
+    a schema-2 one has statements whose verdicts live in `importance`/
+    `proficiency`). A schema-3 statement that sits under no heading and quotes
+    no modal phrase still returns both keys, set to None: present-and-null is a
+    schema-3 row with nothing to say, missing is a row that says it differently.
+
+    Defensive throughout: the argument is a stored blob, guaranteed only to
+    match the schema of the day it was written.
+    """
+    if not isinstance(profile, dict):
+        return {}
+    wanted = surface.casefold()
+    linked: set[str] = set()
+    for entry in profile.get("mentions") or []:
+        if not isinstance(entry, dict) or str(entry.get("surface", "")).casefold() != wanted:
+            continue
+        linked.update(
+            sid for sid in entry.get("statement_ids") or [] if isinstance(sid, str)
+        )
+    for statement in profile.get("statements") or []:
+        if not isinstance(statement, dict) or statement.get("id") not in linked:
+            continue
+        if statement.get("kind") != area_kind or "section_heading" not in statement:
+            continue  # another kind's row, or schema 2: verdicts, not headings
+        refs = statement.get("modality_evidence") or []
+        quote = refs[0].get("text") if isinstance(refs, list) and refs else None
+        return {
+            "section_heading": statement["section_heading"],
+            "modality": quote if isinstance(quote, str) else None,
+        }
+    return {}
 
 
 def claims_view(
@@ -240,25 +332,49 @@ def claims_view(
     """Who demands one mention, across the corpus — the postings living on it
     today, scoped to the engine tuple in force exactly as `pulse` scopes its
     profiles: retired prompt/validator versions still sit in `profile_mentions`
-    after a rebuild."""
-    from jobhunter.l2.prompt import PROMPT_VERSION
-    from jobhunter.l2.runner import SCHEMA_VERSION
-    from jobhunter.l2.state import globs_to_regex
-    from jobhunter.l2.transforms import VALIDATOR_VERSION
+    after a rebuild.
 
+    Each row says which tier it came from (`extraction_status`: a review row
+    serves alongside a validated one, parsing contract v3 §4) and carries the
+    two fields a schema-3 claim replaced its verdict with. Those come from the
+    served blobs of the documents on THIS page — one blob per DISTINCT document,
+    at most `limit` of them, in one query, loaded the way `pulse` already loads a
+    blob per profiled event — never one fetch per row and never a second pass
+    over the corpus.
+
+    `section_heading` and `modality` are present (possibly null) on a schema-3
+    row and ABSENT on an older one, which is how a renderer tells the two apart
+    without guessing: `NO_IMPORTANCE` is the string `contextual`, so a schema-3
+    row's `importance` column reads like a verdict it never issued, and only the
+    presence of these keys says not to print it. `schema_version` rides along as
+    the partition the row was written under.
+    """
+    from jobhunter.l2.state import globs_to_regex
+
+    prompt_version, schema_version, validator_version = active_tuple(settings)
+    engine = {
+        "model_regex": globs_to_regex(settings.l2_models), "prompt_version": prompt_version,
+        "schema_version": schema_version, "validator_version": validator_version,
+    }
     rows = queries.claims_by_mention(
         conn, mention=mention, importance=importance, source=source, board=board, limit=limit,
-        model_regex=globs_to_regex(settings.l2_models), prompt_version=PROMPT_VERSION,
-        schema_version=SCHEMA_VERSION, validator_version=VALIDATOR_VERSION)
+        **engine)
     truncated = len(rows) > limit
     rows = rows[:limit]
-    data = [
-        {"document_hash": r["document_hash"], "mention": r["mention"],
-         "area_kind": r["area_kind"], "importance": r["importance"], "uid": r["uid"],
-         "board": f"{r['source']}:{r['board']}", "title": r["title"], "company": r["company"],
-         "url": r["url"]}
-        for r in rows
-    ]
+    served = queries.served_profiles(
+        conn, sorted({r["document_hash"] for r in rows}), **engine)
+    data: list[dict[str, Any]] = []
+    for r in rows:
+        blob = served.get(r["document_hash"]) or {}
+        data.append(
+            {"document_hash": r["document_hash"], "mention": r["mention"],
+             "area_kind": r["area_kind"], "importance": r["importance"],
+             "schema_version": r["schema_version"],
+             "extraction_status": blob.get("status"),
+             **mention_context(blob.get("profile"), r["mention"], r["area_kind"]),
+             "uid": r["uid"], "board": f"{r['source']}:{r['board']}", "title": r["title"],
+             "company": r["company"], "url": r["url"]}
+        )
     return Page(data, truncated=truncated)
 
 

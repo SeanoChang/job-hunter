@@ -163,7 +163,7 @@ def _mentions(pg: Conn) -> list[tuple[str, str, str]]:
     return [(r["mention"], r["area_kind"], r["importance"]) for r in rows]
 
 
-def test_profile_mentions_are_a_validated_only_aggregate(pg: Conn) -> None:
+def test_profile_mentions_are_a_served_status_aggregate(pg: Conn) -> None:
     dh = "d" * 63 + "1"
     key: dict[str, Any] = {"document_hash": dh, "model": "z-ai/glm-5.2:free", **CONFIG}
     extraction.upsert_state(
@@ -235,6 +235,102 @@ def test_profile_mentions_follow_the_extraction_row(pg: Conn) -> None:
     assert len(_mentions(pg)) == 3
 
 
+def _serving_blob() -> tuple[dict[str, Any], list[tuple[str, str, str]]]:
+    """The settled schema-3 record as the runner hands it to the store: the
+    stored blob and the mention projection that belongs to it."""
+    from jobhunter.l2.v2 import serve
+    from tests.l2.v2.conftest import make_serving_record
+
+    record = make_serving_record()
+    return serve.profile_of(record), serve.mention_rows(record)
+
+
+V3_CONFIG = {**CONFIG, "schema_version": "3"}
+
+
+def _chosen(pg: Conn, dh: str) -> str:
+    """One archived attempt on `dh`, so a row may cite it as its candidate."""
+    a = _attempt(document_hash=dh, schema_version="3")
+    extraction.record_attempt(pg, a, None)
+    return a.attempt_key
+
+
+def test_profile_mentions_are_refilled_for_a_needs_review_row(pg: Conn) -> None:
+    """Parsing contract v3 §4: every verified extraction serves. A row parked
+    for review still chose a candidate, and what that candidate extracted is
+    what the aggregate carries — with its quality note attached to the blob."""
+    dh = "d" * 63 + "1"
+    key: dict[str, Any] = {"document_hash": dh, "model": "z-ai/glm-5.2:free", **V3_CONFIG}
+    att = _chosen(pg, dh)
+    profile, mentions = _serving_blob()
+    extraction.upsert_state(
+        pg, **key, state=DerivedState("needs_review", att), profile=profile,
+        mentions=mentions, updated_at="2026-09-22T00:00:00Z",
+    )
+    assert _mentions(pg) == [
+        ("Bachelor's degree", "qualification", "contextual"),
+        ("CPA", "qualification", "contextual"),
+    ]
+    row = pg.execute("SELECT status, profile FROM extractions").fetchone()
+    assert row is not None and row["status"] == "needs_review"
+    assert row["profile"]["quality"]["sample_notes"]["splits"] == {"kind": 2}
+
+    # the flip a human review performs: same rows, no duplicates, no loss
+    extraction.upsert_state(
+        pg, **key, state=DerivedState("validated", att), profile=profile,
+        mentions=mentions, updated_at="2026-09-22T01:00:00Z",
+    )
+    assert _mentions(pg) == [
+        ("Bachelor's degree", "qualification", "contextual"),
+        ("CPA", "qualification", "contextual"),
+    ]
+    count = pg.execute("SELECT count(*) AS n FROM profile_mentions").fetchone()
+    assert count is not None and count["n"] == 2
+
+
+def test_quarantined_and_pending_rows_still_clear_the_aggregate(pg: Conn) -> None:
+    dh = "d" * 63 + "1"
+    key: dict[str, Any] = {"document_hash": dh, "model": "z-ai/glm-5.2:free", **V3_CONFIG}
+    att = _chosen(pg, dh)
+    profile, mentions = _serving_blob()
+    extraction.upsert_state(
+        pg, **key, state=DerivedState("needs_review", att), profile=profile,
+        mentions=mentions, updated_at="2026-09-22T00:00:00Z",
+    )
+    assert len(_mentions(pg)) == 2
+    extraction.upsert_state(  # a quarantined row asserts nothing, blob or not
+        pg, **key, state=DerivedState("quarantined", None), profile=profile,
+        mentions=mentions, updated_at="2026-09-22T02:00:00Z",
+    )
+    assert _mentions(pg) == []
+
+    extraction.upsert_state(
+        pg, **key, state=DerivedState("needs_review", att), profile=profile,
+        mentions=mentions, updated_at="2026-09-22T03:00:00Z",
+    )
+    assert len(_mentions(pg)) == 2
+    extraction.upsert_state(  # back to pending: the config's rows go entirely
+        pg, **key, state=DerivedState(None, None), profile=None,
+        updated_at="2026-09-22T04:00:00Z",
+    )
+    assert _mentions(pg) == []
+    assert pg.execute("SELECT count(*) AS n FROM extractions").fetchone()["n"] == 0  # type: ignore[index]
+
+
+def test_a_needs_review_row_without_a_chosen_candidate_serves_nothing(pg: Conn) -> None:
+    """The predicate is status AND a chosen candidate: a review row whose fold
+    never chose one has no profile to project, so the key stays empty."""
+    dh = "d" * 63 + "1"
+    extraction.upsert_state(
+        pg, document_hash=dh, model="z-ai/glm-5.2:free", **V3_CONFIG,
+        state=DerivedState("needs_review", None), profile=None,
+        updated_at="2026-09-22T00:00:00Z",
+    )
+    assert _mentions(pg) == []
+    row = pg.execute("SELECT status FROM extractions").fetchone()
+    assert row is not None and row["status"] == "needs_review"
+
+
 def _validate(pg: Conn, dh: str) -> None:
     extraction.upsert_state(
         pg, document_hash=dh, model="z-ai/glm-5.2:free", **CONFIG,
@@ -295,3 +391,40 @@ def test_claims_by_mention_is_scoped_to_the_engine_in_force(pg: Conn) -> None:
     assert [r["importance"] for r in claims_by_mention(pg, mention="Python", **old)] == [
         "preferred"
     ]
+
+
+def test_the_runners_serving_predicate_is_extractions_own() -> None:
+    """`runner._write_derived` decides whether to project a blob and its
+    mentions with a bare `state.status in ("validated", "needs_review")`
+    literal — `extraction.SERVING_STATUSES` spelled a second time. Two spellings
+    of one rule drift silently and in the worst direction: the writer projects a
+    status the store then refuses to keep, or keeps one it refuses to project,
+    and the aggregate ends up disagreeing with the blob about one document.
+
+    The literal sits inside a function body, so it is read out of the source
+    rather than imported. `runner.py` is not this increment's to edit — folding
+    the two together is a follow-up — but it cannot move without this failing.
+    """
+    import ast
+    import inspect
+
+    from jobhunter.l2 import runner
+
+    found: list[frozenset[str]] = []
+    for node in ast.walk(ast.parse(inspect.getsource(runner))):
+        if not isinstance(node, ast.Compare) or len(node.ops) != 1:
+            continue
+        if not isinstance(node.ops[0], ast.In):
+            continue
+        if not (isinstance(node.left, ast.Attribute) and node.left.attr == "status"):
+            continue
+        elts = getattr(node.comparators[0], "elts", None)
+        if elts is None:
+            continue
+        found.append(frozenset(
+            e.value for e in elts if isinstance(e, ast.Constant) and isinstance(e.value, str)
+        ))
+    assert extraction.SERVING_STATUSES in found, (
+        f"runner.py carries no `.status in {sorted(extraction.SERVING_STATUSES)}` literal; "
+        f"the status tuples it does test against are {[sorted(f) for f in found]}"
+    )

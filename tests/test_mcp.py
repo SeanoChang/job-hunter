@@ -40,6 +40,7 @@ from tests.test_cli_q import (  # noqa: F401  -- qenv is a fixture, used by name
     ISO1,
     _doc_hash,
     _seed_profile,
+    _seed_v3_profile,
     qenv,
 )
 
@@ -208,7 +209,7 @@ def test_the_document_and_profile_tools_are_their_views(
     assert _call(client, "document", document_hash=dh)["data"] == _as_json(document.data)
     assert _call(client, "document", document_hash=dh, slice="0:1")["data"]["markdown"] == (
         document.record()["markdown"][:1])
-    summary = views.profile_view(pg, dh)
+    summary = views.profile_view(pg, Settings.load(), dh)
     assert summary is not None
     assert _call(client, "profile", document_hash=dh)["data"] == _as_json(summary.data)
     full = _call(client, "profile", document_hash=dh, full=True)["data"]
@@ -216,6 +217,23 @@ def test_the_document_and_profile_tools_are_their_views(
     claims = views.claims_view(pg, Settings.load(), mention="python")
     assert _call(client, "claims", mention="python")["data"] == _as_json(claims.data)
     assert _call(client, "claims", mention="python", importance="preferred")["data"] == []
+
+
+def test_the_profile_tool_serves_a_needs_review_row(
+    client: TestClient, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The server shares the views, so the v3 serving rule reaches it too: a
+    review row answers, labelled, with its quality note."""
+    dh = _doc_hash()
+    _seed_v3_profile(pg, dh, monkeypatch)
+    view = views.profile_view(pg, Settings.load(), dh)
+    assert view is not None
+    data = _call(client, "profile", document_hash=dh)["data"]
+    assert data == _as_json(view.data)
+    assert data["status"] == "needs_review"
+    assert data["quality"]["sample_notes"]["splits"] == {"kind": 2}
+    claims = views.claims_view(pg, Settings.load(), mention="CPA")
+    assert _call(client, "claims", mention="CPA")["data"] == _as_json(claims.data)
 
 
 def test_absent_identifiers_and_bad_flags_are_tool_errors(

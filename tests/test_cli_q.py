@@ -269,6 +269,72 @@ def _seed_profile(pg: psycopg.Connection[dict[str, Any]], dh: str) -> dict[str, 
     return profile
 
 
+#: The bundle `_seed_v3_profile` seeds and reads under, and its tuple. Named
+#: once so a test asserting what partition a row landed in tracks the registry
+#: instead of re-spelling a version string that the cutover is going to move.
+SEED_BUNDLE = "v2"
+
+
+def _seed_tuple() -> tuple[str, str, str]:
+    from jobhunter.l2.bundles import get_bundle
+
+    b = get_bundle(SEED_BUNDLE)
+    return b.prompt_version, b.schema_version, b.validator_version
+
+
+SEED_TUPLE = _seed_tuple()
+
+
+def _seed_v3_profile(
+    pg: psycopg.Connection[dict[str, Any]],
+    dh: str,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    status: str = "needs_review",
+    record: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One settled schema-3 row, written the way `runner.settle` writes it: the
+    served blob plus the mention projection derived from the same record, filed
+    under the ACTIVE BUNDLE's tuple.
+
+    Selecting a bundle is how a corpus partition is chosen — for the write path
+    since `l2/bundles.py` landed, and for the read path since
+    `views.active_tuple`. So the seam these tests pull on is the environment
+    (`JOB_HUNTER_L2_BUNDLE`), never a module constant: patching
+    `l2.runner.SCHEMA_VERSION` would make the read surface look scoped while
+    leaving the thing that actually scopes it untouched, which is exactly the
+    defect this helper now exists to pin.
+
+    The fixture records are schema-3 SHAPED (assembled at schema 3, so their
+    statements carry `section_heading`) while the registered v2 bundle is still
+    a schema-2 registration on this branch. `SEED_TUPLE` is therefore what the
+    row is keyed by and what callers assert against, and the two line up of
+    their own accord once the bundle's schema version is bumped.
+
+    `record` takes one of the sibling serving fixtures — the multi-kind one, the
+    headingless one — so a caller can seed a shape the default record has not
+    got without rebuilding the write path around it.
+    """
+    from jobhunter.l2.state import DerivedState
+    from jobhunter.l2.v2 import serve
+    from jobhunter.store import extraction
+    from tests.l2.v2.conftest import make_serving_record
+
+    monkeypatch.setenv("JOB_HUNTER_L2_BUNDLE", SEED_BUNDLE)
+    prompt_version, schema_version, validator_version = SEED_TUPLE
+    if record is None:
+        record = make_serving_record(lifecycle=status)
+    profile = serve.profile_of(record)
+    extraction.upsert_state(
+        pg, document_hash=dh, model="z-ai/glm-5.2:free", prompt_version=prompt_version,
+        schema_version=schema_version, validator_version=validator_version,
+        state=DerivedState(status, None), profile=profile,
+        mentions=serve.mention_rows(record), updated_at="2026-09-22T00:00:00Z",
+    )
+    pg.commit()
+    return profile
+
+
 def test_q_profile_summary_then_full(
     qenv: Path, pg: psycopg.Connection[dict[str, Any]]
 ) -> None:
@@ -322,6 +388,154 @@ def test_q_profile_unvalidated_row_says_so(
     assert "review show" in body["error"]["hint"]
 
 
+def test_q_profile_serves_a_needs_review_row_with_its_quality_note(
+    qenv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parsing contract v3 §4: a review row is a verified extraction with a note
+    against it, so `q profile` answers from it — labelled `needs_review`, with
+    the `sample_notes` the samples produced."""
+    dh = _doc_hash()
+    profile = _seed_v3_profile(pg, dh, monkeypatch)
+    body = _data(["q", "profile", "--doc", dh[:12]])
+    data = body["data"]
+    assert data["status"] == "needs_review"
+    assert data["quality"]["sample_notes"] == {
+        "k": 3, "f1": 0.82, "aligned_pairs": 7, "splits": {"kind": 2}
+    }
+    full = _data(["q", "profile", "--doc", dh[:12], "--full"])["data"]
+    assert full["profile"] == profile
+    assert full["profile"]["quality"]["sample_notes"]["splits"] == {"kind": 2}
+
+
+def test_q_profile_table_reads_schema_3_headings_not_verdicts(
+    qenv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A schema-3 statement carries no importance and no proficiency, so the
+    human table prints the section it sits under and the modal phrase it quotes
+    — never a verdict the parser no longer issues."""
+    dh = _doc_hash()
+    _seed_v3_profile(pg, dh, monkeypatch)
+    r = runner.invoke(cli.app, ["q", "profile", "--doc", dh[:12], "-o", "table"])
+    assert r.exit_code == 0, r.stdout + r.stderr
+    assert "Bachelor's degree" in r.stdout and "Requirements" in r.stdout
+    assert "CPA certification" in r.stdout and "Nice to have" in r.stdout
+    assert '"required"' in r.stdout  # the posting's own modal phrase, quoted
+    assert "contextual" not in r.stdout  # the no-verdict sentinel is never printed
+    assert "needs_review" in r.stdout
+    assert "kind=2" in r.stdout  # what the samples split on
+
+
+def test_q_profile_table_prints_no_verdict_for_a_headingless_schema_3_record(
+    qenv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shape that tempts a renderer back into the sentinel: every statement
+    schema-3, none of them under a heading, none quoting a modal phrase. The
+    statement lines still read as statements, and no verdict is printed."""
+    from jobhunter.l2.v2.types import NO_IMPORTANCE
+    from tests.l2.v2.conftest import make_headingless_serving_record
+
+    dh = _doc_hash()
+    _seed_v3_profile(pg, dh, monkeypatch, record=make_headingless_serving_record())
+    r = runner.invoke(cli.app, ["q", "profile", "--doc", dh[:12], "-o", "table"])
+    assert r.exit_code == 0, r.stdout + r.stderr
+    assert "Bachelor's degree" in r.stdout and "CPA certification" in r.stdout
+    assert NO_IMPORTANCE not in r.stdout
+
+
+def test_q_claims_serves_a_review_rows_skills_with_heading_and_modality(
+    qenv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dh = _doc_hash()
+    _seed_v3_profile(pg, dh, monkeypatch)
+    body = _data(["q", "claims", "--mention", "cpa"])
+    assert body["meta"]["count"] == 1
+    row = body["data"][0]
+    assert row["document_hash"] == dh and row["mention"] == "CPA"
+    assert row["extraction_status"] == "needs_review"
+    assert row["section_heading"] == "Nice to have" and row["modality"] is None
+    degree = _data(["q", "claims", "--mention", "bachelor's degree"])["data"][0]
+    assert degree["section_heading"] == "Requirements" and degree["modality"] == "required"
+    r = runner.invoke(cli.app, ["q", "claims", "--mention", "bachelor's degree", "-o", "table"])
+    assert r.exit_code == 0, r.stdout + r.stderr
+    assert "Requirements" in r.stdout and '"required"' in r.stdout
+    assert "contextual" not in r.stdout  # no verdict column for a schema-3 row
+
+
+def test_q_claims_renders_each_kinds_own_heading_and_quote(
+    qenv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two rows for one mention, one per statement kind: the table reads each
+    row's own section and own quoted modal phrase, never the first statement's
+    twice."""
+    from tests.l2.v2.conftest import make_multi_kind_serving_record
+
+    dh = _doc_hash()
+    _seed_v3_profile(pg, dh, monkeypatch, record=make_multi_kind_serving_record())
+    r = runner.invoke(cli.app, ["q", "claims", "--mention", "cpa", "-o", "table"])
+    assert r.exit_code == 0, r.stdout + r.stderr
+    lines = [line for line in r.stdout.splitlines() if line.strip()]
+    assert len(lines) == 2
+    qualification = next(ln for ln in lines if "qualification" in ln)
+    responsibility = next(ln for ln in lines if "responsibility" in ln)
+    assert qualification.startswith('Requirements  "required"')
+    assert responsibility.startswith('Nice to have  "preferred"')
+
+
+def test_q_claims_table_leaves_a_headingless_schema_3_row_blank(
+    qenv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A schema-3 statement with a null heading and no quoted modal phrase has
+    nothing to print but the absence: printing the `NO_IMPORTANCE` sentinel
+    instead would be printing the verdict the contract stopped issuing."""
+    from jobhunter.l2.v2.types import NO_IMPORTANCE
+    from tests.l2.v2.conftest import make_headingless_serving_record
+
+    dh = _doc_hash()
+    _seed_v3_profile(pg, dh, monkeypatch, record=make_headingless_serving_record())
+    r = runner.invoke(cli.app, ["q", "claims", "--mention", "cpa", "-o", "table"])
+    assert r.exit_code == 0, r.stdout + r.stderr
+    # the heading cell, empty (24 wide + the column separator) — the row's own
+    # kind is the first thing that prints
+    assert r.stdout.startswith(" " * 25 + "qualification")
+    assert NO_IMPORTANCE not in r.stdout
+    row = _data(["q", "claims", "--mention", "cpa"])["data"][0]
+    # present and null: a schema-3 row with nothing to say, not a legacy one
+    assert row["section_heading"] is None and row["modality"] is None
+    assert row["schema_version"] == SEED_TUPLE[1]
+    assert row["importance"] == NO_IMPORTANCE  # the sentinel, still in the column
+
+
+def test_q_claims_importance_is_documented_as_a_legacy_filter(qenv: Path) -> None:
+    # wide enough that the option table prints its help instead of eliding it
+    r = runner.invoke(cli.app, ["q", "claims", "--help"], env={"COLUMNS": "200"})
+    assert r.exit_code == 0
+    assert "Legacy filter, schema-2 rows only" in r.stdout
+    assert "required|preferred" in r.stdout  # and the sentinel is not among them
+    # and why the third v1 word is missing: it is the no-verdict sentinel now
+    assert "contextual" in r.stdout and "sentinel" in r.stdout
+
+
+def test_q_claims_importance_refuses_the_no_verdict_sentinel(
+    qenv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--importance contextual` used to select every schema-3 row in the corpus
+    alongside the legacy rows that really call a mention contextual, because
+    `NO_IMPORTANCE` IS that string — a filter documented as legacy-only that in
+    fact spanned both partitions. It is a usage error now, and says why."""
+    from jobhunter.l2.v2.types import NO_IMPORTANCE
+
+    dh = _doc_hash()
+    _seed_v3_profile(pg, dh, monkeypatch)
+    body = _data(["q", "claims", "--mention", "cpa", "--importance", NO_IMPORTANCE], code=2)
+    assert body["error"]["kind"] == "usage"
+    assert body["error"]["message"] == "contextual is not a verdict; schema-3 rows carry none"
+    assert body["error"]["valid"] == ["required", "preferred"]
+    # the legacy words still filter, and select nothing in the schema-3 partition
+    assert _data(["q", "claims", "--mention", "cpa", "--importance", "required"])[
+        "meta"]["count"] == 0
+    assert _data(["q", "claims", "--mention", "cpa"])["meta"]["count"] == 1
+
+
 def test_q_claims_across_the_corpus(qenv: Path, pg: psycopg.Connection[dict[str, Any]]) -> None:
     dh = _doc_hash()
     _seed_profile(pg, dh)
@@ -329,14 +543,19 @@ def test_q_claims_across_the_corpus(qenv: Path, pg: psycopg.Connection[dict[str,
     assert body["meta"]["count"] == 1 and body["meta"]["truncated"] is False
     assert body["data"] == [{
         "document_hash": dh, "mention": "Python", "area_kind": "technical",
-        "importance": "required", "uid": "ab:ramp:x", "board": "ashby:ramp",
+        "importance": "required", "extraction_status": "validated",
+        # a v1 blob has no statements, so it has no heading or modal phrase to
+        # offer: the two schema-3 keys are ABSENT rather than null, which is how
+        # a renderer knows this row's verdict column is the one to read
+        "schema_version": "1",
+        "uid": "ab:ramp:x", "board": "ashby:ramp",
         "title": "Rust Engineer II", "company": "Ramp",
         "url": "https://jobs.ashbyhq.com/ramp/x",
     }]
     assert dh[:12] in body["meta"]["hint"]
     bad = _data(["q", "claims", "--mention", "Python", "--importance", "bogus"], code=2)
     assert bad["error"]["kind"] == "usage"
-    assert bad["error"]["valid"] == ["required", "preferred", "contextual"]
+    assert bad["error"]["valid"] == ["required", "preferred"]
     assert _data(["q", "claims", "--mention", "Python", "--importance", "required"])[
         "meta"]["count"] == 1
     assert _data(["q", "claims", "--mention", "Python", "--board", "lever:palantir"])[

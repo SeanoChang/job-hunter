@@ -22,12 +22,16 @@ import pytest
 from jobhunter import views
 from jobhunter.config import Settings
 from jobhunter.timeutil import parse_iso
+from tests.l2.v2.conftest import make_multi_kind_serving_record
 from tests.test_cli_q import (  # noqa: F401  -- qenv is a fixture, used by name
     DAY2,
     ISO0,
+    SEED_BUNDLE,
+    SEED_TUPLE,
     _data,
     _doc_hash,
     _seed_profile,
+    _seed_v3_profile,
     qenv,
 )
 
@@ -122,17 +126,18 @@ def test_profile_view_matches_summary_and_full(
 ) -> None:
     dh = _doc_hash()
     profile = _seed_profile(pg, dh)
-    page = views.profile_view(pg, dh)
+    settings = Settings.load()
+    page = views.profile_view(pg, settings, dh)
     assert page is not None
     assert _as_json(page.data) == _data(["q", "profile", "--doc", dh[:12]])["data"]
-    full = views.profile_view(pg, dh, full=True)
+    full = views.profile_view(pg, settings, dh, full=True)
     assert full is not None
     assert _as_json(full.data) == _data(["q", "profile", "--doc", dh[:12], "--full"])["data"]
     assert full.record()["profile"] == profile
     # the two reasons a profile is absent stay distinguishable: the row says which
-    assert views.profile_view(pg, "0" * 64) is None
-    assert views.profile_row(pg, "0" * 64) is None
-    assert views.profile_row(pg, dh) is not None
+    assert views.profile_view(pg, settings, "0" * 64) is None
+    assert views.profile_row(pg, settings, "0" * 64) is None
+    assert views.profile_row(pg, settings, dh) is not None
 
 
 def test_profile_row_pins_the_current_engine_tuple(
@@ -160,10 +165,11 @@ def test_profile_row_pins_the_current_engine_tuple(
         updated_at="2026-08-30T00:00:00Z",
     )
     pg.commit()
-    row = views.profile_row(pg, dh)
+    settings = Settings.load()  # the default bundle: v1, the tuple seeded above
+    row = views.profile_row(pg, settings, dh)
     assert row is not None
     assert row["prompt_version"] == PROMPT_VERSION and row["status"] == "quarantined"
-    assert views.profile_view(pg, dh) is None  # the stale profile is not served
+    assert views.profile_view(pg, settings, dh) is None  # the stale profile is not served
 
     # a doc only ever extracted under a retired tuple still explains itself — labeled
     old = "e" * 64
@@ -174,14 +180,14 @@ def test_profile_row_pins_the_current_engine_tuple(
         updated_at="2026-08-30T00:00:00Z",
     )
     pg.commit()
-    hist = views.profile_row(pg, old)
+    hist = views.profile_row(pg, settings, old)
     assert hist is not None
     assert views.profile_payload(old, hist)["historical"] is True
 
     # and a current-tuple row is not so labeled
     fresh = "f" * 64
     _seed_profile(pg, fresh)
-    current = views.profile_row(pg, fresh)
+    current = views.profile_row(pg, settings, fresh)
     assert current is not None
     assert views.profile_payload(fresh, current)["historical"] is False
 
@@ -199,6 +205,198 @@ def test_claims_view_is_what_q_claims_emits(
     assert views.claims_view(pg, settings, mention="Python", importance="preferred").rows() == []
     assert views.claims_view(
         pg, settings, mention="Python", source="lever", board="palantir").rows() == []
+
+
+def test_profile_view_serves_a_needs_review_row(
+    corpus: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store refills a review row, so the view must answer from it — with
+    the status on the payload, so an agent can see which tier it got."""
+    dh = _doc_hash()
+    profile = _seed_v3_profile(pg, dh, monkeypatch)
+    settings = Settings.load()
+    page = views.profile_view(pg, settings, dh)
+    assert page is not None
+    data = page.record()
+    assert data["status"] == "needs_review"
+    assert data["quality"]["sample_notes"]["splits"] == {"kind": 2}
+    assert _as_json(page.data) == _data(["q", "profile", "--doc", dh[:12]])["data"]
+    full = views.profile_view(pg, settings, dh, full=True)
+    assert full is not None and full.record()["profile"] == profile
+
+    # a quarantined row is still not a profile: it explains itself instead
+    from jobhunter.l2.state import DerivedState
+    from jobhunter.store import extraction
+
+    prompt_version, schema_version, validator_version = SEED_TUPLE
+    extraction.upsert_state(
+        pg, document_hash=dh, model="z-ai/glm-5.2:free", prompt_version=prompt_version,
+        schema_version=schema_version, validator_version=validator_version,
+        state=DerivedState("quarantined", None), profile=profile,
+        updated_at="2026-09-22T05:00:00Z",
+    )
+    pg.commit()
+    assert views.profile_view(pg, settings, dh) is None
+
+
+def test_claims_view_carries_the_rows_status_heading_and_modality(
+    corpus: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dh = _doc_hash()
+    _seed_v3_profile(pg, dh, monkeypatch)
+    settings = Settings.load()
+    page = views.claims_view(pg, settings, mention="CPA")
+    rows = page.rows()
+    assert [r["mention"] for r in rows] == ["CPA"]
+    assert rows[0]["extraction_status"] == "needs_review"
+    assert rows[0]["section_heading"] == "Nice to have" and rows[0]["modality"] is None
+    assert _as_json(page.data) == _data(["q", "claims", "--mention", "CPA"])["data"]
+    degree = views.claims_view(pg, settings, mention="bachelor's degree").rows()
+    assert degree[0]["section_heading"] == "Requirements"
+    assert degree[0]["modality"] == "required"
+
+
+def test_claims_view_reads_each_rows_own_statement_when_a_mention_spans_kinds(
+    corpus: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One mention supporting two statements of different kinds is two rows in
+    `profile_mentions`, and each row's heading and quoted modal phrase must come
+    from ITS OWN statement: the row already carries the kind that says which.
+    Answering from the mention alone puts one statement's words in the other's
+    mouth — the misattribution schema 3 exists to prevent."""
+    dh = _doc_hash()
+    _seed_v3_profile(pg, dh, monkeypatch, record=make_multi_kind_serving_record())
+    rows = views.claims_view(pg, Settings.load(), mention="CPA").rows()
+    assert {r["area_kind"]: (r["section_heading"], r["modality"]) for r in rows} == {
+        "qualification": ("Requirements", "required"),
+        "responsibility": ("Nice to have", "preferred"),
+    }
+    assert {r["extraction_status"] for r in rows} == {"needs_review"}
+    assert {r["schema_version"] for r in rows} == {SEED_TUPLE[1]}
+
+
+def test_claims_view_leaves_a_legacy_row_without_the_schema_3_keys(
+    corpus: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    """A v1 blob has no statements to read a heading off, so the two schema-3
+    keys are not on the row at ALL — not present and null. Their absence is what
+    tells a renderer this row's verdict column is the one to print; a null would
+    be indistinguishable from a schema-3 row that has no heading to give."""
+    dh = _doc_hash()
+    _seed_profile(pg, dh)
+    rows = views.claims_view(pg, Settings.load(), mention="python").rows()
+    assert rows[0]["importance"] == "required"
+    assert "section_heading" not in rows[0] and "modality" not in rows[0]
+    assert rows[0]["extraction_status"] == "validated"
+    assert rows[0]["schema_version"] == "1"  # the partition it was written under
+
+
+def test_claims_view_holds_a_headingless_schema_3_row_apart_from_a_legacy_one(
+    corpus: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A schema-3 statement may sit under no heading and quote no modal phrase
+    (`record.schema.json` makes both nullable). The row still carries both keys,
+    set to null — present-and-null is "schema 3, nothing to say", absent is "an
+    older vocabulary" — so no renderer has to fall back on the sentinel."""
+    from jobhunter.l2.v2.types import NO_IMPORTANCE
+    from tests.l2.v2.conftest import make_headingless_serving_record
+
+    dh = _doc_hash()
+    _seed_v3_profile(pg, dh, monkeypatch, record=make_headingless_serving_record())
+    rows = views.claims_view(pg, Settings.load(), mention="CPA").rows()
+    assert len(rows) == 1
+    assert rows[0]["section_heading"] is None and rows[0]["modality"] is None
+    assert rows[0]["schema_version"] == SEED_TUPLE[1]
+    assert rows[0]["importance"] == NO_IMPORTANCE  # the sentinel, still in the column
+
+
+def test_the_read_surface_scopes_to_the_selected_bundle(
+    corpus: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The engine tuple in force is the SELECTED BUNDLE's, not the three v1
+    module constants.
+
+    The write path has keyed every row by the selected bundle's tuple since
+    `l2/bundles.py` landed. While the read paths computed theirs from
+    `l2.prompt.PROMPT_VERSION` / `l2.runner.SCHEMA_VERSION` /
+    `l2.transforms.VALIDATOR_VERSION` instead, naming any other bundle made the
+    whole read surface go dark on a corpus that was extracting normally — every
+    row written under the new tuple, every read asking for v1's. That is the
+    cutover blocker, so it is pinned at the helper all three call sites share
+    and then at each of the three.
+    """
+    from jobhunter.l2.bundles import get_bundle
+    from jobhunter.l2.prompt import PROMPT_VERSION
+    from jobhunter.l2.runner import SCHEMA_VERSION
+    from jobhunter.l2.transforms import VALIDATOR_VERSION
+
+    v1 = get_bundle("v1")
+    assert views.active_tuple(Settings.load()) == (
+        v1.prompt_version, v1.schema_version, v1.validator_version)
+    monkeypatch.setenv("JOB_HUNTER_L2_BUNDLE", SEED_BUNDLE)
+    assert views.active_tuple(Settings.load()) == SEED_TUPLE
+    # and the seeded partition really is one the v1 constants would have missed
+    assert SEED_TUPLE != (PROMPT_VERSION, SCHEMA_VERSION, VALIDATOR_VERSION)
+
+    dh = _doc_hash()
+    _seed_v3_profile(pg, dh, monkeypatch)  # written under the v2 bundle's tuple
+    settings = Settings.load()
+    assert settings.l2_bundle == SEED_BUNDLE
+
+    # q profile
+    page = views.profile_view(pg, settings, dh)
+    assert page is not None and page.record()["status"] == "needs_review"
+    # q claims
+    assert [r["document_hash"] for r in views.claims_view(pg, settings, mention="CPA").rows()] \
+        == [dh]
+    # pulse
+    payload, _ = views.pulse_view(
+        pg, settings, wm=None, since_iso=ISO0, limit=200, boards=None, now=NOW)
+    inlined = [e for e in payload.record()["events"] if e.get("document_hash") == dh]
+    assert inlined and all(e["extraction_status"] == "needs_review" for e in inlined)
+    assert all(e["profile"] is not None for e in inlined)
+
+    # select the other bundle and the same rows are out of this corpus: the
+    # aggregate scopes them out entirely, and the profile — which deliberately
+    # falls back so a document can always explain itself — says `historical`
+    monkeypatch.setenv("JOB_HUNTER_L2_BUNDLE", "v1")
+    v1_settings = Settings.load()
+    assert views.claims_view(pg, v1_settings, mention="CPA").rows() == []
+    fallback = views.profile_view(pg, v1_settings, dh)
+    assert fallback is not None and fallback.record()["historical"] is True
+    assert page.record()["historical"] is False  # and not under the bundle that wrote it
+
+
+def test_claims_view_loads_one_blob_per_distinct_document_on_the_page(
+    corpus: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two string columns per row are filled from the served blob, and blobs
+    average tens of kilobytes: the page must cost ONE query over the distinct
+    documents it is about to emit, never one per row and never a walk of the
+    corpus. Both mentions of the seeded document produce rows, so a per-row
+    fetch would show up here as two calls and two hashes asked for twice.
+    """
+    dh = _doc_hash()
+    _seed_v3_profile(pg, dh, monkeypatch, record=make_multi_kind_serving_record())
+    settings = Settings.load()
+    calls: list[list[str]] = []
+    real = views.queries.served_profiles
+
+    def counting(conn: Any, doc_hashes: list[str], **kw: Any) -> dict[str, Any]:
+        calls.append(list(doc_hashes))
+        return real(conn, doc_hashes, **kw)
+
+    monkeypatch.setattr(views.queries, "served_profiles", counting)
+    rows = views.claims_view(pg, settings, mention="CPA", limit=1).rows()
+    assert len(rows) == 1  # the page, bounded; two rows exist for this mention
+    assert calls == [[dh]]  # one call, one hash, no second pass
+    calls.clear()
+    rows = views.claims_view(pg, settings, mention="CPA").rows()
+    assert len(rows) == 2 and {r["document_hash"] for r in rows} == {dh}
+    assert calls == [[dh]]  # two rows, one document, still one hash asked for
+    calls.clear()
+    assert views.claims_view(pg, settings, mention="nothing-demands-this").rows() == []
+    assert calls == [[]]  # an empty page asks for nothing, and never the corpus
 
 
 def test_pulse_view_is_what_the_pulse_command_emits(
