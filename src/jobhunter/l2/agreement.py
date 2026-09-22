@@ -1,24 +1,46 @@
 """Cross-sample agreement, computed by code, never an LLM (harness spec §4.5).
 
 Claims are aligned across samples by span-overlap Jaccard >= 0.5 (greedy,
-one-to-one, best overlap first); the gate is mean pairwise claim-set F1 >=
-0.80, importance agreement on required claims >= 0.90, and ZERO negation
-disagreements — polarity is the attribution gate's documented blind spot, so
-any split escalates unconditionally. The consensus record is the medoid
-sample chosen whole (max mean pairwise F1, lowest slot on ties) — samples are
-never merged, because a merged record is one no engine produced and no
-archive object backs.
+one-to-one, best overlap first). The consensus record is the medoid sample
+chosen whole (max mean pairwise F1, lowest slot on ties) — samples are never
+merged, because a merged record is one no engine produced and no archive
+object backs.
 
-Validator/19 adds the rest of spec §6's comparator — "aligned statement kind,
-importance, polarity, scoped fact values, entity links, and alternatives" — as
-five more zero-tolerance DIMENSION checks on aligned pairs, beside importance
-and negation and never folded into F1. No threshold moves: F1 counts how much
-two samples found in common, and what they mean by what they both found is a
-different question, which is how two records identical except `all_of` against
-`any_of` used to score a perfect 1.0 and certify each other (external review
-finding 6). A v1 claim carries none of the five fields, so a v1 cohort scores
-exactly what it scored before — this is a v2 claim-surface addition, and v1's
-frozen validator identity stays honest.
+Validator/20 (parsing contract v3 §3) keeps exactly two checks, `GATES`:
+
+- negation — aligned claims must agree on polarity. It is the attribution
+  gate's documented blind spot, "no sponsorship" read as "sponsorship
+  available" is the one extraction error that actively harms the reader, and
+  the split is rare and cheap.
+- numeric conflict — two aligned claims that both PARSED a number from the
+  same span must agree on dimension, bounds and unit. 144 months against 12 is
+  a misread; the same number under two scope tags is not.
+
+Everything else is still computed and, for a v2 cohort, fails nothing. Mean
+pairwise claim-set F1 and validator/19's five semantic dimensions — statement
+kind, polarity target, scoped values, alternatives, entity links — are
+measured on every aligned pair and reported under `report["metrics"]`. The
+importance ratio is measured on the aligned pairs where either side says
+`required`, and it stays where it always was, at the top-level
+`report["required_importance_agreement"]`, not in `metrics`: the field itself
+is gone from schema 3, so the ratio is now only ever about the archived
+schema-2 corpus.
+
+The evidence for demoting all of that is the 2026-09-22 review-queue analysis:
+294 of 300 parked documents split on label variance over identical text — 172
+pairs of `compensation_statement` against `employer_context`, 1,399 of 1,536
+value splits being one number under two scope tags, `gps` against `global
+positioning systems (gps)`. Calibrating those dimensions was tried and refuted
+(10 of 267 recovered); what the gate was measuring was how two runs LABEL text
+they both read the same way. Demoting them is not a loosening of correctness,
+it is deleting a check that was never measuring it.
+
+That demotion is a policy of the v2 CONTRACT, and this module is the one
+settlement implementation both bundles share — sharing it is not the same as
+merging their policies. A v1 cohort keeps scoring exactly what it scored
+before (`LEGACY_GATES`), because `demand-profile/v5` settles under validator
+"12", a shipped frozen identity parsing contract v3 does not bump. Which set
+applies is read off the cohort itself: see `_gates`.
 
 The thresholds here are part of VALIDATOR_VERSION: wiring this gate into the
 runner, or changing any constant, bumps it (a $0 archive replay).
@@ -41,11 +63,30 @@ JACCARD_MIN = 0.5
 F1_MIN = 0.80
 IMPORTANCE_MIN = 0.90
 
-#: The v2 semantic dimensions (spec §6, validator/19): failure name -> the key
-#: its disagreement count is reported under. All five are zero-tolerance like
-#: negation rather than ratios like importance — a dimension check asks whether
-#: two samples mean the same thing by text they BOTH cited, and 90% of that is
-#: not a meaningful quantity. They are counts, never terms in F1.
+#: The only two checks that FAIL a V2 document (validator/20, parsing contract
+#: v3 §3). Everything else this module computes for such a cohort is reported —
+#: under `report["metrics"]`, or for the importance ratio at its own top-level
+#: key — and decides nothing. v1 keeps `LEGACY_GATES` below.
+GATES: tuple[str, ...] = ("negation", "numeric_conflict")
+
+#: Where `v2/serve._value_signature` puts the derived number inside one stored
+#: value signature: `family|scope|date_kind|component|state` and then, when a
+#: number was derived at all, a marker (`q`/`m`/`d`) and the derivation itself.
+#: The numeric check reads from the marker on, which is exactly what makes a
+#: scope TAG invisible to it (1,399 of 1,536 value splits in the 2026-09-22
+#: sample were one number under two tags) and a misread number visible.
+_SIGNATURE_STATE = 4
+_SIGNATURE_NUMBER = 5
+
+#: The v2 semantic dimensions (spec §6, validator/19): dimension name -> the key
+#: its disagreement count is reported under. Under validator/20 they are METRICS
+#: for a v2 cohort: still computed on every aligned pair, still reported both
+#: under their own key and in `report["metrics"]["splits"]`, and never a
+#: failure. (They stay in `LEGACY_GATES` because validator/19 listed them there;
+#: a v1 claim carries none of these fields, so they cannot fire.) A dimension check
+#: asks whether two samples mean the same thing by text they BOTH cited, and the
+#: 2026-09-22 analysis answered that question for the corpus: they mean the same
+#: thing and label it differently. They are counts, never terms in F1.
 DIMENSIONS: dict[str, str] = {
     "kind": "kind_disagreements",
     "polarity_target": "polarity_target_disagreements",
@@ -53,6 +94,37 @@ DIMENSIONS: dict[str, str] = {
     "alternatives": "alternatives_disagreements",
     "entity_links": "entity_link_disagreements",
 }
+
+#: Validator/19's failure set, in the order it reported them — what a v1 cohort
+#: is still judged on. `demand-profile/v5` settles under validator "12"
+#: (`l2/transforms.VALIDATOR_VERSION`), a shipped corpus partition that parsing
+#: contract v3 does not bump and whose archived cohorts `rebuild` replays; if
+#: validator/20's demotion reached it, the same identity would mean two
+#: settlement policies and a replay would promote documents the live path
+#: parked. The five dimensions are in the list and cannot fire on a v1 claim
+#: (it carries none of those fields), which is exactly what 19 promised.
+LEGACY_GATES: tuple[str, ...] = ("f1", "importance", "negation", *DIMENSIONS)
+
+#: What picks between them. The stored profile blob declares its own contract —
+#: `v2/serve.profile_of` stamps `schema`, `bundles._v1_profile_of` carries only
+#: `facts` and `demand_profile` — so the cohort says which policy judges it
+#: without this module naming a bundle. That matters because the two callers
+#: cannot agree on one any other way: `runner.settle` and `rebuild` both build
+#: the hook from whatever bundle owns the tuple, and review P0-1 requires live
+#: settlement and replay to derive the identical verdict for a mixed archive.
+_CONTRACT_KEY = "schema"
+
+
+def _gates(samples: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+    """Which settlement policy this cohort is judged under.
+
+    A cohort whose every sample declares a contract (`_CONTRACT_KEY`) is a v2
+    one and gets validator/20's two gates. Anything else is judged under the
+    older, stricter set — a cohort this module cannot identify is never the one
+    that fails less, and the only unidentified producer that exists is v1's
+    frozen projection.
+    """
+    return GATES if all(_CONTRACT_KEY in s for s in samples) else LEGACY_GATES
 
 
 def cohort_hook(
@@ -96,11 +168,14 @@ def cohort_hook(
                 "pair_f1": {},
                 "required_importance_agreement": None,
                 "negation_disagreements": 0,
+                "numeric_conflicts": 0,
                 # nothing was compared, so no dimension disagreed — the keys are
                 # here because this report is read by the same code as the other
                 **dict.fromkeys(DIMENSIONS.values(), 0),
                 "thresholds": {"jaccard": JACCARD_MIN, "f1": f1_min,
                                "importance": IMPORTANCE_MIN},
+                "metrics": {"aligned_pairs": 0, "f1": None,
+                            "splits": dict.fromkeys(DIMENSIONS, 0)},
                 "failures": ["sample_failed"],
                 "medoid": 0,
             }
@@ -148,6 +223,10 @@ class _Claim:
     values: tuple[str, ...] = ()
     alternatives: tuple[str, ...] = ()
     entity_links: tuple[str, ...] = ()
+    # the gating half of `values` (validator/20): the same derivations with
+    # their family/scope tags stripped, so the numeric check compares numbers
+    # and the demoted `scoped_values` dimension keeps comparing tags too
+    numbers: tuple[str, ...] = ()
 
 
 def _strings(value: Any) -> tuple[str, ...]:
@@ -156,6 +235,24 @@ def _strings(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()
     return tuple(v for v in value if isinstance(v, str))
+
+
+def _numbers(values: tuple[str, ...]) -> tuple[str, ...]:
+    """The NUMBERS a claim's stored value signatures carry, tags stripped.
+
+    Spec §3's numeric check is "two samples that both parsed a number from the
+    same span must agree on dimension, bounds and unit" — so a signature whose
+    state is not `parsed`, or that carries no derivation at all, contributes
+    nothing to compare, and the family/scope/date-kind/component prefix is
+    dropped because disagreeing about a TAG is not disagreeing about a number.
+    """
+    out: set[str] = set()
+    for value in values:
+        parts = value.split("|")
+        if len(parts) <= _SIGNATURE_NUMBER or parts[_SIGNATURE_STATE] != "parsed":
+            continue
+        out.add("|".join(parts[_SIGNATURE_NUMBER:]))
+    return tuple(sorted(out))
 
 
 def _operators(value: Any) -> tuple[str, ...]:
@@ -200,9 +297,13 @@ def _claims(profile: Mapping[str, Any]) -> list[_Claim]:
                 and raw[0] < raw[1]
             ):
                 span = (raw[0], raw[1])
+            # schema 3 has no importance at all; a schema-2 claim still carries
+            # one and it is still read, because the ratio is still reported —
+            # it simply decides nothing (validator/20)
             imp = c.get("importance")
             kind = c.get("kind")
             target = c.get("polarity_target")
+            values = _strings(c.get("values"))
             out.append(
                 _Claim(
                     span=span,
@@ -211,9 +312,10 @@ def _claims(profile: Mapping[str, Any]) -> list[_Claim]:
                     owner=owner if isinstance(owner, str) else None,
                     kind=kind if isinstance(kind, str) else None,
                     polarity_target=target if isinstance(target, str) else None,
-                    values=_strings(c.get("values")),
+                    values=values,
                     alternatives=_operators(c.get("alternatives")),
                     entity_links=_strings(c.get("entity_links")),
+                    numbers=_numbers(values),
                 )
             )
     return out
@@ -375,10 +477,33 @@ def _dimension_splits(x: _Claim, y: _Claim) -> tuple[tuple[str, int], ...]:
 def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> AgreementResult:
     """The §4.5 gate over k samples of one document, in slot order.
 
-    `f1_min` is the bundle's calibration: 0.80 for v1's coarse area/claim
-    sets; v2's deliberately finer statements vary more span-to-span while
-    agreeing semantically, so its bundle carries 0.70 (validator/14).
-    Negation stays zero-tolerance regardless."""
+    Under validator/20 the gate keeps TWO checks (parsing contract v3 §3) and
+    everything else it computes becomes a metric:
+
+    - `negation`: aligned claims must agree on polarity. "No sponsorship" read
+      as "sponsorship available" is the one extraction error that actively
+      harms the reader, and it is rare and cheap to catch.
+    - `numeric_conflict`: two aligned claims that BOTH parsed a number from the
+      same span must agree on dimension, bounds and unit. 144 months against 12
+      is a misread; the same number under two scope tags is not.
+
+    `f1_min` is still the bundle's calibration (0.80 for v1's coarse area/claim
+    sets, 0.70 for v2's finer statements) and still reported, but for a v2
+    cohort it no longer fails anything: the 2026-09-22 review-queue analysis
+    found 294 of 300 parked documents split on label variance over identical
+    text, so a gate built on those dimensions was a label-variance filter, not
+    a correctness check. `metrics` is where they live now, and
+    `serve.profile_of` carries them into the stored blob so the reading agent
+    sees what the samples disagreed on.
+
+    A V1 COHORT IS UNCHANGED. Validator "12" is frozen and this function is the
+    only settlement implementation either bundle has, so the failure list is
+    built from `_gates(samples)` rather than from one hardcoded set: a profile
+    that declares no contract keeps validator/19's `LEGACY_GATES`, F1 and the
+    importance ratio included. Every dimension is measured either way — the
+    gate set decides which measurements can park a document, never which ones
+    are taken.
+    """
     if len(samples) < 2:
         raise ValueError("agreement needs at least two samples")
     claim_sets = [_claims(s) for s in samples]
@@ -386,6 +511,8 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
     f1s: list[float] = []
     pair_f1: dict[tuple[int, int], float] = {}
     negation_splits = 0
+    numeric_conflicts = 0
+    aligned_pairs = 0
     required_pairs = 0
     required_agree = 0
     dimensions = dict.fromkeys(DIMENSIONS, 0)
@@ -397,10 +524,13 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
             f1 = (2 * len(pairs) / denom) if denom else 1.0
             f1s.append(f1)
             pair_f1[(a, b)] = f1
+            aligned_pairs += len(pairs)
             for i, j in pairs:
                 x, y = xs[i], ys[j]
                 if x.negated != y.negated:
                     negation_splits += 1
+                if _conflicts(x.numbers, y.numbers):
+                    numeric_conflicts += 1
                 if "required" in (x.importance, y.importance):
                     required_pairs += 1
                     if x.importance == y.importance:
@@ -411,16 +541,20 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
     mean_f1 = sum(f1s) / len(f1s)
     imp_agreement = (required_agree / required_pairs) if required_pairs else 1.0
 
-    failures: list[str] = []
-    if mean_f1 < f1_min:
-        failures.append("f1")
-    if imp_agreement < IMPORTANCE_MIN:
-        failures.append("importance")
-    if negation_splits:
-        failures.append("negation")
-    failures.extend(dimension for dimension in DIMENSIONS if dimensions[dimension])
+    # Every check is measured for every cohort; the gate set only says which of
+    # the measurements is allowed to park the document (`_gates`).
+    measured: dict[str, int] = {
+        "f1": int(mean_f1 < f1_min),
+        "importance": int(imp_agreement < IMPORTANCE_MIN),
+        "negation": negation_splits,
+        "numeric_conflict": numeric_conflicts,
+        **dimensions,
+    }
+    failures: list[str] = [gate for gate in _gates(samples) if measured[gate]]
 
-    # Medoid: max mean F1 against the other samples; lowest slot on ties.
+    # Medoid: max mean F1 against the other samples; lowest slot on ties. F1
+    # stopped gating and did not stop meaning anything — "closest to the others"
+    # is still what picks the candidate the audit runs on.
     def mean_against_others(idx: int) -> float:
         vals = [f1 for (a, b), f1 in pair_f1.items() if idx in (a, b)]
         return sum(vals) / len(vals)
@@ -433,8 +567,18 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
         "pair_f1": {f"{a}-{b}": f1 for (a, b), f1 in sorted(pair_f1.items())},
         "required_importance_agreement": imp_agreement,
         "negation_disagreements": negation_splits,
+        "numeric_conflicts": numeric_conflicts,
         **{DIMENSIONS[d]: n for d, n in dimensions.items()},
         "thresholds": {"jaccard": JACCARD_MIN, "f1": f1_min, "importance": IMPORTANCE_MIN},
+        # the demoted dimensions, gathered where a reader can find them without
+        # knowing which report keys used to be gates: `aligned_pairs` is the
+        # denominator ("2 of 30 aligned pairs split on kind"), `f1` the whole-
+        # cohort ratio, `splits` a count per dimension including the zeroes
+        "metrics": {
+            "aligned_pairs": aligned_pairs,
+            "f1": mean_f1,
+            "splits": dict(dimensions),
+        },
         "failures": failures,
         "medoid": medoid,
     }

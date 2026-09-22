@@ -37,7 +37,7 @@ from typing import Any
 
 from jobhunter.l2.v2.project import mention_rows as _project_rows
 from jobhunter.l2.v2.quality import assess
-from jobhunter.l2.v2.types import PROFICIENCY
+from jobhunter.l2.v2.types import NO_IMPORTANCE, PROFICIENCY
 
 SCHEMA_VERSION = "2"
 
@@ -56,11 +56,67 @@ SETTLEMENT = "settlement"
 #: together by a test.
 MAX_MENTIONS = 8
 
-#: What a statement with no importance projects as in the legacy columns.
-#: Responsibilities, compensation statements and employer context carry a null
-#: importance by contract (spec §3), and the column is NOT NULL; `contextual` is
-#: v1's existing word for "named by the posting, not demanded by it".
-NO_IMPORTANCE = "contextual"
+def _importance_of(statement: dict[str, Any] | None) -> str | None:
+    """A statement's importance, where the shape it was written under has one.
+
+    Schema 3 dropped the field entirely (parsing contract v3 §2.1), so this
+    never INDEXES it: a statement with no `importance` key is not a statement
+    whose importance is unknown, it is one the contract says carries no verdict,
+    and `NO_IMPORTANCE` is that. A schema-2 statement reads exactly as before,
+    null included, which is what keeps its projection byte-identical.
+    """
+    if statement is None:
+        return None
+    if "importance" not in statement:
+        return NO_IMPORTANCE
+    value: str | None = statement["importance"]
+    return value
+
+
+def _modality_of(statement: dict[str, Any]) -> str | None:
+    """The posting's own modal phrase for this statement, as text.
+
+    `modality_evidence` is zero or one bound reference (schema 3); the quote is
+    what a reading agent needs, and the reference itself stays in the record.
+    """
+    refs = statement.get("modality_evidence")
+    if not isinstance(refs, list) or not refs:
+        return None
+    text = refs[0].get("text")
+    return text if isinstance(text, str) else None
+
+
+def _sample_notes(agreement: Any) -> dict[str, Any] | None:
+    """What the cohort's samples split on, for the agent reading the record
+    (parsing contract v3 §4).
+
+    The dimensions validator/20 demoted are reported in the agreement report's
+    `metrics`; this carries the ones that actually split into the stored quality
+    block, with the aligned-pair count they split out of, so the reader sees
+    "the samples labelled this sentence two different kinds" without re-deriving
+    the gate. `None` when no cohort ran — an unsampled document has nothing to
+    say here, and saying nothing is not the same as saying the samples agreed.
+
+    Defensive like every reader of a stored blob: a report written under an
+    older validator carries no `metrics` and yields no notes.
+    """
+    if not isinstance(agreement, dict):
+        return None
+    metrics = agreement.get("metrics")
+    if not isinstance(metrics, dict):
+        return None
+    splits = metrics.get("splits")
+    splits = splits if isinstance(splits, dict) else {}
+    return {
+        "k": agreement.get("k"),
+        "f1": metrics.get("f1"),
+        "aligned_pairs": metrics.get("aligned_pairs"),
+        "splits": {
+            dimension: count
+            for dimension, count in sorted(splits.items())
+            if isinstance(count, int) and not isinstance(count, bool) and count
+        },
+    }
 
 
 def quality_of(record: dict[str, Any]) -> dict[str, Any]:
@@ -90,7 +146,7 @@ def quality_of(record: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(settlement, dict):
         return quality
     blocking = settlement.get("blocking")
-    return assess(
+    assessed = assess(
         source=str(quality.get("source")),
         evidence=str(quality.get("evidence")),
         semantics=str(settlement.get("semantics", "not_checked")),
@@ -100,6 +156,14 @@ def quality_of(record: dict[str, Any]) -> dict[str, Any]:
         blocking_findings=blocking if isinstance(blocking, int) and blocking is not True else 0,
         lifecycle=str(settlement.get("lifecycle") or "pending"),
     )
+    # ... plus the one thing the eligibility policy has no opinion about: what
+    # the cohort's samples split on (parsing contract v3 §4). It is attached
+    # here rather than inside `assess` because `assess` is the frozen policy
+    # that decides `search_eligible`, and these notes decide nothing.
+    notes = _sample_notes(settlement.get("agreement"))
+    if notes is not None:
+        assessed["sample_notes"] = notes
+    return assessed
 
 
 def profile_of(record: dict[str, Any]) -> dict[str, Any]:
@@ -140,13 +204,15 @@ def claim_index(record: dict[str, Any]) -> dict[str, Any]:
 
     `runner.settle` hands `bundle.profile_of(record)` to
     `agreement.cohort_hook`, and `agreement._claims` reads exactly one path out
-    of it: `demand_profile.areas[].claims[]`, taking a span, an importance and a
-    negation flag off each claim. A slice without that path is not compared
-    leniently, it is not compared at all — empty claim sets divide by nothing
-    and score `f1 = 1.0` — so the audit slot (5% of documents) and every
-    reprompted document, the case v2 exists to absorb, would certify themselves
-    however far apart their samples were. This is what makes the gate real for
-    v2; `profile_of` therefore carries it.
+    of it: `demand_profile.areas[].claims[]`. A slice without that path is not
+    compared leniently, it is not compared at all — there is nothing to align,
+    so no aligned pair can split, so the audit slot (5% of documents, the only
+    cohorts validator/20 samples) would certify itself however far apart its
+    samples were. Everything settlement does with a cohort reads through here:
+    both gates — a polarity split and a numeric conflict, each asked of an
+    ALIGNED pair — the medoid the audit then runs on, the dispute set findings
+    are scoped against, and the demoted metrics `profile_of` publishes as
+    `quality.sample_notes`. `profile_of` therefore carries it.
 
     One claim per statement, per (mention, statement) link, and per fact entry:
     every assertion the record makes about the document, anchored at the span it
@@ -154,15 +220,19 @@ def claim_index(record: dict[str, Any]) -> dict[str, Any]:
     is the envelope of the refs it cites, because the gate aligns claims by span
     overlap and a claim has one textual footprint.
 
-    Validator/19 adds spec §6's remaining comparator dimensions to each claim —
+    Validator/19 added spec §6's remaining comparator dimensions to each claim —
     statement `kind`, the `polarity_target` a negation actually points at, the
     `values` its fact entries derived, the `alternatives` it participates in,
-    and its `entity_links`. Until they were here, two samples that cited the
-    same spans and disagreed about everything else scored F1 1.0 and certified
-    each other: `all_of` against `any_of` over one pair of statements is a
-    different job, and the gate could not see it (external review finding 6).
-    Carrying them is this function's half; comparing them is `agreement`'s, and
-    none of them touch F1 or a threshold.
+    and its `entity_links` — and validator/20 demoted all five to metrics
+    (parsing contract v3 §3: 294 of 300 parked documents split on label variance
+    over text both samples read the same way). They are still carried and still
+    compared, because what they measure is what `quality.sample_notes` tells the
+    reading agent; they simply park nothing. `values` is the exception that
+    still gates, and only in part: `agreement._numbers` strips the family/scope
+    tags off each signature, so two samples that both PARSED a number from one
+    span and disagree about it fail `numeric_conflict`, while the same number
+    under two scope tags stays a metric. Carrying all of it is this function's
+    half; comparing it is `agreement`'s, and none of it touches F1.
 
     Two of the five are deliberately namespace-free — derived values come from
     `facts.py` under a frozen validator, and entity links are casefolded source
@@ -205,8 +275,8 @@ def claim_index(record: dict[str, Any]) -> dict[str, Any]:
             "id": statement["id"],
             "name": statement["topic"],
             "kind": statement["kind"],
-            "importance": statement["importance"] or NO_IMPORTANCE,
-            "level": statement["proficiency"],
+            "importance": _importance_of(statement) or NO_IMPORTANCE,
+            "level": statement.get("proficiency"),
             "claims": [_claim(statement, statement["evidence"], **semantics(statement["id"]))],
         }
         for statement in record["statements"]
@@ -254,16 +324,23 @@ def _claim(
     available" as an employer constraint or as a candidate disqualification, the
     spec §3 case) split here, as does negative against ambiguous. It is null for
     a positive statement, which negates nothing and has no target.
+
+    A SCHEMA-3 claim carries two more fields and a schema-2 one carries neither
+    (parsing contract v3 §2.1): the code-derived `section_heading` and
+    `modality`, the posting's own modal phrase as text or null. They are added
+    only where the statement has them because schema 2 is a shipped corpus
+    partition — a key added unconditionally would change the stored blob of
+    every archived record for no reader's benefit.
     """
     ordered = sorted(refs, key=lambda r: (r["span"][0], r["span"][1]))
     polarity = statement["polarity"] if statement else None
-    return {
+    claim: dict[str, Any] = {
         "quote": {
             "text": " ".join(str(ref["text"]) for ref in ordered),
             "span": [min(r["span"][0] for r in refs), max(r["span"][1] for r in refs)],
         },
-        "importance": statement["importance"] if statement else None,
-        "level": statement["proficiency"] if statement else None,
+        "importance": _importance_of(statement),
+        "level": statement.get("proficiency") if statement else None,
         "negated": statement is not None and statement["polarity"] != "positive",
         "kind": statement["kind"] if statement else None,
         "polarity_target": (
@@ -275,6 +352,10 @@ def _claim(
         "alternatives": [dict(route) for route in routes],
         "entity_links": list(links),
     }
+    if statement is not None and "section_heading" in statement:
+        claim["section_heading"] = statement["section_heading"]
+        claim["modality"] = _modality_of(statement)
+    return claim
 
 
 def _values_by_statement(entries: list[dict[str, Any]]) -> dict[str, tuple[str, ...]]:

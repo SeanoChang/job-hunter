@@ -208,6 +208,44 @@ def v3_record() -> dict[str, Any]:
     return make_s3_record()
 
 
+S3_MENTIONS_MD = (
+    "## Requirements\n"
+    "Bachelor's degree required.\n"
+    "CPA certification preferred.\n"
+)
+S3_MENTIONS_DOC_HASH = sha256_hex(S3_MENTIONS_MD.encode("utf-8"))
+
+
+def make_s3_emit_with_mentions() -> dict[str, Any]:
+    """`_emit_with_mentions()` under the schema-3 statement shape.
+
+    The degree quotes the posting's own "required"; the certification quotes
+    nothing, so its `modality_evidence` is null — the two halves of the field
+    the projections have to carry.
+    """
+    emit = _emit_with_mentions()
+    for statement in emit["statements"]:
+        for verdict in ("importance", "importance_evidence",
+                        "proficiency", "proficiency_evidence"):
+            statement.pop(verdict)
+    emit["statements"][0]["modality_evidence"] = [
+        {"block_id": "b000002", "text": "required", "occurrence": 0}
+    ]
+    emit["statements"][1]["modality_evidence"] = None
+    return emit
+
+
+@pytest.fixture
+def v3_record_with_mentions() -> dict[str, Any]:
+    """The mentions fixture under schema 3: no importance anywhere, one heading,
+    one quoted modal phrase and one null."""
+    return assemble(
+        make_s3_emit_with_mentions(), S3_MENTIONS_MD,
+        document_hash=S3_MENTIONS_DOC_HASH, observed_model="gpt-5.6-luna",
+        at=AT, schema_version="3",
+    )
+
+
 # --- the C02/C07 English-footer shape --------------------------------------
 
 FOOTER_MD = (

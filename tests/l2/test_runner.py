@@ -717,9 +717,13 @@ def test_attempts_before_a_mid_document_kill_stay_in_the_ledger(
                 return bad  # attempt 1: archived and recorded, not yet committed
             if len(self.calls) == 2:
                 _terminate(pg, int(pid_row["p"]))  # attempt 1's row dies with the backend
-            return GOOD  # the reprompt escalates to k=3: calls 3 and 4 are samples
+            return GOOD  # the audit slot takes k=3: calls 3 and 4 are samples
 
-    summary = run(_settings(), victim, store, engine=KillBetweenAttempts(), max_docs=10,
+    # the audit slot is what takes samples now (parsing contract v3 §5), and
+    # this test needs a document that both reprompts AND samples, so it asks
+    # for the slot explicitly instead of relying on the reprompt branch
+    summary = run(_settings(JOB_HUNTER_L2_AUDIT_MOD="1"), victim, store,
+                  engine=KillBetweenAttempts(), max_docs=10,
                   max_usd=5.0, connect=lambda: db.connect(TEST_DSN, schema=schema))
     assert summary.validated == 1
     rows = pg.execute(
@@ -895,6 +899,13 @@ def test_session_reconnects_on_idle_timeout_only_when_the_connection_is_dead(
 
 
 def _divergent() -> EngineResult:
+    """A sample that finds less than slot 1 does.
+
+    This is a V1 emit and v1 settles under validator "12", which parsing
+    contract v3 does not bump: F1 became a reported metric for the v2 contract
+    only (`agreement.LEGACY_GATES`), so a 2-of-3 claim-set overlap still parks
+    a v1 document exactly as it always did.
+    """
     emit = copy.deepcopy(EMIT)
     del emit["demand_profile"]["areas"][0]["claims"][1]  # drop c2 -> pairwise F1 2/3
     emit["demand_profile"]["areas"][0]["structure"] = None
@@ -929,20 +940,24 @@ def test_sampling_non_audit_doc_runs_k1(pg: Conn, store: ArchiveStore) -> None:
     assert row and row["k"] == 1 and row["agreement"] is None
 
 
-def test_sampling_reprompt_escalates_to_k3(pg: Conn, store: ArchiveStore) -> None:
-    # slot-1 needs a reprompt (schema_invalid then ok): the cheapest predictor
-    # of a hard document escalates to k=3 even off the audit slot.
+def test_sampling_reprompt_no_longer_escalates_to_k3(pg: Conn, store: ArchiveStore) -> None:
+    """Parsing contract v3 §5: a reprompted slot-1 pass used to escalate to
+    k=3 off the audit slot, on the theory that a retry predicts a hard
+    document. The 2026-09-22 analysis found that branch produced the
+    373-of-1,000 "incomplete cohort" review class and nothing else, so the
+    ladder now runs and the sampler does not."""
     _seed_doc(pg)
     bad = EngineResult(raw_text="not json", observed_model="z-ai/glm-5.2:free",
                        input_tokens=4, output_tokens=1, cost_usd=0.0)
-    engine = FakeEngine([bad, GOOD, GOOD, GOOD])
+    engine = FakeEngine([bad, GOOD])
     summary = run(_settings(JOB_HUNTER_L2_AUDIT_MOD="5"), pg, store, engine=engine,
                   max_docs=10, max_usd=5.0)
     assert summary.validated == 1
     archived = [from_bytes(store.get(k)) for k in store.list(keys.X_ATTEMPTS_PREFIX)]
-    assert sorted(a.sample_slot for a in archived) == [1, 1, 2, 3]
+    assert sorted(a.sample_slot for a in archived) == [1, 1]
     row = _state_row(pg)
-    assert row and row["status"] == "validated" and row["k"] == 3
+    assert row and row["status"] == "validated" and row["k"] == 1
+    assert row["agreement"] is None
 
 
 def test_sampling_agreement_failure_demotes_to_needs_review(
@@ -955,7 +970,9 @@ def test_sampling_agreement_failure_demotes_to_needs_review(
     assert summary.validated == 0
     row = _state_row(pg)
     assert row and row["status"] == "needs_review" and row["k"] == 3
-    assert "f1" in row["agreement"]["failures"]
+    # v1 settles under validator "12", which still gates on F1
+    assert row["agreement"]["failures"] == ["f1"]
+    assert row["agreement"]["metrics"]["f1"] < 1.0
     # the medoid is the majority shape: one of the divergent samples
     archived = {from_bytes(store.get(k)).attempt_key: from_bytes(store.get(k))
                 for k in store.list(keys.X_ATTEMPTS_PREFIX)}
