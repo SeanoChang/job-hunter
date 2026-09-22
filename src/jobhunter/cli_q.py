@@ -24,7 +24,9 @@ import typer
 
 from jobhunter import views
 from jobhunter.cli_output import Exit, emit, fail, output_option
+from jobhunter.l2.v2.types import NO_IMPORTANCE
 from jobhunter.pulse import profile_summary
+from jobhunter.store.extraction import SERVING_STATUSES
 from jobhunter.timeutil import parse_iso
 
 if TYPE_CHECKING:
@@ -35,7 +37,15 @@ q_app = typer.Typer(help="Read the corpus: postings, events, boards, documents, 
 
 MAX_LIMIT = 500
 EVENT_KINDS = ("opened", "changed", "closed", "reopened")
-IMPORTANCES = ("required", "preferred", "contextual")  # record.schema.json v1
+#: What `--importance` accepts. record.schema.json v1 had a third word,
+#: `contextual`, and it is deliberately not here: schema 3 reuses that exact
+#: string as `NO_IMPORTANCE`, the stand-in a statement that issues NO verdict
+#: writes into the legacy column. So `--importance contextual` would select
+#: every schema-3 row in the corpus alongside the v1/v2 rows that really do
+#: call a mention contextual, and an agent would read the union as a verdict.
+#: The filter therefore selects the schema-2 (and v1) partition only, and the
+#: sentinel is refused with an explanation rather than silently widened.
+IMPORTANCES = ("required", "preferred")  # record.schema.json v1, minus NO_IMPORTANCE
 
 
 def _clamp(limit: int) -> int:
@@ -266,6 +276,49 @@ def q_document(
          hint=f"q profile --doc {doc[:12]} for what it demands")
 
 
+def _sample_notes_lines(quality: Any) -> list[str]:
+    """What the cohort's samples split on, one line, or nothing when no cohort
+    ran. This is why a `needs_review` row is worth reading rather than hiding:
+    it names the dimensions that disagreed and the pairs they disagreed out of
+    (parsing contract v3 §4)."""
+    notes = quality.get("sample_notes") if isinstance(quality, dict) else None
+    if not isinstance(notes, dict):
+        return []
+    splits = notes.get("splits") or {}
+    spelled = ", ".join(f"{k}={v}" for k, v in sorted(splits.items())) or "none"
+    return [f"samples       k={notes.get('k')}  splits: {spelled}"
+            f"  ({notes.get('aligned_pairs')} aligned pairs)"]
+
+
+def _statement_lines(profile: dict[str, Any], summary: dict[str, Any]) -> list[str]:
+    """One line per claim, in the vocabulary the record was written in.
+
+    A schema-3 statement issues no verdict (parsing contract v3 §2.1), so its
+    line reads the posting's own words instead: the section the statement sits
+    under and the modal phrase it quotes, each printed only if the record has
+    one. Anything older keeps the digest's importance/level line byte for byte.
+    Every lookup is a `.get`: these are stored blobs, and the shape a row was
+    written under is not the shape the current contract guarantees.
+    """
+    statements = [s for s in profile.get("statements") or [] if isinstance(s, dict)]
+    if not any("section_heading" in s for s in statements):
+        return [
+            f"  [{a.get('kind')}] {a.get('name')} — {a.get('importance')}"
+            + (f"/{a['level']}" if a.get("level") else "")
+            for a in summary["areas"]
+        ]
+    lines: list[str] = []
+    for statement in statements:
+        refs = statement.get("modality_evidence") or []
+        quote = refs[0].get("text") if isinstance(refs, list) and refs else None
+        lines.append(
+            f"  [{statement.get('kind')}] {statement.get('topic')}"
+            f" — {statement.get('section_heading') or 'no section'}"
+            + (f'  "{quote}"' if isinstance(quote, str) and quote else "")
+        )
+    return lines
+
+
 @q_app.command("profile")
 def q_profile(
     doc: str = typer.Option(..., "--doc", help="document_hash or unambiguous hex prefix"),
@@ -275,20 +328,20 @@ def q_profile(
     """The demand profile of one document: areas, mentions, facts. `--full` adds evidence."""
     from jobhunter.cli import _resolve_doc
 
-    _, conn = _open(output)
+    settings, conn = _open(output)
 
     def load() -> tuple[str, dict[str, Any] | None]:
         resolved = _resolve_doc(conn, doc, output)
         # the row, not `profile_view`: the two ways a profile can be absent are
         # two different messages, and only the row says which one this is
-        return resolved, views.profile_row(conn, resolved)
+        return resolved, views.profile_row(conn, settings, resolved)
 
     resolved, row = _query(conn, output, load)
     if row is None:
         fail("not_found", f"no extraction for {resolved[:12]}", code=Exit.NOT_FOUND,
              output=output, hint=f"run: job-hunter extract run --doc {resolved}")
-    if row["status"] != "validated" or row["profile"] is None:
-        fail("not_found", f"no validated profile for {resolved[:12]} (status: {row['status']})",
+    if row["status"] not in SERVING_STATUSES or row["profile"] is None:
+        fail("not_found", f"no served profile for {resolved[:12]} (status: {row['status']})",
              code=Exit.NOT_FOUND, output=output,
              hint=f"job-hunter extract review show {resolved[:12]}")
     data = views.profile_payload(resolved, row, full=full)
@@ -305,28 +358,63 @@ def q_profile(
         f"deadline      {facts['deadline'] or 'not stated'}",
         f"mentions      {', '.join(summary['mentions']) or '-'}",
     ]
-    lines += [
-        f"  [{a['kind']}] {a['name']} — {a['importance']}{'/' + a['level'] if a['level'] else ''}"
-        for a in summary["areas"]
-    ]
+    lines += _sample_notes_lines(data["quality"])
+    lines += _statement_lines(row["profile"], summary)
     emit(data, human="\n".join(lines), output=output,
          hint=f"q document {resolved[:12]} for the text" if full
          else f"q profile --doc {resolved[:12]} --full for claims, quotes and spans")
+
+
+def _claim_row(r: dict[str, Any]) -> str:
+    """One `q claims` line. A schema-3 row has a heading (and often a quoted
+    modal phrase) where a legacy row has an importance.
+
+    Which vocabulary the row speaks is decided by whether `claims_view` PUT the
+    two schema-3 keys on it, never by whether their values are truthy: a
+    schema-3 statement is allowed to sit under no heading and quote no modal
+    phrase, and reading that emptiness as "no heading, so print the verdict
+    column" prints `contextual` — the `NO_IMPORTANCE` sentinel, a verdict the
+    record never issued. A schema-3 row with nothing to say leaves the cell
+    empty instead. `.get` throughout — `--fields` can have taken any of these
+    values away, but it removes both schema-3 keys together, so the test
+    survives it.
+    """
+    if "section_heading" in r or "modality" in r:
+        modality = r.get("modality")
+        label = str(r.get("section_heading") or "") + (f'  "{modality}"' if modality else "")
+    else:
+        label = str(r.get("importance") or "-")
+    return (f"{label:24} {r.get('area_kind') or '-':10} {(r.get('company') or '-'):18} "
+            f"{r.get('title') or '-'}  {r.get('uid') or '-'}")
 
 
 @q_app.command("claims")
 def q_claims(
     mention: str = typer.Option(..., "--mention", help="One mention, matched case-insensitively"),
     importance: str | None = typer.Option(
-        None, "--importance", help="|".join(IMPORTANCES)),
+        None, "--importance",
+        help=f"Legacy filter, schema-2 rows only: {'|'.join(IMPORTANCES)}"
+             f" ({NO_IMPORTANCE} is the schema-3 no-verdict sentinel, not a value)"),
     board: str | None = typer.Option(None, "--board", help="source:board"),
     fields: str | None = typer.Option(None, "--fields", help="Comma list of keys to keep"),
     limit: int = typer.Option(50, "--limit", help=f"1-{MAX_LIMIT}"),
     output: str | None = output_option(),
 ) -> None:
-    """Who demands one mention, across the corpus — the postings live on it today."""
+    """Who demands one mention, across the corpus — the postings live on it today.
+
+    `--importance` selects the schema-2 (and v1) partition only: a schema-3
+    record issues no verdict, so its rows read their section heading and quoted
+    modal phrase instead (parsing contract v3 §2.1).
+    """
     from jobhunter.cli import _split_board
 
+    if importance == NO_IMPORTANCE:
+        # the one word both vocabularies spell: a v1 verdict AND schema 3's
+        # stand-in for having none. Selecting on it would hand back the union
+        # and call it a verdict, so it is refused where the flag is read.
+        fail("usage",
+             f"{NO_IMPORTANCE} is not a verdict; schema-3 rows carry none",
+             valid=list(IMPORTANCES), code=Exit.USAGE, output=output)
     if importance is not None and importance not in IMPORTANCES:
         fail("usage", f"--importance must be one of: {', '.join(IMPORTANCES)}",
              valid=list(IMPORTANCES), code=Exit.USAGE, output=output)
@@ -337,11 +425,7 @@ def q_claims(
         conn, settings, mention=mention, importance=importance, source=src, board=brd,
         limit=limit))
     data = page.rows()
-    human = "\n".join(
-        f"{r['importance']:10} {r['area_kind']:10} {(r['company'] or '-'):18} "
-        f"{r['title'] or '-'}  {r['uid']}"
-        for r in data
-    ) or f"(nothing demands {mention!r})"
+    human = "\n".join(_claim_row(r) for r in data) or f"(nothing demands {mention!r})"
     emit(_select_fields(data, fields, output), human=human, output=output, count=len(data),
          truncated=page.truncated,
          hint=f"q profile --doc {data[0]['document_hash'][:12]} for the whole demand"

@@ -307,3 +307,13 @@ and a dated judge run. Its README carries the superseded banner.
   request carries an honest User-Agent, per-host request spacing, a per-board
   detail budget, and backoff on errors. A blocked or challenged board is
   marked `blocked`, never retried around.
+- 2026-09-22 — serving amends "aggregates are validated-only" (2026-08-26) and
+  the `search_eligible` half of 2026-09-10: `profile_mentions` and the profile
+  blob are refilled for every row that carries a chosen candidate and holds a
+  status in `extraction.SERVING_STATUSES` (validated **or** needs_review), so
+  an agent reads what the corpus extracted with the quality note attached
+  (`quality.sample_notes`) instead of a dark document. `quarantined`, rejected
+  and pending rows still clear the key, `search_eligible` still means the
+  audited tier that backs claim-level assertions, and every read path reports
+  the row's status so the two tiers are never confused
+  (`superpowers/specs/2026-09-22-parsing-contract-v3-design.md` §4).

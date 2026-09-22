@@ -100,6 +100,16 @@ def split_mention(raw: str) -> list[str]:
     return parts
 
 
+#: The statuses whose chosen candidate reaches the aggregate and the profile
+#: blob (parsing contract v3 §4, amending the 2026-08-26 ruling). `needs_review`
+#: joined `validated` here because validator/20 parks a document on two gates
+#: only — a polarity split and a numeric conflict — so a review row is a
+#: verified extraction with a note against it, not an unverified one. Everything
+#: else (`quarantined`, `rejected`, pending) still clears the key: a document
+#: whose extraction never settled asserts nothing about the corpus.
+SERVING_STATUSES = frozenset({"validated", "needs_review"})
+
+
 def upsert_state(
     conn: Conn,
     *,
@@ -123,8 +133,11 @@ def upsert_state(
     retry must clear the row regardless of which spelling keyed it.
     status None (pending) removes the config's row entirely.
     profile_mentions is derived from the same write: it follows the extractions
-    row through every one of these deletes, and is refilled only for a validated
-    status (2026-08-26 ruling: aggregates carry what the corpus asserts).
+    row through every one of these deletes, and is refilled for any
+    SERVING_STATUSES row that carries a chosen candidate — the blob is not None
+    exactly when the fold chose one (parsing contract v3 §4, amending the
+    2026-08-26 ruling: aggregates carry what the corpus EXTRACTED, with the
+    quality note the blob already travels with).
     `mentions` is that projection precomputed by the caller's extraction bundle
     ((mention, area_kind, importance) rows, already normalized); without it the
     v1 walk over profile["demand_profile"] runs, which is what every caller that
@@ -179,14 +192,15 @@ def upsert_state(
         ),
     )
     # Rewritten wholesale, never merged: a re-extraction that drops an area must
-    # drop its mentions with it, and a status that is no longer validated leaves
-    # the key empty.
+    # drop its mentions with it, a status that no longer serves leaves the key
+    # empty, and a needs_review -> validated flip re-derives the same rows
+    # instead of doubling them.
     conn.execute(
         "DELETE FROM profile_mentions WHERE document_hash=%s AND model=%s"
         " AND prompt_version=%s AND schema_version=%s AND validator_version=%s",
         key,
     )
-    if profile is None or state.status != "validated":
+    if profile is None or state.status not in SERVING_STATUSES:
         return
     projected: list[tuple[str, str, str]] = []
     if mentions is None:

@@ -32,8 +32,15 @@ active versions. Never parse `--help`.
 1. `job-hunter pulse --cursor hourly -o json` — everything that changed since
    your last run in one call: `data.events[]` (opened / changed / closed /
    reopened, with title, company, board, url), an inline `profile` summary on
-   opened and changed events whose document has a validated extraction, and
-   `data.attention` (unhealthy boards, extraction backlog, spend today).
+   opened and changed events whose document has a serving extraction, and
+   `data.attention` (unhealthy boards, extraction backlog, spend today). Both
+   tiers serve: `extraction_status` beside the summary says `validated` or
+   `needs_review` — a review row is a verified extraction with a note against
+   it, and its `q profile` payload carries `quality.sample_notes` naming what
+   the cohort's samples split on. `q claims` rows carry that status too, plus
+   `section_heading` and `modality` — the section the claim sits under and the
+   posting's own modal phrase. Where those two keys are missing the row was
+   written under an older contract and its `importance` is the verdict to read.
 2. No events and nothing in `attention` → end the run as a quiet no-op. Silence
    is a valid report.
 3. Otherwise compose the update: **New**, **Changed**, **Closed**,

@@ -73,11 +73,14 @@ V2_TUPLE = ("demand-profile/v11", "3", "20")
 #: the frozen, replay-only tuple the archived v2 corpus was written under;
 #: `get_bundle_for_tuple` still resolves it, and `test_rebuild` drives it
 V2_SCHEMA2_TUPLE = ("demand-profile/v10", "2", "20")
-# C04's three certifications, as `profile_mentions` rows once an audit clears
-# the record. The column is NOT NULL and a schema-3 statement carries no
-# verdict at all (parsing contract v3 §2.1), so every row takes
-# `types.NO_IMPORTANCE` — the defect this expectation guarded (a `preferred`
-# claim reading `required` because its AREA said so) can no longer be spelled.
+# C04's three certifications, as `profile_mentions` rows. The column is NOT NULL
+# and a schema-3 statement carries no verdict at all (parsing contract v3 §2.1),
+# so every row takes `types.NO_IMPORTANCE` — the defect this expectation guarded
+# (a `preferred` claim reading `required` because its AREA said so) can no
+# longer be spelled. Since contract v3 §4 these are the rows a PARKED document
+# serves too — the store refills the aggregate for any row with a chosen
+# candidate, and `search_eligible` (not the skill listing) stays gated on the
+# audit.
 C04_ROWS = [
     ("ACA", "qualification", NO_IMPORTANCE),
     ("ACCA", "qualification", NO_IMPORTANCE),
@@ -1202,7 +1205,7 @@ def test_a_parked_cohort_is_never_promoted_by_an_automated_re_audit(
     quality = still["profile"]["quality"]
     assert (quality["semantics"], quality["sampling"]) == ("error", "disagreement")
     assert quality["search_eligible"] is False
-    assert mention_rows_in(pg) == []
+    assert mention_rows_in(pg) == C04_ROWS  # parked, and serving what it extracted
 
 
 def test_a_throttled_audit_spends_no_pass_and_stops_the_run(
@@ -1477,7 +1480,7 @@ def test_a_version_bump_never_reopens_a_human_settled_row(
     still = row_of(pg)
     assert still["status"] == "needs_review" and still["reviewed_by"] == "human"
     assert still["chosen_attempt"] == candidate
-    assert mention_rows_in(pg) == []
+    assert mention_rows_in(pg) == C04_ROWS
 
 
 def test_replay_never_publishes_a_retired_versions_verdict(
@@ -1568,7 +1571,7 @@ def test_a_blocking_finding_on_the_dispute_parks_the_cohort_and_asks_for_repair(
     quality = row["profile"]["quality"]
     assert quality["sampling"] == "disagreement" and quality["search_eligible"] is False
     assert row["flags"] == flags("ok", repair="dispute")
-    assert mention_rows_in(pg) == []
+    assert mention_rows_in(pg) == C04_ROWS
 
 
 def test_a_blocking_finding_off_the_dispute_adjudicates_and_asks_for_repair(
@@ -1743,7 +1746,7 @@ def test_a_failed_repair_settles_the_base_candidate(
     assert row["status"] == "needs_review"
     quality = row["profile"]["quality"]
     assert quality["sampling"] == "disagreement" and quality["search_eligible"] is False
-    assert mention_rows_in(pg) == []
+    assert mention_rows_in(pg) == C04_ROWS
     assert row["flags"] == flags("ok")  # the round is spent; stop queueing it
 
     artifact = next(iter(repairs_in(store).values()))
@@ -1928,7 +1931,7 @@ def test_a_parked_cohorts_unfinished_repair_audit_is_never_taken_automatically(
     assert summary.reaudited == 0 and summary.repaired == 0
     still = row_of(pg)
     assert still["status"] == "needs_review" and still["flags"] == parked["flags"]
-    assert mention_rows_in(pg) == []
+    assert mention_rows_in(pg) == C04_ROWS
 
 
 def test_a_repaired_document_folds_the_same_way_out_of_the_archive(
@@ -2022,7 +2025,7 @@ def test_a_parked_cohort_is_never_repaired_by_the_backlog_campaign(
     assert repairs_in(store) == {}
     still = row_of(pg)
     assert still["status"] == "needs_review" and still["flags"] == parked["flags"]
-    assert mention_rows_in(pg) == []
+    assert mention_rows_in(pg) == C04_ROWS
 
 
 def test_every_phase_artifact_is_archived_before_the_extractions_row(

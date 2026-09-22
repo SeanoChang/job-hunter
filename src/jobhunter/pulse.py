@@ -125,12 +125,13 @@ def build_pulse(
     cursor that refused to pass them would wedge on a busy unwatched board.
     """
     from jobhunter.cli import _extraction_block
-    from jobhunter.l2.prompt import PROMPT_VERSION
-    from jobhunter.l2.runner import SCHEMA_VERSION
     from jobhunter.l2.state import globs_to_regex
-    from jobhunter.l2.transforms import VALIDATOR_VERSION
     from jobhunter.markdown import NORMALIZER_VERSION
     from jobhunter.store import queries
+
+    # local: `views` imports this module, and the engine tuple in force has one
+    # definition there rather than a second spelling of it here
+    from jobhunter.views import active_tuple
 
     if wm is None:
         window_from = now - FIRST_RUN_WINDOW
@@ -151,10 +152,11 @@ def build_pulse(
 
     profiled = list(dict.fromkeys(r["uid"] for r in rows if r["kind"] in PROFILED_KINDS))
     docs = queries.docs_for_events(conn, profiled, NORMALIZER_VERSION)
-    profiles = queries.validated_profiles(
+    prompt_version, schema_version, validator_version = active_tuple(settings)
+    profiles = queries.served_profiles(
         conn, sorted(set(docs.values())),
-        model_regex=globs_to_regex(settings.l2_models), prompt_version=PROMPT_VERSION,
-        schema_version=SCHEMA_VERSION, validator_version=VALIDATOR_VERSION,
+        model_regex=globs_to_regex(settings.l2_models), prompt_version=prompt_version,
+        schema_version=schema_version, validator_version=validator_version,
     )
     events: list[dict[str, Any]] = []
     for r in rows:
@@ -165,9 +167,13 @@ def build_pulse(
         }
         if r["kind"] in PROFILED_KINDS:
             doc = docs.get(r["uid"])
-            profile = profiles.get(doc) if doc else None
+            served = profiles.get(doc) if doc else None
             event["document_hash"] = doc
-            event["profile"] = profile_summary(profile) if profile else None
+            # the tier the digest came from, always present alongside it: a
+            # needs_review extraction is inlined like a validated one (parsing
+            # contract v3 §4) and an agent must be able to tell which it read
+            event["extraction_status"] = served["status"] if served else None
+            event["profile"] = profile_summary(served["profile"]) if served else None
         events.append(event)
 
     overview = queries.boards_overview(conn)

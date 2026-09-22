@@ -86,21 +86,20 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
     schema)` is replay's inverse, so a mixed archive folds each attempt under
     the bundle that judged it. Registered: **v1** = (`demand-profile/v5`,
     schema `1`, `transforms.VALIDATOR_VERSION`) — today's behaviour, byte for
-    byte; **v2** = (`demand-profile/v6`, schema `2`, `validator/10`). The
+    byte; **v2** = (`demand-profile/v10`, schema `2`, `validator/20`). The
     tuple keys every attempt and every derived row, so choosing a bundle is
     choosing a corpus partition: a flip re-queues the corpus under the new
     tuple, and rollback is selecting the previous bundle, never deleting rows.
-    The write path follows the bundle; the **read path does not yet** —
-    `views.profile_row`, `views.claims_view` and `pulse` compute "the engine
-    tuple in force" from the v1 module constants (`l2.prompt.PROMPT_VERSION`,
-    `l2.runner.SCHEMA_VERSION`, `l2.transforms.VALIDATOR_VERSION`), so v1 rows
-    keep serving even once a validated v2 row exists for the same document.
-    Making the served tuple follow the selected bundle is open work and gates
-    any real cutover. It is not the whole gate, though: the v2 bundle's
-    `mention_rows` projection returns nothing for an unaudited record (see
-    `l2/v2/` below), so `profile_mentions` under the v2 tuple is empty and
-    correcting the scoping alone leaves `q claims` returning nothing until
-    `semantic-audit/v1` lands.
+    Both paths follow the bundle. `views.active_tuple(settings)` is the one
+    definition of "the engine tuple in force" — `get_bundle(settings.l2_bundle)`
+    — and `views.profile_row`, `views.claims_view` and `pulse.build_pulse` all
+    read it, so selecting a bundle moves the read surface with the write path
+    instead of leaving reads asking for v1's tuple while rows land under
+    another. `mention_rows` no longer gates on the audit either: it projects
+    every record the store accepts (2026-09-18 two-tier ruling), and the store
+    accepts both serving statuses (`extraction.SERVING_STATUSES`), so a
+    `needs_review` document reaches `q claims` and `q profile` with its
+    `quality.sample_notes` rather than staying dark.
   - `l2/v2/` — the v2 semantic contract
     (`docs/superpowers/specs/2026-09-07-parsing-contract-v2-design.md`;
     increment 1 offline modules plus the increment-2 harness wiring —
@@ -132,15 +131,17 @@ lifecycle. Built to `docs/2026-08-18-ingestion-layer-spec.md`.
     contract bump does not silently drop the live shape to the v1 walk;
     storage is NOT migrated. No model calls and no database/archive I/O inside
     `l2/v2/` itself.
-    **The mention projection is gated on `search_eligible` and therefore
-    yields nothing today.** `assemble.py` calls `quality.assess(source=…,
-    evidence="pass")` and leaves `semantics`/`completeness` at `not_checked`,
-    which no offline phase can clear, so `project.mention_rows` (and
-    `serve.mention_rows` through it) short-circuits to `[]` for every record a
-    v2 run produces — pinned by
+    **The mention projection is no longer gated on `search_eligible`**
+    (2026-09-18 two-tier ruling): `serve.mention_rows` passes
+    `include_ineligible=True`, so every record the store accepts indexes its
+    mentions — the skill listing needs only the grounding the validator already
+    enforced, and gating it on the audit starved the aggregate (133 of 1,562
+    validated docs served rows). `search_eligible` keeps its meaning — the
+    audited tier that backs claim-level assertions — and travels in the stored
+    quality block for consumers that need it. `project.mention_rows` still
+    short-circuits to `[]` without the flag, which is what the inspection
+    surface (spec §9) reads. Pinned by
     `tests/l2/test_runner_v2.py::test_an_unaudited_record_stores_its_profile_but_indexes_no_mentions`.
-    The blob is populated, the aggregate is not; `semantic-audit/v1` is what
-    unblocks it.
 
 ## Conventions
 

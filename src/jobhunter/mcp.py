@@ -262,18 +262,22 @@ def profile(document_hash: str, full: bool = False) -> dict[str, Any]:
 
     Summary by default — areas, mention names, compensation, experience, deadline.
     full returns the stored profile verbatim, quotes and character spans included.
+    status says which tier answered: validated, or needs_review with a
+    quality.sample_notes block naming what its samples split on.
     """
-    with _read() as (_, conn):
+    from jobhunter.store.extraction import SERVING_STATUSES
+
+    with _read() as (settings, conn):
         # the row, not `profile_view`: the two ways a profile can be absent are
         # two different messages, and only the row says which one this is
-        row = views.profile_row(conn, document_hash)
+        row = views.profile_row(conn, settings, document_hash)
         if row is None:
             raise ToolError(
                 f"no extraction for {document_hash[:12]} — the owner runs: extract run --doc"
             )
-        if row["status"] != "validated" or row["profile"] is None:
+        if row["status"] not in SERVING_STATUSES or row["profile"] is None:
             raise ToolError(
-                f"no validated profile for {document_hash[:12]} (status: {row['status']}) — "
+                f"no served profile for {document_hash[:12]} (status: {row['status']}) — "
                 "the owner runs: extract run --doc"
             )
         return _page(views.Page(views.profile_payload(document_hash, row, full=full)))
@@ -288,9 +292,17 @@ def claims(
 ) -> dict[str, Any]:
     """Who demands one mention across the corpus — the postings living on it today.
 
-    mention is matched case-insensitively (python, kubernetes); importance is
-    required, preferred or contextual; board is source:board.
+    mention is matched case-insensitively (python, kubernetes); board is
+    source:board. importance is the legacy filter and selects schema-2 rows
+    only — required or preferred; a schema-3 row carries section_heading and
+    the posting's own modality quote instead, and issues no verdict at all.
     """
+    from jobhunter.l2.v2.types import NO_IMPORTANCE
+
+    if importance == NO_IMPORTANCE:
+        # the sentinel a schema-3 statement writes into the legacy column: not
+        # a verdict, so not selectable as one (see cli_q.IMPORTANCES)
+        raise ToolError(f"{NO_IMPORTANCE} is not a verdict; schema-3 rows carry none")
     if importance is not None and importance not in IMPORTANCES:
         raise ToolError(f"importance must be one of: {', '.join(IMPORTANCES)}")
     src, brd = _split_board(board)
