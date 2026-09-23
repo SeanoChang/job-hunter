@@ -44,7 +44,7 @@ from jobhunter.l2.verify import verify
 from jobhunter.markdown import NORMALIZER_VERSION
 from jobhunter.timeutil import iso, utcnow_precise
 
-MODEL = "gpt-5.6-luna"
+MODEL = "gpt-6-luna"
 GLOBS = (MODEL + "*",)
 AUDIT_MOD = 20  # spec §4.5: 5% deterministic audit by hash slot
 
