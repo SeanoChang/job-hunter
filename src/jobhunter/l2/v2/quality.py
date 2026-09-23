@@ -15,9 +15,13 @@ from typing import Any
 #: no blocking findings: a full-source semantic audit of the chosen candidate
 #: outranks sampling variance, and symmetrically, variance alone is not a
 #: semantic defect (spec §6: "Sampling is not a substitute for semantic
-#: audit"). `incomplete` and `disagreement` still block — an incomplete cohort
-#: never certifies, and a disagreement with no clean audit stays for review.
-_SAMPLING_OK = ("not_requested", "complete", "adjudicated")
+#: audit"). `disagreement` still blocks — a disagreement with no clean audit
+#: stays for review. `incomplete` stopped blocking with parsing contract v3
+#: (§3, §5): a cohort short of samples is monitoring information recorded in
+#: `sample_notes`, and the candidate it did verify is judged by the audit
+#: exactly like an unsampled document's — the sampler running out of budget is
+#: not evidence against the record.
+_SAMPLING_OK = ("not_requested", "complete", "adjudicated", "incomplete")
 
 #: human dispositions that leave a candidate publishable. A whitelist, not a
 #: `!= "rejected"` check: a disposition this policy does not recognise must

@@ -286,7 +286,10 @@ def _sample_notes_lines(quality: Any) -> list[str]:
         return []
     splits = notes.get("splits") or {}
     spelled = ", ".join(f"{k}={v}" for k, v in sorted(splits.items())) or "none"
-    return [f"samples       k={notes.get('k')}  splits: {spelled}"
+    arrived = notes.get("arrived")
+    short = (f"  {arrived} of {notes.get('requested')} arrived"
+             if isinstance(arrived, int) else "")
+    return [f"samples       k={notes.get('k')}{short}  splits: {spelled}"
             f"  ({notes.get('aligned_pairs')} aligned pairs)"]
 
 

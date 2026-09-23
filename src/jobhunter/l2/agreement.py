@@ -122,9 +122,16 @@ def _gates(samples: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     one and gets validator/20's two gates. Anything else is judged under the
     older, stricter set — a cohort this module cannot identify is never the one
     that fails less, and the only unidentified producer that exists is v1's
-    frozen projection.
+    frozen projection. NO sample is the same answer for the same reason: an
+    incomplete cohort whose records would not resolve declares nothing, so it
+    cannot be the one whose budget is allowed to run out quietly.
+
+    The answer travels in the report (`gates`) because settlement asks it too:
+    parsing contract v3 §3 stops an exhausted sample budget from parking a v2
+    document, and `state.derive_state` has no other way to tell which contract
+    produced the cohort it is folding.
     """
-    return GATES if all(_CONTRACT_KEY in s for s in samples) else LEGACY_GATES
+    return GATES if samples and all(_CONTRACT_KEY in s for s in samples) else LEGACY_GATES
 
 
 def cohort_hook(
@@ -164,6 +171,13 @@ def cohort_hook(
             medoid_key = by_slot[slot_order[0]].attempt_key
             report: dict[str, Any] = {
                 "k": slots_attempted,
+                # how many of those slots produced a record to compare. Under
+                # validator/20 the pair is the whole of what `sample_failed`
+                # means — a budget that ran out, reported rather than judged
+                # (parsing contract v3 §5) — and `serve._sample_notes` carries
+                # it into the stored blob as requested/arrived.
+                "arrived": len(resolved),
+                "gates": list(_gates([rec for _, rec in resolved])),
                 "mean_f1": None,
                 "pair_f1": {},
                 "required_importance_agreement": None,
@@ -184,6 +198,7 @@ def cohort_hook(
         result = agree(records, f1_min=f1_min)
         report = dict(result.report)
         report["k"] = slots_attempted
+        report["arrived"] = len(resolved)
         if slots_attempted > len(resolved):
             report["failures"] = [*report["failures"], "sample_failed"]
         medoid_slot = resolved[result.medoid][0]
@@ -563,6 +578,10 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
 
     report: dict[str, Any] = {
         "k": len(samples),
+        "arrived": len(samples),  # `cohort_hook` restates both against the slots
+        # the policy this cohort was judged under, so settlement can ask what
+        # its contract does with a failure it did not cause (`_gates`)
+        "gates": list(_gates(samples)),
         "mean_f1": mean_f1,
         "pair_f1": {f"{a}-{b}": f1 for (a, b), f1 in sorted(pair_f1.items())},
         "required_importance_agreement": imp_agreement,

@@ -115,6 +115,15 @@ def _sample_notes(agreement: Any) -> dict[str, Any] | None:
     the gate. `None` when no cohort ran — an unsampled document has nothing to
     say here, and saying nothing is not the same as saying the samples agreed.
 
+    A cohort that could not spend its budget reports that too: `requested`
+    against `arrived`, the slots the sampler opened against the records the
+    gate actually had to compare. Under validator/20 an exhausted budget no
+    longer parks the document (parsing contract v3 §5 — the 373-of-1,000
+    "incomplete cohort" review class was exactly this), so the counts are how
+    a reading agent learns that a served record was measured against fewer
+    samples than the drain asked for. They appear only when something WAS
+    lost: for a cohort that got everything, `k` is already its arrived count.
+
     Defensive like every reader of a stored blob: a report written under an
     older validator carries no `metrics` and yields no notes.
     """
@@ -125,7 +134,7 @@ def _sample_notes(agreement: Any) -> dict[str, Any] | None:
         return None
     splits = metrics.get("splits")
     splits = splits if isinstance(splits, dict) else {}
-    return {
+    notes = {
         "k": agreement.get("k"),
         "f1": metrics.get("f1"),
         "aligned_pairs": metrics.get("aligned_pairs"),
@@ -135,6 +144,15 @@ def _sample_notes(agreement: Any) -> dict[str, Any] | None:
             if isinstance(count, int) and not isinstance(count, bool) and count
         },
     }
+    requested, arrived = _count(agreement.get("k")), _count(agreement.get("arrived"))
+    if requested is not None and arrived is not None and arrived < requested:
+        notes["requested"], notes["arrived"] = requested, arrived
+    return notes
+
+
+def _count(value: Any) -> int | None:
+    """A stored count read as one: an int, and never a bool wearing one."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def quality_of(record: dict[str, Any]) -> dict[str, Any]:

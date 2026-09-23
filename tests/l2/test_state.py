@@ -12,7 +12,14 @@ from jobhunter.l2.state import (
     derive_state,
 )
 from jobhunter.l2.v2.quality import assess
-from tests.l2.test_agreement import REVIEW_SPLITS, sample, statement, statement3
+from tests.l2.test_agreement import (
+    REVIEW_SPLITS,
+    claim,
+    sample,
+    statement,
+    statement3,
+    v1_profile,
+)
 from tests.l2.test_attempts import _attempt
 
 GLOBS = ["z-ai/glm-5.2*", "nvidia/*"]
@@ -952,3 +959,90 @@ def test_a_numeric_conflict_still_settles_needs_review() -> None:
     state = derive_state(events, [], GLOBS, HOOK)
     assert (state.status, state.sampling) == ("needs_review", "disagreement")
     assert state.agreement and state.agreement["failures"] == ["numeric_conflict"]
+
+
+# --- validator/20: an exhausted sample budget is not a verdict --------------
+# Parsing contract v3 §3: "a document with at least one assembled-and-verified
+# candidate is validated. `needs_review` is reserved for the two gate failures
+# above and for human parking" — and §5: "the 373-of-1,000 'incomplete cohort'
+# review class was nothing but exhausted sample budgets". A missing sample is
+# monitoring information: the cohort says so in `quality.sample_notes`, and the
+# document publishes. A V1 cohort keeps validator/12's policy, unchanged.
+
+#: a slot that never came back: no record, nothing in glob, and the slot still
+#: counted as attempted — which is exactly what `sample_failed` reports
+LOST: dict[str, Any] = {
+    "outcome": "transport", "record": None, "raw_response": None, "observed_model": None,
+}
+
+
+def _v3(slot: int, no: int, **over: Any) -> Any:
+    """One slot of a SCHEMA-3 cohort: the shape `agreement._gates` reads as
+    validator/20's."""
+    over = {"record": sample(statement3("s1", (0, 100)), schema="3"), **over}
+    return _slot(slot, no, **over)
+
+
+def test_an_incomplete_v3_cohort_settles_validated() -> None:
+    """One of three requested samples arrived, it is assembled and verified,
+    and nothing it could be compared against disagreed with it. Under 19 that
+    parked the document; under 20 it publishes and the cohort reports what it
+    could not measure."""
+    events = [_v3(1, 1), _v3(2, 2, **LOST), _v3(3, 3, **LOST)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("validated", "incomplete")
+    assert state.k == 3
+    assert state.agreement and state.agreement["failures"] == ["sample_failed"]
+    # what `serve._sample_notes` publishes as requested/arrived
+    assert (state.agreement["k"], state.agreement["arrived"]) == (3, 1)
+    assert state.agreement["metrics"]["splits"] == dict.fromkeys(DIMENSIONS, 0)
+
+
+def test_an_incomplete_v3_cohort_with_a_demoted_split_settles_too() -> None:
+    """Two of three arrived and they labelled the same sentence differently.
+    `kind` is a metric under 20, so the only failure is the missing sample and
+    the split rides along in the report the blob publishes."""
+    a = sample(statement3("s1", (0, 100)), schema="3")
+    b = sample(statement3("s1", (0, 100), kind="responsibility"), schema="3")
+    events = [_slot(1, 1, record=a), _slot(2, 2, record=b), _v3(3, 3, **LOST)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("validated", "incomplete")
+    assert state.agreement and state.agreement["failures"] == ["sample_failed"]
+    assert state.agreement["metrics"]["splits"]["kind"] > 0
+    assert (state.agreement["k"], state.agreement["arrived"]) == (3, 2)
+
+
+def test_a_gate_failure_among_the_arrived_samples_still_parks() -> None:
+    """The gates still run over the samples that DID arrive: two of three read
+    the same sentence's polarity differently, and that is a parking reason
+    whatever the third slot did."""
+    a = sample(statement3("s1", (0, 100)), schema="3")
+    b = sample(statement3("s1", (0, 100), polarity="negative"), schema="3")
+    events = [_slot(1, 1, record=a), _slot(2, 2, record=b), _v3(3, 3, **LOST)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("needs_review", "disagreement")
+    assert state.agreement and state.agreement["failures"] == ["negation", "sample_failed"]
+
+
+def test_a_v1_cohort_still_parks_on_an_exhausted_sample_budget() -> None:
+    """Validator "12" is frozen: `demand-profile/v5` keeps the policy its
+    archived corpus was settled under, so an incomplete v1 cohort parks and
+    only validator/18's whole-record adjudication lets it out."""
+    v1 = v1_profile(claim((0, 100)))
+    events = [_slot(1, 1, record=v1), _slot(2, 2, **LOST), _slot(3, 3, **LOST)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("needs_review", "incomplete")
+    adjudicated = derive_state(events, [], GLOBS, HOOK, _audits(CLEAN))
+    assert (adjudicated.status, adjudicated.sampling) == ("validated", "adjudicated")
+
+
+def test_a_cohort_whose_policy_cannot_be_read_parks_as_before() -> None:
+    """No sample resolved at all, so nothing declares a contract. A cohort this
+    fold cannot identify is never the one that parks less (`agreement._gates`),
+    so the conservative set applies and the document stays for review."""
+    events = [_v3(1, 1, **LOST), _v3(2, 2, **LOST)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert state.status is None  # nothing in glob ever settled it
+    ok_but_unreadable = [_v3(1, 1), _v3(2, 2, **LOST)]
+    blind = derive_state(ok_but_unreadable, [], GLOBS, cohort_hook(lambda a: None))
+    assert (blind.status, blind.sampling) == ("needs_review", "incomplete")

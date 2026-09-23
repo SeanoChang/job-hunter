@@ -42,9 +42,17 @@ def test_adjudicated_sampling_is_eligible() -> None:
     assert _audited(sampling="adjudicated")["search_eligible"] is True
 
 
-def test_unsettled_sampling_states_are_never_eligible() -> None:
-    for state in ("incomplete", "disagreement"):
-        assert _audited(sampling=state)["search_eligible"] is False, state
+def test_a_disagreement_is_never_eligible() -> None:
+    assert _audited(sampling="disagreement")["search_eligible"] is False
+
+
+def test_an_incomplete_cohort_is_monitoring_not_a_verdict() -> None:
+    """Parsing contract v3 §3/§5: a cohort short of samples settles on the
+    candidate it has, and eligibility is the audit's to grant. An unsampled
+    document with the same single verified candidate is eligible; a document
+    the sampler simply could not finish must not rank below it."""
+    assert _audited(sampling="incomplete")["search_eligible"] is True
+    assert _audited(sampling="incomplete", blocking_findings=1)["search_eligible"] is False
 
 
 def test_an_audit_that_did_not_complete_is_never_a_pass() -> None:

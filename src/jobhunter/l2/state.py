@@ -15,6 +15,14 @@ phase, the `semantic-audit/v1` probe. Both are injected, both are applied in
 event order, and a fold given neither is validator/15 exactly — which is what
 the v1 corpus keeps getting.
 
+Validator/20 narrows what any of that can do. Parsing contract v3 §3 reserves
+`needs_review` for the two gate failures a v2 cohort can report and for human
+parking, so an exhausted sample budget — the largest review class the v19 queue
+had — stops being a verdict and becomes something the record says about itself
+(`_budget_parks`, `quality.sample_notes`). A v1 cohort keeps validator/12's
+policy: which one applies is read off the cohort's own report, never off the
+caller.
+
 The gate also hands over the cohort's DISPUTE SET, and validator/18's policy
 is what this module does with it: a disagreement whose audit found nothing
 blocking on what the samples split over settles instead of parking, while
@@ -30,7 +38,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
-from jobhunter.l2.agreement import Dispute
+from jobhunter.l2.agreement import GATES, Dispute
 from jobhunter.l2.attempts import Attempt
 
 
@@ -202,6 +210,39 @@ def audit_touches_dispute(
     return False
 
 
+#: The gate name the agreement hook reports for a sample slot that produced no
+#: record. It is not a disagreement — there is nothing it disagrees WITH — and
+#: under validator/20 it is not a verdict either (see `_budget_parks`).
+_SAMPLE_FAILED = "sample_failed"
+
+
+def _budget_parks(report: Mapping[str, Any]) -> bool:
+    """Does an exhausted sample budget still hold a document back?
+
+    Under validator/20 it does not. Parsing contract v3 §3 reserves
+    `needs_review` for the two gate failures and for human parking, and §5
+    demotes sampling to monitoring on the evidence that the 373-of-1,000
+    "incomplete cohort" review class "was nothing but exhausted sample
+    budgets". A document whose one arrived sample assembled and verified has a
+    candidate; the samples that never came back are a fact about the drain, not
+    about the posting, and the cohort reports them in `quality.sample_notes`
+    instead of parking on them.
+
+    Under validator "12" it does, unchanged: `demand-profile/v5` is a shipped
+    frozen identity this contract does not bump, and its archived corpus was
+    settled — and is replayed — under a policy where an incomplete cohort never
+    certifies. Which policy applies is read off the cohort's own report
+    (`agreement._gates` stamps `gates`), not off the caller, so live settlement
+    and `rebuild` cannot disagree about one mixed archive (review P0-1).
+
+    A report that names no policy is judged as the legacy one. The same
+    doctrine as `_gates`: a cohort this fold cannot identify is never the one
+    that parks less.
+    """
+    gates = report.get("gates")
+    return not (isinstance(gates, list) and tuple(gates) == GATES)
+
+
 # The audit probe settle injects: an attempt key -> that candidate's archived
 # audit, or None when no artifact exists (the phase never ran, or this bundle
 # has no audit phase at all). Pure `derive_state` stays I/O-free; the hook
@@ -333,22 +374,38 @@ def derive_state(
                 chosen = medoid_key
                 agreement = report
                 failures = report.get("failures") or []
+                # the checks this cohort's own contract lets park a document,
+                # which is every failure except a slot that produced nothing
+                gates = [f for f in failures if f != _SAMPLE_FAILED]
+                incomplete = _SAMPLE_FAILED in failures
                 # The sampling dimension (spec §6) is a fact about the cohort,
                 # so it is derived with or without an audit hook.
                 if passed:
                     sampling = "complete"
-                elif "sample_failed" in failures:
-                    # An incomplete cohort has no comparison to scope against —
-                    # the samples that would have disagreed do not exist — so
-                    # validator/18 adjudicates it only on the conservative
-                    # whole-record question: an audit of the medoid that found
-                    # nothing blocking ANYWHERE. This arm takes precedence when
-                    # a cohort is both incomplete and disagreeing, which is the
-                    # stricter of the two tests.
+                elif incomplete and _budget_parks(report):
+                    # Validator/12's policy, frozen. An incomplete cohort has no
+                    # comparison to scope against — the samples that would have
+                    # disagreed do not exist — so validator/18 adjudicates it
+                    # only on the conservative whole-record question: an audit of
+                    # the medoid that found nothing blocking ANYWHERE. This arm
+                    # takes precedence when a cohort is both incomplete and
+                    # disagreeing, which is the stricter of the two tests.
                     sampling = "incomplete"
                     if _audit_clean(audit_of(medoid_key)):
                         status, sampling = "validated", "adjudicated"
                         adjudicated_from = "incomplete"
+                elif not gates:
+                    # Validator/20 (parsing contract v3 §3, §5): the cohort's
+                    # budget ran out and nothing that CAN park a document did.
+                    # The medoid is an assembled, verified candidate, so the
+                    # document is `validated` and the missing samples are
+                    # monitoring information — `report["arrived"]` against
+                    # `report["k"]`, published as `quality.sample_notes`. The
+                    # dimension still says `incomplete`, because what was not
+                    # measured was not measured; it simply stops being a
+                    # verdict. Nothing is adjudicated here, so a later flag
+                    # reopens an incomplete cohort as an incomplete one.
+                    status, sampling = "validated", "incomplete"
                 else:
                     # validator/16 adjudication: the cohort is COMPLETE and
                     # disagrees, and a full-source audit of the medoid found
@@ -362,9 +419,12 @@ def derive_state(
                     # the samples split over, adjudicates the DISAGREEMENT just
                     # as well — and its findings go on gating `search_eligible`
                     # through `blocking`, exactly as for a cohort that agreed.
+                    # Under validator/20 the cohort may ALSO be incomplete: a
+                    # gate that fired over the samples that did arrive parks on
+                    # its own, and it is the disagreement — not the missing
+                    # slot — that the audit is asked to adjudicate.
                     sampling = "disagreement"
                     audit = audit_of(medoid_key)
-                    gates = [f for f in failures if f != "sample_failed"]
                     if _audit_clean(audit) or _audit_scoped_clear(audit, dispute, gates):
                         status, sampling = "validated", "adjudicated"
                         adjudicated_from = "disagreement"

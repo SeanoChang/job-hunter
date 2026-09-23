@@ -1101,9 +1101,15 @@ def _repair_trigger(
 
     Never from an error (an `audit_error` carries no validated findings to
     repair against — it gets a re-audit, not a repair), never without a
-    candidate, never on a document a review decision is standing on, and never
-    for an incomplete cohort: `sample_failed` is a missing sample, and no
-    rewrite of the candidate produces one.
+    candidate, and never on a document a review decision is standing on.
+
+    Neither trigger ever repairs the SAMPLING: `sample_failed` is a missing
+    sample and no rewrite of the candidate produces one. Under validator/20 an
+    incomplete cohort settles `validated` (parsing contract v3 §5), so such a
+    document reaches trigger 2 exactly as an unsampled one does — on its own
+    audit's blocking findings, which a repair can actually clear — and reaches
+    trigger 1 never, because an incomplete cohort has no disagreement to be
+    parked on.
     """
     if state.chosen_attempt is None or _human_ruled(reviews):
         return None

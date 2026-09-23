@@ -23,7 +23,7 @@ from typing import Any
 import psycopg
 
 from jobhunter.archive.base import ArchiveStore
-from jobhunter.l2.engines import EngineResult
+from jobhunter.l2.engines import EngineResult, EngineTransportError
 from jobhunter.l2.runner import run
 from tests.l2.test_runner import store  # noqa: F401
 from tests.l2.test_runner_v2 import (
@@ -140,6 +140,39 @@ def test_a_kind_split_cohort_settles_and_serves_its_sample_notes(
     assert notes["k"] == 3
     assert notes["splits"] == {"kind": splits["kind"]}
     assert notes["aligned_pairs"] == row["agreement"]["metrics"]["aligned_pairs"]
+
+
+def test_an_incomplete_cohort_settles_and_notes_what_it_could_not_measure(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """Spec §3 and §5 on a real drain: slot 1 produced an assembled, verified,
+    candidate and slots 2 and 3 never came back. Under 19 that was the
+    373-of-1,000 review class; under 20 the document publishes and the blob
+    says how many samples it asked for against how many arrived.
+
+    Each sample slot gets one transport retry, so four failures empty both. The
+    auditor is scripted to error so that validator/18's whole-record
+    adjudication — a clean audit of the medoid outranking a missing sample — is
+    out of the way and what is being read is the settlement rule itself. That
+    is also the production shape: every one of the 4,338 documents parked on
+    `sample_failed` alone carries `semantics: not_checked`.
+    """
+    seed_case(pg, "C01")
+    lost = [EngineTransportError("codex flake") for _ in range(4)]
+    engine = AuditingEngine([result(emit_of("C01")), *lost], unparseable_audit)
+    summary = run(v2_settings(**ON_SLOT), pg, store, engine=engine,
+                  max_docs=10, max_usd=5.0)
+    assert summary.validated == 1
+
+    assert sorted(a.sample_slot for a in attempts_in(store)) == [1, 2, 2, 3, 3]
+    row = row_of(pg)
+    assert row["status"] == "validated" and row["k"] == 3
+    assert row["agreement"]["failures"] == ["sample_failed"]
+
+    notes = row["profile"]["quality"]["sample_notes"]
+    assert (notes["requested"], notes["arrived"]) == (3, 1)
+    assert notes["splits"] == {}
+    assert row["profile"]["quality"]["sampling"] == "incomplete"
 
 
 def test_a_polarity_split_still_parks_the_document_after_sampling(

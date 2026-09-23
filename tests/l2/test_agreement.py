@@ -828,6 +828,38 @@ def test_an_incomplete_cohort_reports_every_dimension_key() -> None:
     }
 
 
+def test_the_report_names_the_policy_and_counts_the_samples_that_arrived() -> None:
+    """Settlement has to know which contract judged this cohort, and the cohort
+    is the only thing that knows (`_gates`). The report carries both halves: the
+    gate set that applied, and how many of the requested slots produced a record
+    to compare — `k` against `arrived` is what `sample_failed` means.
+    """
+    v2 = sample(statement("s1", (0, 100)))
+    hook = cohort_hook(lambda a: a.record)
+
+    _, _, report, _ = hook([_Slot(1, "k1", v2), _Slot(2, "k2", v2)], 3)
+    assert report["gates"] == list(GATES)
+    assert (report["k"], report["arrived"]) == (3, 2)
+    assert report["failures"] == ["sample_failed"]
+
+    v1 = v1_profile(claim((0, 100)))
+    _, _, legacy, _ = hook([_Slot(1, "k1", v1), _Slot(2, "k2", v1)], 2)
+    assert legacy["gates"] == list(LEGACY_GATES)
+    assert (legacy["k"], legacy["arrived"]) == (2, 2)
+
+
+def test_an_unresolvable_cohort_reports_the_conservative_policy() -> None:
+    """One record resolved names its own contract; none resolved names nothing,
+    and a cohort this module cannot identify is never the one that fails less."""
+    hook = cohort_hook(lambda a: a.record)
+    _, _, one, _ = hook([_Slot(1, "k1", sample(statement("s1", (0, 100)))),
+                         _Slot(2, "k2", None)], 2)
+    assert one["gates"] == list(GATES) and one["arrived"] == 1
+
+    _, _, none, _ = hook([_Slot(1, "k1", None), _Slot(2, "k2", None)], 2)
+    assert none["gates"] == list(LEGACY_GATES) and none["arrived"] == 0
+
+
 def test_the_dispute_is_computed_against_the_medoid_the_gate_chose() -> None:
     """The medoid is the sample the audit ran on, so the namespace has to be
     its own: a run whose medoid is slot 2 disputes slot 2's ids.

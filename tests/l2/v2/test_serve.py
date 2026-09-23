@@ -432,6 +432,31 @@ def test_sample_notes_are_empty_when_the_cohort_agreed() -> None:
     assert profile["quality"]["sample_notes"]["splits"] == {}
 
 
+def test_sample_notes_count_the_samples_an_incomplete_cohort_lost() -> None:
+    """Parsing contract v3 §5: an exhausted sample budget is monitoring
+    information, so the cohort that could not be measured says how far it got.
+    `requested` is the slots the sampler opened, `arrived` the records the gate
+    actually had to compare."""
+    report = agree([serve.profile_of(case_record("C01")),
+                    _c01_variant(kind="responsibility")]).report
+    report["k"], report["arrived"] = 3, 2  # what `cohort_hook` stamps
+    notes = serve.profile_of(_settled(case_record("C01"), report))["quality"]["sample_notes"]
+    assert (notes["requested"], notes["arrived"]) == (3, 2)
+    assert notes["k"] == 3
+    assert notes["splits"] == {"kind": report["metrics"]["splits"]["kind"]}
+
+
+def test_sample_notes_of_a_complete_cohort_count_nothing() -> None:
+    """A cohort that got everything it asked for has nothing out of the
+    ordinary to report: `k` is already its arrived count, and the notes keep
+    exactly the four keys every reader of them was written against."""
+    same = serve.profile_of(case_record("C01"))
+    report = agree([same, same]).report
+    report["arrived"] = 2
+    notes = serve.profile_of(_settled(case_record("C01"), report))["quality"]["sample_notes"]
+    assert sorted(notes) == ["aligned_pairs", "f1", "k", "splits"]
+
+
 def test_sample_notes_survive_a_re_projection_of_the_stored_blob() -> None:
     """`profile_of` is idempotent over its own output and the settlement key is
     consumed, so a caller holding only the blob keeps the notes."""

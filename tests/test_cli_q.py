@@ -425,6 +425,21 @@ def test_q_profile_table_reads_schema_3_headings_not_verdicts(
     assert "kind=2" in r.stdout  # what the samples split on
 
 
+def test_sample_notes_line_says_how_many_samples_never_arrived() -> None:
+    """An incomplete cohort settles validated under contract v3 and records
+    `requested`/`arrived`; the human table must print that, or a reader sees
+    `k=3` and assumes three samples were compared."""
+    from jobhunter.cli_q import _sample_notes_lines
+
+    short = {"sample_notes": {"k": 3, "requested": 3, "arrived": 1, "f1": None,
+                              "aligned_pairs": 0, "splits": {}}}
+    (line,) = _sample_notes_lines(short)
+    assert "1 of 3 arrived" in line and "splits: none" in line
+    full = {"sample_notes": {"k": 3, "f1": 1.0, "aligned_pairs": 3, "splits": {"kind": 2}}}
+    (line,) = _sample_notes_lines(full)
+    assert "arrived" not in line and "kind=2" in line
+
+
 def test_q_profile_table_prints_no_verdict_for_a_headingless_schema_3_record(
     qenv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
