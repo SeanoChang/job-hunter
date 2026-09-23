@@ -68,6 +68,23 @@ def _scan_control_chars(path: str, node: Any, errors: list[str]) -> None:
             _scan_control_chars(f"{path}[{i}]", v, errors)
 
 
+def control_char_errors(path: str, node: Any) -> list[str]:
+    """Validator/17's scan, for the readers of an ALREADY-ARCHIVED object.
+
+    Assembly rejects a control character in the emit, so nothing sealed under
+    validator 17 or later carries one. Records sealed before it do (two in the
+    corpus), and every path that folds an archived record without re-assembling
+    it — replay's historical branch, a migrated record adopted forward, a
+    repaired candidate read back out of its artifact — would hand that string
+    to a jsonb column Postgres cannot store it in. Same predicate, same error
+    spelling, one character set: a defect named here reads exactly as the one
+    assembly would have named, so the archived and the live judgement agree.
+    """
+    errors: list[str] = []
+    _scan_control_chars(path, node, errors)
+    return errors
+
+
 class AssembleError(Exception):
     def __init__(self, errors: list[str]) -> None:
         super().__init__(f"{len(errors)} resolution error(s)")

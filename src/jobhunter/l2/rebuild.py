@@ -129,6 +129,7 @@ from jobhunter.l2.runner import _ArchivedPhases, _bundle_for, _hash_of, _Publish
 from jobhunter.l2.schemas import normalize_emit, validate_emit, validate_record
 from jobhunter.l2.state import AuditView, Review, derive_state
 from jobhunter.l2.v2 import migrate
+from jobhunter.l2.v2.assemble import control_char_errors
 from jobhunter.l2.v2.source import annotate
 from jobhunter.l2.v2.types import Block
 from jobhunter.store import extraction
@@ -207,6 +208,31 @@ def _rejudge(attempt: Attempt, markdown: str, bundle: Bundle) -> Attempt:
     if archived is not None and _same_candidate(archived, record):
         record = archived  # same candidate: keep the identity its artifacts key on
     return replace(base, outcome="ok", record=record, validation=findings)
+
+
+def _storable_event(attempt: Attempt) -> Attempt:
+    """An archived `ok` whose record no store can hold, filed as the defect it is.
+
+    The historical branch folds an archived verdict as-is — it is not re-judged
+    and must not be — but "as-is" has one floor: a record carrying a control
+    character is not a record the derived surface can express at all (jsonb has
+    no NUL), and two attempts sealed under validators 15 and 16, before
+    validator/17 added assembly's scan, carry one in a statement topic. Any
+    full rebuild since crashed at `upsert_state` rather than settling.
+
+    That defect has a name already, and it is the one validator/17 gives it:
+    `attribution_failed`, with the same error string naming the same path. The
+    archived attempt object is never rewritten and the tuple never moves — only
+    this in-memory fold event changes, and the document's row then settles by
+    the ordinary fold rules with no candidate to publish.
+    """
+    if attempt.outcome != "ok" or attempt.record is None:
+        return attempt
+    errors = control_char_errors("record", attempt.record)
+    if not errors:
+        return attempt
+    return replace(attempt, outcome="attribution_failed", record=None,
+                   validation=[{"error": e} for e in errors])
 
 
 def derive_schema3(record2: dict[str, Any], blocks: list[Block]) -> dict[str, Any]:
@@ -512,7 +538,9 @@ def rebuild_extractions(
             # bundle still knows the record shape (`_bundle_for`)
             by_vv: dict[str, list[Attempt]] = {}
             for a in attempts:
-                by_vv.setdefault(a.validator_version, []).append(a)
+                # the one thing an unre-judged verdict is still checked for:
+                # a record the store cannot hold (`_storable_event`)
+                by_vv.setdefault(a.validator_version, []).append(_storable_event(a))
             for vv, group_attempts in by_vv.items():
                 scoped = [r for rvv, r in tagged_reviews if rvv == vv]
                 _fold_and_upsert(conn, store, dh, pv, sv, vv, bundle, group_attempts,

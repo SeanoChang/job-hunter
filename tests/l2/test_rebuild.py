@@ -890,3 +890,177 @@ def test_an_archived_repair_of_a_schema2_candidate_is_itself_migrated(
     assert served[repaired["statements"][0]["id"]]["polarity"] \
         == repaired3[repaired["statements"][0]["id"]]["polarity"]
     assert row["profile"]["quality"]["search_eligible"] is True
+
+
+# --- an archived record no store can hold (validator/17, retroactively) -----
+
+
+HISTORICAL_TUPLE = ("demand-profile/v9", "2", "16")
+
+
+def _archive_nul_attempt(
+    pg: Conn,
+    store: ArchiveStore,  # noqa: F811
+    case: str = "C01",
+    tup: tuple[str, str, str] = HISTORICAL_TUPLE,
+) -> tuple[str, Any, dict[str, Any]]:
+    """One archived `ok` attempt whose record carries a NUL inside a statement
+    topic — the defect validator/17 rules `attribution_failed`, sealed by a
+    validator that predates the rule.
+
+    Synthesized, never copied: the two real artifacts stay read-only in the
+    production archive.
+    """
+    from datetime import UTC, datetime
+
+    from jobhunter.archive import keys
+    from jobhunter.l2.attempts import to_bytes
+    from jobhunter.l2.v2.assemble import assemble, candidate_hash
+    from tests.l2 import test_runner_v2 as v2
+    from tests.l2.test_attempts import _attempt
+
+    markdown = v2.source(case)
+    dh = v2.seed_case(pg, case)
+    record = assemble(v2.emit2_of(case), markdown, document_hash=dh,
+                      observed_model=v2.MODEL, at="2026-09-12T03:26:18Z",
+                      schema_version="2")
+    record["statements"][0]["topic"] += "\x00"  # "…at global<NUL>", 2026-09-12
+    record["extraction"]["validator_version"] = tup[2]
+    record["extraction"]["candidate_hash"] = candidate_hash(record)
+    started = datetime(2026, 9, 12, 3, 26, 18, tzinfo=UTC)
+    attempt = _attempt(
+        attempt_key=keys.x_attempt_key(started, dh, 2, 6), document_hash=dh,
+        sample_slot=2, attempt_no=6, ladder_exhausted=True,
+        prompt_version=tup[0], schema_version=tup[1],
+        validator_version=tup[2], requested_model=v2.MODEL,
+        observed_model=v2.MODEL, record=record, outcome="ok",
+        raw_response=json.dumps(v2.emit2_of(case)),
+        started_at="2026-09-12T03:26:18Z", finished_at="2026-09-12T03:26:31Z",
+    )
+    store.put(attempt.attempt_key, to_bytes(attempt))
+    return dh, attempt, record
+
+
+def test_rebuild_refuses_a_historical_record_carrying_a_control_character(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """An archived verdict the store cannot hold is not a verdict.
+
+    Two attempts in the production archive were sealed under validators 15 and
+    16, before validator/17 added the control-character scan, and their records
+    carry a real NUL in a statement topic. The historical branch folds an
+    archived verdict as-is, so `upsert_state` handed jsonb a string Postgres
+    cannot store and the whole replay died with UntranslatableCharacter. The
+    defect is exactly the one validator/17 names, so the fold files it that way
+    — under the archived tuple, with the archived attempt object untouched.
+    """
+    from jobhunter.l2.attempts import from_bytes
+
+    _, attempt, _ = _archive_nul_attempt(pg, store)
+
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+
+    row = _row(pg, HISTORICAL_TUPLE)
+    assert row is not None
+    # no candidate survives the fold, and the ladder is exhausted: quarantined
+    assert row["status"] == "quarantined" and row["chosen_attempt"] is None
+    assert row["profile"] is None
+    assert "\x00" not in json.dumps(row["profile"])
+    # provenance is frozen: the archived attempt still says what it said
+    archived = from_bytes(store.get(attempt.attempt_key))
+    assert archived == attempt and archived.outcome == "ok"
+    prov = pg.execute(
+        "SELECT outcome, validator_version FROM extraction_attempts WHERE attempt_key=%s",
+        (attempt.attempt_key,),
+    ).fetchone()
+    assert prov is not None and prov["validator_version"] == HISTORICAL_TUPLE[2]
+    # and the fold event itself carries the validator/17 verdict, by path
+    from jobhunter.l2.rebuild import _storable_event
+
+    folded = _storable_event(attempt)
+    assert folded.outcome == "attribution_failed" and folded.record is None
+    assert folded.validation == [
+        {"error": "record.statements[0].topic: control character U+0000"
+                  " in emitted string"}
+    ]
+
+
+def test_the_live_fold_refuses_to_adopt_a_record_the_store_cannot_hold(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """The same hole on the live path: a migrated document's row is folded by
+    ADOPTING its archived schema-2 record forward (`runner._Records`), and the
+    derivation carries a topic string across untouched — so a record sealed
+    before validator/17 would crash the fold that serves it, not just a
+    rebuild. It publishes nothing instead, exactly like an adoption the
+    migration refuses."""
+    from jobhunter.l2.runner import settle
+    from tests.l2 import test_runner_v2 as v2
+
+    dh, attempt, _ = _archive_nul_attempt(pg, store, "C01", v2.V2_SCHEMA2_TUPLE)
+    # the attempt row the live fold reads it by (replay's own provenance write)
+    extraction.record_attempt(pg, attempt, None)
+    pg.commit()
+
+    at = utcnow_precise().isoformat()
+    state = settle(pg, store, dh, ("z-ai/*",), at, prompt_version=v2.V2_TUPLE[0],
+                   schema_version=v2.V2_TUPLE[1], validator_version=v2.V2_TUPLE[2])
+    pg.commit()
+    assert state.chosen_attempt == attempt.attempt_key
+    row = _row(pg, v2.V2_TUPLE)
+    assert row is not None and row["profile"] is None  # nothing servable
+    assert _mentions(pg, v2.V2_TUPLE) == []
+
+
+def test_rebuild_refuses_a_repaired_candidate_the_store_cannot_hold(
+    pg: Conn, store: ArchiveStore, monkeypatch: Any  # noqa: F811
+) -> None:
+    """A repaired record is read straight out of its artifact and published in
+    the base candidate's place (`_ArchivedPhases`), with no assembly between —
+    the third door onto the same jsonb column. A patch carrying a control
+    character publishes nothing, which is what a refused patch already does:
+    the base candidate stands, with its own blocking verdict."""
+    import gzip
+
+    from jobhunter.archive import keys
+    from jobhunter.l2.v2.assemble import candidate_hash
+    from tests.l2 import test_runner_v2 as v2
+
+    _no_engine(monkeypatch)
+    _, attempt, record2, _ = _archive_schema2_attempt(pg, store, "C03")
+    base_hash = record2["extraction"]["candidate_hash"]
+    repaired = json.loads(json.dumps(record2))
+    repaired["statements"][0]["topic"] += "\x00"
+    repaired["extraction"]["parent_candidate_hash"] = base_hash
+    repaired["extraction"]["candidate_hash"] = ""
+    repaired["extraction"]["candidate_hash"] = candidate_hash(repaired)
+    store.put(
+        keys.x_repair_key(attempt.attempt_key),
+        gzip.compress(json.dumps(
+            {"candidate_hash": base_hash, "outcome": "repaired", "record": repaired},
+            sort_keys=True,
+        ).encode("utf-8"), mtime=0),
+    )
+    v2.archive_audit(store, attempt.attempt_key, semantics="findings", blocking=1,
+                     candidate_hash=base_hash)
+    store.put(
+        v2.repaired_audit_key(attempt.attempt_key),
+        gzip.compress(json.dumps({
+            "audit_version": v2.AUDIT_VERSION, "outcome": "ok",
+            "attempt_key": attempt.attempt_key, "audit_pass": 1,
+            "candidate_hash": repaired["extraction"]["candidate_hash"],
+            "semantics": "no_findings", "completeness": "no_findings", "blocking": 0,
+            "findings": [], "unresolved": [],
+        }, sort_keys=True).encode("utf-8"), mtime=0),
+    )
+
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+    for tup in (v2.V2_SCHEMA2_TUPLE, v2.V2_TUPLE):
+        row = _row(pg, tup)
+        assert row is not None and row["profile"] is not None
+        assert "\x00" not in json.dumps(row["profile"])
+        # the BASE candidate, under the blocking verdict the repair never lifted
+        assert row["profile"]["quality"]["semantics"] == "findings"
+        assert row["profile"]["quality"]["search_eligible"] is False

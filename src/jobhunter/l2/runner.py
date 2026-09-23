@@ -164,6 +164,7 @@ from jobhunter.l2.state import (
 )
 from jobhunter.l2.transforms import VALIDATOR_VERSION
 from jobhunter.l2.v2 import repair as _v2_repair
+from jobhunter.l2.v2.assemble import control_char_errors
 from jobhunter.markdown import NORMALIZER_VERSION
 from jobhunter.store import db, extraction
 from jobhunter.store.extraction import Conn
@@ -672,6 +673,23 @@ def _repair_audit_key(attempt_key: str, audit_version: str | None) -> str:
     return f"{key.removesuffix(_AUDIT_SUFFIX)}{_REPAIRED_MARK}{_AUDIT_SUFFIX}"
 
 
+def _storable(record: dict[str, Any]) -> bool:
+    """Can a derived row hold this archived record at all?
+
+    Validator/17's scan (`assemble.control_char_errors`), applied where a
+    record is read back OUT of the archive rather than assembled. Assembly
+    rejects a control character in the emit, so nothing sealed since carries
+    one; two records sealed before it do, and a jsonb column cannot hold a NUL
+    — a full `extract rebuild` died on them at `upsert_state`. A record that
+    fails here publishes NOTHING, which is the answer every other
+    unpublishable candidate on these paths already gets (an adoption the
+    migration refuses, a patch the repair judge refused); replay files the
+    attempt's own verdict as the `attribution_failed` validator/17 calls it
+    (`rebuild._storable_event`).
+    """
+    return not control_char_errors("record", record)
+
+
 def _repaired_record(store: ArchiveStore, key: str) -> dict[str, Any] | None:
     """The candidate one archived repair round produced.
 
@@ -681,9 +699,12 @@ def _repaired_record(store: ArchiveStore, key: str) -> dict[str, Any] | None:
     repair does not erase the base candidate" (spec §4) looks like from the read
     side: the artifact holds the judge's defect list, and there is simply
     nothing here to publish.
+
+    A repaired record the store cannot hold reads the same way: nothing to
+    publish, so the base candidate stands (`_storable`).
     """
     record = _artifact(store, key).get("record")
-    return record if isinstance(record, dict) else None
+    return record if isinstance(record, dict) and _storable(record) else None
 
 
 def _repair_audit_owed(
@@ -905,7 +926,10 @@ class _ArchivedPhases:
             artifact = _artifact(store, key)
             base = artifact.get("candidate_hash")
             record = artifact.get("record")
-            if isinstance(base, str) and base and isinstance(record, dict):
+            # `_repaired_record`'s rules, read by scan instead of by key: a
+            # repaired candidate the store cannot hold publishes nothing
+            if isinstance(base, str) and base and isinstance(record, dict) \
+                    and _storable(record):
                 self._repairs[base] = record
 
     def published(self, record: dict[str, Any] | None) -> _Published:
@@ -1250,6 +1274,12 @@ class _Records:
         return None if record is None else self._adopt(record)
 
     def _adopt(self, record: dict[str, Any]) -> dict[str, Any] | None:
+        if not _storable(record):
+            # sealed before validator/17 and carrying a control character no
+            # jsonb column can hold: unpublishable in EITHER shape, so it is
+            # refused here rather than after the derivation that would carry
+            # the character forward (`_storable`)
+            return None
         schema = str((record.get("extraction") or {}).get("schema_version") or "")
         if self._bundle.adopt is None or schema == self._bundle.schema_version:
             return record
