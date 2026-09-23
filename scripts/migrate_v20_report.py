@@ -21,7 +21,11 @@ migration what it claims to be: every document the migration covers has a row
 under the active tuple, no row under that tuple still holds a schema-2 blob, and
 no engine was called. The first is the one that can fail on a corpus nobody
 replayed — the other two are satisfied by an untouched database as readily as by
-a migrated one (`check_failures`). The counter is installed in every mode,
+a migrated one (`check_failures`). What it REPORTS rather than fails is the
+document the derivation refused: `quarantined` under the active tuple with the
+findings that refused it, counted on its own line with its commonest reasons,
+because a refusal is a judgment the replay reached and not a document it
+missed. The counter is installed in every mode,
 `--check` included, because the one way this script could quietly become a
 re-extraction is a code path reaching an engine where nobody expected one.
 
@@ -55,6 +59,8 @@ TUPLE = (ACTIVE.prompt_version, ACTIVE.schema_version, ACTIVE.validator_version)
 #: (`l2/rebuild`'s docstring), so counting every schema-2 row as owed would make
 #: the predicate fire on documents the migration is right to leave alone.
 MIGRATED_FROM = ACTIVE.migrated_from
+#: how many distinct refusal reasons the report prints
+TOP_REASONS = 5
 Conn = psycopg.Connection[dict[str, Any]]
 
 
@@ -82,10 +88,16 @@ class Counts:
     #: nothing under the active tuple — the count that separates "the migration
     #: ran" from "the migration never started"
     documents_owed_migration: int
+    #: documents the derivation REFUSED: a row under the active tuple, settled
+    #: `quarantined` by `rebuild`'s migrated fold because nothing derived and a
+    #: migration has no ladder to retry. Reported, never failed (`check_failures`)
+    documents_refused_by_derivation: int
+    #: (reason, documents) for the refusals, commonest first
+    refusal_reasons: tuple[tuple[str, int], ...]
 
 
 def counts(conn: Conn) -> Counts:
-    """Everything the report compares, in five queries."""
+    """Everything the report compares."""
     by_status = {
         r["status"]: r["n"]
         for r in conn.execute(
@@ -140,6 +152,23 @@ def counts(conn: Conn) -> Counts:
             (prompt_version, schema_version, *TUPLE),
         ).fetchone()
         owed += int(row["n"]) if row else 0
+    # what the derivation refused, and why. `rebuild._note_refusal` writes the
+    # reasons onto the row because the migrated partition holds no attempt rows
+    # to read them off — so this is the operator's only account of a refusal
+    refused = conn.execute(
+        "SELECT count(*) AS n FROM extractions"
+        " WHERE prompt_version=%s AND schema_version=%s AND validator_version=%s"
+        "   AND status='quarantined' AND flags->'migration'->>'derived' = 'refused'",
+        TUPLE,
+    ).fetchone()
+    reasons = conn.execute(
+        "SELECT reason, count(*) AS n FROM extractions e,"
+        "   jsonb_array_elements_text(e.flags->'migration'->'reasons') AS reason"
+        " WHERE e.prompt_version=%s AND e.schema_version=%s AND e.validator_version=%s"
+        "   AND e.status='quarantined' AND e.flags->'migration'->>'derived' = 'refused'"
+        " GROUP BY reason ORDER BY n DESC, reason LIMIT %s",
+        (*TUPLE, TOP_REASONS),
+    ).fetchall()
     active_rows = sum(active_by_status.values())
     return Counts(
         rows=sum(by_status.values()),
@@ -153,6 +182,8 @@ def counts(conn: Conn) -> Counts:
         schema2_rows_under_active=int(stale["n"]) if stale else 0,
         documents_not_migrated=int(unmigrated["n"]) if unmigrated else 0,
         documents_owed_migration=owed,
+        documents_refused_by_derivation=int(refused["n"]) if refused else 0,
+        refusal_reasons=tuple((r["reason"], int(r["n"])) for r in reasons),
     )
 
 
@@ -228,9 +259,17 @@ def check_failures(found: Counts, *, engine_calls: int) -> list[str]:
     tuples the registry says the migration covers (`MIGRATED_FROM`) rather than
     to every schema-2 row: a retired-prompt row is history the migration
     deliberately leaves behind (`l2/rebuild`), but a `(demand-profile/v10, 2)`
-    document with nothing under the active tuple is either a replay that has not
-    run or a derivation that refused — both of them things the operator has to
-    see before calling ac-2 met.
+    document with NO ROW AT ALL under the active tuple is a replay that has not
+    run — the one thing the operator has to see before calling ac-2 met.
+
+    A document the derivation REFUSED is not that. It has a row, `quarantined`,
+    carrying the findings that refused it (`rebuild._note_refusal`), and it is
+    reported on its own line with its commonest reasons rather than failing the
+    predicate: the replay did reach it, validator 20 judged it, and a migration
+    has no ladder to climb for it. Failing here would point the operator's only
+    completeness signal at the one outcome a re-run cannot change — and it would
+    have hidden the real defect it was meant to catch, which is a row that is
+    not there at all.
     """
     failures: list[str] = []
     if found.documents_owed_migration:
@@ -257,6 +296,13 @@ def _counts_lines(label: str, found: Counts) -> list[str]:
     lines.append(f"  review share (active tuple): {found.review_share:.1%}")
     lines.append(f"  documents not migrated: {found.documents_not_migrated}")
     lines.append(f"  documents owed migration: {found.documents_owed_migration}")
+    # a refusal is a settled outcome, not a gap: it prints beside the gap count
+    # so the operator can tell "the replay never reached these" from "the
+    # derivation reached them and would not publish them"
+    lines.append(
+        f"  documents refused by derivation: {found.documents_refused_by_derivation}"
+    )
+    lines += [f"    {n:>6}  {reason}" for reason, n in found.refusal_reasons]
     return lines
 
 

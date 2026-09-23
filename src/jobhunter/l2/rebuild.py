@@ -101,6 +101,17 @@ frozen one so that the row `extract review` picks (`ORDER BY updated_at DESC
 LIMIT 1`, across all tuples) is the row the read surface answers from rather
 than an arbitrary tie-break between the two.
 
+A REFUSAL IS A ROW. The fold's ordinary rule is that a document with nothing
+settled is PENDING, which `upsert_state` implements by deleting the row — right
+for a live document still climbing its ladder, and wrong for every document
+here, because a migration has no ladder to climb. The first production replay
+(2026-09-23) settled 6,534 documents that way: a published schema-2 candidate
+whose derivation validator 20 refused, erased from the partition the read
+surface answers from, counted nowhere. So a fold whose every derived event
+failed is marked spent (`_spent`) and lands `quarantined`, with the findings
+that refused it written onto the row (`_note_refusal`) — the migrated partition
+holds no attempt rows to read a reason off.
+
 What is NOT migrated: an attempt under a RETIRED schema-2 prompt (v6..v9), which
 already folds down the historical branch below — archived verdicts under their
 own validator, never re-judged. Deriving a new shape from a candidate this
@@ -118,6 +129,8 @@ import json
 from dataclasses import replace
 from datetime import timedelta
 from typing import Any
+
+from psycopg.types.json import Jsonb
 
 from jobhunter.archive import keys
 from jobhunter.archive.base import ArchiveStore
@@ -239,7 +252,8 @@ def derive_schema3(record2: dict[str, Any], blocks: list[Block]) -> dict[str, An
     """A schema-2 record's schema-3 form — the migration's one derivation.
 
     `l2/v2/migrate.record3_of` owns the rule (the code-owned modal lexicon, the
-    heading assembly re-derives, the re-seal under validator 20); this is the
+    heading assembly re-derives, the accounting rows the retired evidence
+    families leave unproven, the re-seal under validator 20); this is the
     name the replay calls it by, and the place the provenance promise is
     written down: the derivation moves the two identifiers that describe the
     SHAPE and leaves `extraction.prompt_version` exactly as the archived
@@ -320,6 +334,111 @@ def _derive3(
         return replace(base, outcome="attribution_failed", validation=findings)
     sources[_hash_of(record)] = attempt.record
     return replace(base, outcome="ok", record=record, validation=findings)
+
+
+#: `state.derive_state` settles a refused document as `quarantined` only when
+#: its ladder is SPENT — `attempt_no >= 3 and ladder_exhausted`, the shape a
+#: live run leaves behind after its last rung. Named here because the migration
+#: has to speak that vocabulary for a fold with no ladder at all.
+_LADDER_SPENT = 3
+#: how many distinct reasons a refusal records on the row (the operator wants
+#: the shape of the refusal, not every finding of every attempt)
+_MAX_REASONS = 10
+
+
+def _refusal_reasons(derived: list[Attempt]) -> list[str]:
+    """Why this document's derivation refused, deduplicated, in event order."""
+    reasons: list[str] = []
+    for event in derived:
+        if event.outcome not in ("schema_invalid", "attribution_failed"):
+            continue
+        for finding in event.validation or []:
+            reason = str(
+                finding.get("error")
+                or f"{finding.get('check')}:{finding.get('code')} at {finding.get('path')}"
+            )
+            if reason not in reasons:
+                reasons.append(reason)
+    return reasons[:_MAX_REASONS]
+
+
+def _refused(events: list[Attempt], derived: list[Attempt]) -> bool:
+    """Did the DERIVATION refuse this document?
+
+    Two halves, and both matter. The archive holds a candidate for this
+    document — so there was something to migrate — and nothing survived the
+    derivation. A document whose schema-2 attempts never produced a record at
+    all is not a refusal: it is mid-ladder under the shape it was extracted in,
+    the replay has nothing to say about it, and settling it here would park a
+    document the drain is still owed a rung of.
+    """
+    return (
+        any(event.outcome == "ok" for event in events)
+        and not any(event.outcome == "ok" for event in derived)
+    )
+
+
+def _spent(events: list[Attempt], derived: list[Attempt]) -> list[Attempt]:
+    """The derived events of a REFUSED document, with their ladder marked spent.
+
+    A migration has no ladder. The live path climbs one — a failed attempt
+    reprompts, and only the last rung carries `ladder_exhausted`, which is what
+    tells settlement the document is out of options and quarantines it. The
+    events here are derivations of attempts that already SUCCEEDED under the
+    shape they were extracted in, so they carry that run's ladder state (attempt
+    1, not exhausted) and settlement reads a document still owed a retry: status
+    None, which `upsert_state` implements by DELETING the row. The document
+    disappears from the partition the read surface answers from, and nothing
+    will ever come back for it — the only thing that could re-derive it is
+    another replay of the same archived bytes, which would refuse identically.
+    That is the 2026-09-23 defect: 6,534 documents with a published schema-2
+    candidate and no schema-3 row of any kind.
+
+    So the fold is told the truth in the vocabulary it reads: this ladder is
+    over. Only when NOTHING derived — one derived candidate settles the document
+    on its own, and marking a failed sibling spent would quarantine a document
+    that has a record to publish (`derive_state` takes the first status it can
+    and never promotes out of it). And only on the events whose derivation was
+    refused: an attempt that failed in TRANSPORT says nothing about the document
+    in either shape, and it keeps saying nothing here. Only the in-memory fold
+    event moves; the archived attempt keeps its own ladder state under its own
+    tuple, where the frozen partition goes on folding it exactly as before.
+    """
+    if not _refused(events, derived):
+        return derived
+    refused = {
+        event.attempt_key for event in events if event.outcome == "ok"
+    }
+    return [
+        replace(event, ladder_exhausted=True,
+                attempt_no=max(event.attempt_no, _LADDER_SPENT))
+        if (event.attempt_key in refused
+            and event.outcome in ("schema_invalid", "attribution_failed"))
+        else event
+        for event in derived
+    ]
+
+
+def _note_refusal(conn: Conn, dh: str, target: Bundle, reasons: list[str]) -> None:
+    """Record WHY a migrated row is quarantined, on the row itself.
+
+    A live quarantine leaves its reasons in `extraction_attempts.error_detail`,
+    one row per failed attempt. The migrated partition has no attempt rows and
+    cannot have any — an attempt key is the archive key and the table's primary
+    key at once, so the attempts behind a migrated row stay filed under the
+    tuple they were written with (module docstring) — which would leave the
+    operator a `quarantined` row with no reachable account of what refused it.
+    The fold's scheduling surface is the one place that travels with the row, so
+    the refusal is written there, and only onto a row that actually settled as
+    one.
+    """
+    conn.execute(
+        "UPDATE extractions SET flags = coalesce(flags, '{}'::jsonb) || %s::jsonb"
+        " WHERE document_hash=%s AND prompt_version=%s AND schema_version=%s"
+        "   AND validator_version=%s AND status='quarantined'",
+        (Jsonb({"migration": {"derived": "refused", "reasons": reasons}}), dh,
+         target.prompt_version, target.schema_version, target.validator_version),
+    )
 
 
 class _MigratedPhases:
@@ -511,7 +630,10 @@ def rebuild_extractions(
                 # profiles, which is what validator 20 judges
                 blocks = annotate(markdown)
                 sources: dict[str, dict[str, Any]] = {}
-                derived = [_derive3(e, blocks, markdown, target, sources) for e in events]
+                derived = _spent(
+                    events,
+                    [_derive3(e, blocks, markdown, target, sources) for e in events],
+                )
                 _fold_and_upsert(
                     conn, store, dh, target.prompt_version, target.schema_version,
                     target.validator_version, target, derived,
@@ -532,6 +654,8 @@ def rebuild_extractions(
                     iso(parse_iso(now) + timedelta(seconds=1)),
                     _MigratedPhases(phases, sources, blocks, markdown, target),
                 )
+                if _refused(events, derived):
+                    _note_refusal(conn, dh, target, _refusal_reasons(derived))
         else:
             # historical config, or document no longer materialized: fold the
             # archived verdicts per their own validator version, under whichever

@@ -817,10 +817,98 @@ def test_a_derived_record_that_will_not_verify_is_never_published(
     frozen = _row(pg, v2.V2_SCHEMA2_TUPLE)
     assert frozen is not None and frozen["status"] == "validated"
     assert frozen["profile"]["schema"] == "2"
-    # nothing servable under the active tuple: the read surface answers with the
-    # document's absence, never with a record validator 20 refused
+    # nothing servable under the active tuple: the read surface never answers
+    # with a record validator 20 refused
     migrated = _row(pg, v2.V2_TUPLE)
-    assert migrated is None or migrated["profile"] is None
+    assert migrated is not None and migrated["profile"] is None
+
+
+def test_a_document_the_derivation_refuses_is_quarantined_never_erased(
+    pg: Conn, store: ArchiveStore, monkeypatch: Any  # noqa: F811
+) -> None:
+    """A migration has no ladder, so a refusal is FINAL — and a final refusal is
+    a row that says so, never a missing one.
+
+    `upsert_state` implements a PENDING fold by deleting the config's row, and a
+    migrated fold whose every derived event failed settles pending: the archived
+    attempts carry the ladder state of the extraction that SUCCEEDED (attempt 1,
+    ladder not exhausted), which is the state of a document that still has rungs
+    to climb. It has none — nothing will re-derive it but another replay of the
+    same bytes — so the document vanished from the active partition instead of
+    landing in it refused. 6,534 documents in the 2026-09-23 production replay,
+    each a frozen row with a published candidate and no row at all under the
+    tuple the read surface answers from.
+    """
+    from jobhunter.l2 import bundles
+    from jobhunter.l2.report import Report
+    from tests.l2 import test_runner_v2 as v2
+
+    _no_engine(monkeypatch)
+    _archive_schema2_attempt(pg, store, "C03")
+    real = bundles._verify_v2
+
+    def _refuse_schema3(record: Any, md: str, schema_version: str) -> Report:
+        if schema_version != "3":
+            return real(record, md, schema_version=schema_version)
+        report = Report(validator_version="20")
+        report.error("binding", "/statements/0", "span_moved")
+        return report
+
+    monkeypatch.setattr(bundles, "_verify_v2", _refuse_schema3)
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+
+    migrated = _row(pg, v2.V2_TUPLE)
+    assert migrated is not None, "the document was erased from the active tuple"
+    assert migrated["status"] == "quarantined"
+    assert migrated["profile"] is None and migrated["chosen_attempt"] is None
+    # and the refusal says WHY, on the row itself: the migrated partition holds
+    # no attempt rows to read a reason off (they keep their archived tuple)
+    flags = migrated["flags"] or {}
+    assert flags["migration"]["derived"] == "refused"
+    assert any("span_moved" in reason for reason in flags["migration"]["reasons"])
+    # the frozen partition is the archive's own history and keeps standing
+    frozen = _row(pg, v2.V2_SCHEMA2_TUPLE)
+    assert frozen is not None and frozen["status"] == "validated"
+    assert (frozen["flags"] or {}).get("migration") is None
+
+
+def test_a_document_mid_ladder_under_schema_2_is_not_parked_by_the_migration(
+    pg: Conn, store: ArchiveStore, monkeypatch: Any  # noqa: F811
+) -> None:
+    """The quarantine belongs to a REFUSED derivation, and a document the
+    archive holds no candidate for was never derived at all.
+
+    Its schema-2 fold is pending — an attribution failure with rungs left — and
+    the drain is still owed those rungs. Settling it here would hand the queue a
+    terminal row for a document nothing has finished extracting, so the
+    migration leaves it exactly as it found it.
+    """
+    from datetime import UTC, datetime
+
+    from jobhunter.archive import keys
+    from jobhunter.l2.attempts import to_bytes
+    from tests.l2 import test_runner_v2 as v2
+    from tests.l2.test_attempts import _attempt
+
+    _no_engine(monkeypatch)
+    dh = v2.seed_case(pg, "C03")
+    started = datetime(2026, 9, 12, 6, 12, 4, tzinfo=UTC)
+    attempt = _attempt(
+        attempt_key=keys.x_attempt_key(started, dh, 1, 1), document_hash=dh,
+        prompt_version=v2.V2_SCHEMA2_TUPLE[0], schema_version="2",
+        validator_version=v2.V2_SCHEMA2_TUPLE[2], requested_model=v2.MODEL,
+        observed_model=v2.MODEL, record=None, raw_response=None,
+        outcome="attribution_failed", ladder_exhausted=False,
+        validation=[{"error": "statements[0].evidence: not a literal substring"}],
+        started_at="2026-09-12T06:12:04Z", finished_at="2026-09-12T06:12:09Z",
+    )
+    store.put(attempt.attempt_key, to_bytes(attempt))
+
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+    assert _row(pg, v2.V2_SCHEMA2_TUPLE) is None
+    assert _row(pg, v2.V2_TUPLE) is None
 
 
 def test_a_non_ok_schema2_attempt_carries_its_outcome_across(

@@ -35,6 +35,7 @@ from typing import Any
 from jobhunter.l2.v2.assemble import candidate_hash, section_heading
 from jobhunter.l2.v2.facts import VALIDATOR_VERSION
 from jobhunter.l2.v2.types import Block
+from jobhunter.l2.v2.verify import evidence_blocks
 
 #: The shape this derivation produces, written as a literal because there is no
 #: canonical constant to import: every `l2/v2` module carries its own frozen
@@ -168,6 +169,55 @@ def _statement3(
     return derived
 
 
+def _reaccounted(
+    entries: list[dict[str, Any]] | None,
+    before: dict[str, set[str]],
+    after: dict[str, set[str]],
+) -> list[dict[str, Any]]:
+    """Block accounting, with the coverage claims THIS derivation un-evidenced
+    re-disposed as `context` rows.
+
+    Schema 2 let a block be covered by any of four reference families, and
+    schema 3 keeps two of them: a `statements` row whose only proof was the
+    statements' `importance_evidence` (or `proficiency_evidence`) is a claim the
+    derived record can no longer support, and `accounting:coverage_unevidenced`
+    (validator/19) fails it — which is how 6,534 documents that verified clean
+    under schema 2 lost their migrated row entirely in the 2026-09-23 replay.
+
+    The re-disposition is not an invention; it is the contract's own reading of
+    the same block. The v10 prompt's worked example accounts the heading
+    "Requirements" as `{"disposition": "statements", "ref_ids": ["s1","s2","s3"]}`
+    *because this heading is what carries those statements' importance*, and the
+    v11 example makes that very block `{"disposition": "context", "ref_ids": []}`
+    *because a heading is never quoted as a statement's modality*. The block was
+    read and produced no object of its own: that is what `context` says, and the
+    requirement-language tripwire (`context_requirement_language`) then points
+    the auditor at any such block that still speaks in obligations, which is
+    exactly where the question belongs.
+
+    Only rows the derivation itself moved: a claim the archived record already
+    failed to evidence under schema 2 is carried through untouched, because
+    rewriting it would hide an extraction defect behind a migration. `before`
+    and `after` are the coverage index `verify` checks against
+    (`verify.evidence_blocks`), read under the source and target schema versions
+    — the check and the derivation cannot drift apart because they are the same
+    function.
+    """
+    derived: list[dict[str, Any]] = []
+    for entry in entries or []:
+        row = copy.deepcopy(entry)
+        ref_ids = row.get("ref_ids") or []
+        block_id = row.get("block_id")
+        if row.get("disposition") in ("statements", "facts") and ref_ids:
+            covered = any(block_id in after.get(ref, frozenset()) for ref in ref_ids)
+            was_covered = any(block_id in before.get(ref, frozenset()) for ref in ref_ids)
+            if was_covered and not covered:
+                row["disposition"] = "context"
+                row["ref_ids"] = []
+        derived.append(row)
+    return derived
+
+
 def emit3_of(emit: dict[str, Any], *, blocks: list[Block] | None = None) -> dict[str, Any]:
     """A schema-2 emit's schema-3 form: verdicts out, quoted modality in.
 
@@ -192,6 +242,16 @@ def emit3_of(emit: dict[str, Any], *, blocks: list[Block] | None = None) -> dict
         _statement3(statement, texts=texts, blocks=None)
         for statement in emit.get("statements") or []
     ]
+    # on the ids the EMIT names, which is all an unbound shape can answer with.
+    # Assembly may re-anchor a reference to another block (parsing-rules/3), so
+    # the record path re-accounts on the bound ids and is the authority; doing
+    # it here too is what keeps the two paths landing on one candidate for the
+    # fixture corpus (`scripts/migrate_cases_v3.py`).
+    derived["block_accounting"] = _reaccounted(
+        emit.get("block_accounting"),
+        evidence_blocks(emit, SOURCE_SCHEMA_VERSION),
+        evidence_blocks(derived, SCHEMA_VERSION),
+    )
     return derived
 
 
@@ -205,6 +265,13 @@ def record3_of(record: dict[str, Any], blocks: list[Block]) -> dict[str, Any]:
     is what `verify` re-derives against) and the candidate hash, because the
     hash covers the record's shape and a migrated candidate is a different
     candidate.
+
+    And the block accounting rows whose proof the derivation itself retired
+    (`_reaccounted`): dropping `importance_evidence` drops the only reference a
+    heading row's coverage claim ever stood on, and leaving the claim behind is
+    a record that fails the check it verified under one shape earlier. Spec §2.2
+    still holds — block accounting is byte-for-byte schema 2's — for every row
+    whose evidence survives the bump, which is every row but this one shape.
 
     `extraction` keeps the extraction's own provenance — model, prompt version,
     timestamp, parent link — and moves only the two identifiers that describe
@@ -233,6 +300,11 @@ def record3_of(record: dict[str, Any], blocks: list[Block]) -> dict[str, Any]:
         _statement3(statement, texts=None, blocks=blocks)
         for statement in record.get("statements") or []
     ]
+    derived["block_accounting"] = _reaccounted(
+        record.get("block_accounting"),
+        evidence_blocks(record, SOURCE_SCHEMA_VERSION),
+        evidence_blocks(derived, SCHEMA_VERSION),
+    )
     extraction = derived.setdefault("extraction", {})
     extraction["schema_version"] = SCHEMA_VERSION
     extraction["validator_version"] = VALIDATOR_VERSION

@@ -171,6 +171,12 @@ def test_the_derived_emit_carries_no_code_owned_heading() -> None:
 
 
 def test_everything_but_the_statements_is_carried_through_untouched() -> None:
+    """Spec §2.2: every shape but the statement's is byte-for-byte schema 2's.
+
+    `block_accounting` belongs on this list and moves for exactly one reason,
+    which this fixture does not trigger: a row whose coverage the derivation
+    itself un-evidenced (see the heading-row tests below).
+    """
     source, derived = emit2(), migrate.emit3_of(emit2())
     for key in ("source_assessment", "relations", "facts", "mentions", "areas",
                 "block_accounting"):
@@ -310,6 +316,124 @@ def test_an_emit_with_no_statements_still_derives() -> None:
     empty["areas"] = []
     empty["relations"] = {"groups": [], "conditions": [], "example_sets": []}
     assert migrate.emit3_of(empty)["statements"] == []
+
+
+# --- the accounting rows the derivation itself un-evidences -----------------
+#
+# The dominant live shape, and the one that cost 6,534 documents their migrated
+# row (2026-09-23 replay): schema 2 covered a HEADING block by citing it as the
+# importance evidence of the statements underneath it, which is what the v10
+# prompt's own worked example does —
+#
+#   {"block_id": "b000001", "disposition": "statements",
+#    "ref_ids": ["s1", "s2", "s3"], ...}   # "this heading carries their importance"
+#
+# and the v11 prompt makes that same block a "context" row with no ref_ids,
+# because a heading is never quoted as a statement's modality. Schema 3 retires
+# `importance_evidence`, so the derivation drops the only reference that proved
+# the claim — and `accounting:coverage_unevidenced` (validator/19) then fails a
+# record that verified clean under the shape it was extracted in.
+
+MD_MODAL = (
+    "## Minimum qualifications\n"
+    "- 5 years of Python experience.\n"
+    "- Distributed systems experience.\n"
+)
+
+
+def heading_emit2() -> dict[str, Any]:
+    """`emit2`, with the heading block carrying both statements' importance."""
+    emit = emit2()
+    for statement in emit["statements"]:
+        statement["importance_evidence"] = [_whole("b000001")]
+    emit["statements"][1]["proficiency"] = None
+    emit["statements"][1]["proficiency_evidence"] = None
+    emit["block_accounting"][0] = {
+        "block_id": "b000001", "disposition": "statements",
+        "ref_ids": ["s_python", "s_distributed"],
+        "exclusion_reason": None, "evidence": None,
+    }
+    return emit
+
+
+def record2_of(emit: dict[str, Any], markdown: str) -> dict[str, Any]:
+    return assemble(emit, markdown, document_hash=sha256_hex(markdown.encode("utf-8")),
+                    observed_model=MODEL, at=AT)
+
+
+def accounting_of(record: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {entry["block_id"]: entry for entry in record["block_accounting"]}
+
+
+def test_the_schema_2_record_verifies_clean_before_the_derivation() -> None:
+    """The premise: this is not a defective archive row. It is a record the
+    frozen bundle judged and published, so anything the derived record fails is
+    the derivation's doing."""
+    record = record2_of(heading_emit2(), MD)
+    report = verify(record, MD, schema_version="2")
+    assert [(f.code, f.path) for f in report.findings if f.severity == "error"] == []
+
+
+def test_a_heading_row_the_derivation_unevidenced_becomes_a_context_row() -> None:
+    """The v11 shape of the v10 example: nothing quotes the heading any more,
+    so the row says `context` rather than claiming statements that no longer
+    cite it."""
+    derived = migrate.record3_of(record2_of(heading_emit2(), MD), annotate(MD))
+    assert accounting_of(derived)["b000001"] == {
+        "block_id": "b000001", "disposition": "context", "ref_ids": [],
+        "exclusion_reason": None, "evidence": None,
+    }
+
+
+def test_the_derived_record_verifies_clean_when_the_heading_carried_the_verdict() -> None:
+    """The migration's promise (spec §7): offline and COMPLETE. A record that
+    verified under the shape it was extracted in derives to one that verifies
+    under the shape it is migrated to."""
+    derived = migrate.record3_of(record2_of(heading_emit2(), MD), annotate(MD))
+    assert validate_record(derived, "3") == []
+    assert errors_of(derived, MD) == []
+
+
+def test_a_row_whose_quote_survives_as_a_modality_is_untouched() -> None:
+    """Only the rows the derivation un-evidenced move. "Minimum qualifications"
+    carries a lexicon term, so the heading survives as both statements'
+    modality quote and goes on covering its own block."""
+    record = record2_of(heading_emit2(), MD_MODAL)
+    derived = migrate.record3_of(record, annotate(MD_MODAL))
+    assert by_id(derived["statements"])["s_python"]["modality_evidence"] is not None
+    assert accounting_of(derived)["b000001"] == accounting_of(record)["b000001"]
+    assert errors_of(derived, MD_MODAL) == []
+
+
+def test_a_row_schema_2_had_already_left_unevidenced_is_carried_through() -> None:
+    """The derivation re-accounts what IT un-evidenced, never what the archived
+    record got wrong on its own: rewriting the latter would hide an extraction
+    defect behind a migration."""
+    emit = emit2()
+    emit["block_accounting"][2]["ref_ids"] = ["s_python"]  # s_python quotes b000002
+    record = record2_of(emit, MD)
+    derived = migrate.record3_of(record, annotate(MD))
+    assert accounting_of(derived)["b000003"] == accounting_of(record)["b000003"]
+    assert [code for code, _, _ in errors_of(derived, MD)] == ["coverage_unevidenced"]
+
+
+def test_the_emit_derivation_re_accounts_the_same_rows() -> None:
+    """The fixture corpus is derived from emits and the live archive from
+    records, and the two have to land on the same candidate (below) — so the
+    emit derivation re-accounts too, on the ids the emit itself names."""
+    derived = migrate.emit3_of(heading_emit2(), blocks=annotate(MD))
+    assert accounting_of(derived)["b000001"]["disposition"] == "context"
+    assert accounting_of(derived)["b000001"]["ref_ids"] == []
+
+
+def test_the_two_paths_agree_when_a_heading_row_is_re_accounted() -> None:
+    blocks = annotate(MD)
+    from_emit = assemble(
+        migrate.emit3_of(heading_emit2(), blocks=blocks), MD, document_hash=DOC_HASH,
+        observed_model=MODEL, at=AT, schema_version="3",
+    )
+    from_record = migrate.record3_of(record2_of(heading_emit2(), MD), blocks)
+    assert canonical_json(from_emit) == canonical_json(from_record)
 
 
 # --- determinism and the two paths agreeing ---------------------------------

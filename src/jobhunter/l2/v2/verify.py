@@ -395,27 +395,40 @@ def _check_mentions(record: dict[str, Any], report: Report) -> None:
                          stored_key=mention["normalized_key"])
 
 
-def _evidence_blocks(record: dict[str, Any], schema_version: str) -> dict[str, set[str]]:
+def evidence_blocks(shape: dict[str, Any], schema_version: str) -> dict[str, set[str]]:
     """object id -> the block ids that object's OWN evidence cites.
 
     Statements and fact entries are the two kinds `block_accounting.ref_ids`
     may name, so they are the two kinds indexed here. Ids are unique per
     namespace (`duplicate_id` is its own finding); a collision across the two
     merges, which can only make the coverage check below more forgiving.
+
+    PUBLIC because the v20 migration re-accounts against this very index
+    (`l2/v2/migrate`): schema 3 retires two of schema 2's reference families, so
+    a coverage claim the archived record proved through one of them has to be
+    re-derived — and the derivation has to read coverage exactly the way
+    `_check_accounting` below reads it, or the migrated record fails the check
+    the derivation was supposed to satisfy. One implementation, never a second
+    copy of the rule.
+
+    Read with `.get`, so it answers for an EMIT (whose references carry the same
+    `block_id`, unbound) as well as for a record. Every key is present in any
+    record that reached this module — `verify` runs it only after
+    `validate_record` passed — so the tolerance costs nothing here.
     """
     index: dict[str, set[str]] = {}
-    for statement in record["statements"]:
-        cited = index.setdefault(statement["id"], set())
+    for statement in shape.get("statements") or []:
+        cited = index.setdefault(statement.get("id"), set())
         for key in _STATEMENT_REF_KEYS[schema_version]:
-            cited.update(ref["block_id"] for ref in statement[key] or [])
-        for issue in statement["unresolved"]:
-            cited.update(ref["block_id"] for ref in issue["evidence"] or [])
-    for entry in record["facts"]["entries"]:
-        cited = index.setdefault(entry["id"], set())
-        for refs in entry["evidence"].values():
+            cited.update(ref["block_id"] for ref in statement.get(key) or [])
+        for issue in statement.get("unresolved") or []:
+            cited.update(ref["block_id"] for ref in issue.get("evidence") or [])
+    for entry in (shape.get("facts") or {}).get("entries") or []:
+        cited = index.setdefault(entry.get("id"), set())
+        for refs in (entry.get("evidence") or {}).values():
             cited.update(ref["block_id"] for ref in refs or [])
-        if entry["scope"] is not None:
-            cited.update(ref["block_id"] for ref in entry["scope"]["evidence"] or [])
+        if entry.get("scope") is not None:
+            cited.update(ref["block_id"] for ref in entry["scope"].get("evidence") or [])
     return index
 
 
@@ -431,7 +444,7 @@ def _check_accounting(record: dict[str, Any], blocks: list[Block], report: Repor
     whose named objects quote nothing from that block at all.
     """
     by_id = {block.id: block for block in blocks}
-    cited_blocks = _evidence_blocks(record, schema_version)
+    cited_blocks = evidence_blocks(record, schema_version)
     accounted: set[str] = set()
     excluded: set[str] = set()
     for i, entry in enumerate(record["block_accounting"]):

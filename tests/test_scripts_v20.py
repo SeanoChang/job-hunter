@@ -158,6 +158,65 @@ def test_check_exits_non_zero_on_a_corpus_the_migration_never_touched(
     assert capsys.readouterr().out.rstrip().endswith("FAIL")
 
 
+def _seed_refused(pg: Conn, store: ArchiveStore,  # noqa: F811
+                  monkeypatch: pytest.MonkeyPatch) -> str:
+    """A document the schema-3 derivation refuses, replayed: the migration
+    leaves it quarantined under the active tuple with its reasons on the row."""
+    from jobhunter.l2 import bundles
+    from jobhunter.l2.rebuild import rebuild_extractions
+    from jobhunter.l2.report import Report
+    from tests.l2.test_rebuild import _archive_schema2_attempt
+
+    dh, _, _, _ = _archive_schema2_attempt(pg, store, "C03")
+    real = bundles._verify_v2
+
+    def _refuse_schema3(record: Any, md: str, schema_version: str) -> Report:
+        if schema_version != "3":
+            return real(record, md, schema_version=schema_version)
+        report = Report(validator_version="20")
+        report.error("binding", "/statements/0", "span_moved")
+        return report
+
+    monkeypatch.setattr(bundles, "_verify_v2", _refuse_schema3)
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+    return dh
+
+
+def test_the_report_counts_the_documents_the_derivation_refused(
+    pg: Conn, store: ArchiveStore, report_script: Any,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refusal is a fact about a document, not a hole in the migration: it has
+    a row, so the completeness term is satisfied, and the operator still has to
+    see how many were refused and what for."""
+    _seed_refused(pg, store, monkeypatch)
+    counts = report_script.counts(pg)
+    assert counts.documents_owed_migration == 0
+    assert counts.active_by_status == {"quarantined": 1}
+    assert counts.documents_refused_by_derivation == 1
+    assert counts.refusal_reasons[0][1] == 1
+    assert "span_moved" in counts.refusal_reasons[0][0]
+    lines = "\n".join(report_script._counts_lines("now", counts))
+    assert "documents refused by derivation: 1" in lines
+    assert "span_moved" in lines
+
+
+def test_check_passes_a_surface_whose_refusals_all_have_rows(
+    pg: Conn, store: ArchiveStore, report_script: Any,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch, capsys: Any,
+) -> None:
+    """The predicate fails for documents with NO row. A refused document has
+    one, and hiding it behind a FAIL would make the operator's only completeness
+    signal fire on the one thing the migration cannot do anything about."""
+    _seed_refused(pg, store, monkeypatch)
+    _as_operator(monkeypatch, pg)
+    assert report_script.main(["--check"]) == 0
+    out = capsys.readouterr().out
+    assert "documents refused by derivation: 1" in out
+    assert out.rstrip().endswith("PASS")
+
+
 def test_check_exits_zero_on_a_migrated_corpus(
     pg: Conn, store: ArchiveStore, report_script: Any,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch, capsys: Any,
