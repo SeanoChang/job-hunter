@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 import psycopg
+import pytest
 
 from jobhunter.archive.base import ArchiveStore
 from jobhunter.archive.keys import x_review_key
@@ -1152,3 +1153,192 @@ def test_rebuild_refuses_a_repaired_candidate_the_store_cannot_hold(
         # the BASE candidate, under the blocking verdict the repair never lifted
         assert row["profile"]["quality"]["semantics"] == "findings"
         assert row["profile"]["quality"]["search_eligible"] is False
+
+
+# --- validator/20: a bookkeeping-only exhausted ladder serves (T-Q3S9 ac-3) --
+# The 271 production documents are MIGRATED rows: their whole ladder ran under
+# `(demand-profile/v10, 2)` and failed only block accounting, so the replay
+# that owes them a schema-3 row is where they are recovered — offline, from the
+# archived raw responses, with no engine call.
+
+
+def _archive_schema2_ladder(
+    pg: Conn, store: ArchiveStore, case: str, emit: dict[str, Any]  # noqa: F811
+) -> tuple[str, list[Any]]:
+    """Three `(demand-profile/v10, 2)` content failures, the last one exhausting
+    the ladder — archived exactly as the drain writes them: no record, the raw
+    response, and the verifier's findings (validator 19, the corpus's own)."""
+    from datetime import UTC, datetime
+
+    from jobhunter.archive import keys
+    from jobhunter.l2.attempts import to_bytes
+    from jobhunter.l2.bundles import get_bundle_for_tuple
+    from tests.l2 import test_runner_v2 as v2
+    from tests.l2.test_attempts import _attempt
+
+    markdown = v2.source(case)
+    dh = v2.seed_case(pg, case)
+    bundle = get_bundle_for_tuple(v2.V2_SCHEMA2_TUPLE[0], "2")
+    ladder = []
+    for no in (1, 2, 3):
+        started = datetime(2026, 9, 12, 6, 12, no, tzinfo=UTC)
+        record = bundle.assemble(emit, markdown, document_hash=dh, observed_model=v2.MODEL,
+                                 normalizer_version="md/1", at=started.isoformat())
+        findings = [
+            {"check": f.check, "path": f.path, "code": f.code, "severity": f.severity,
+             "detail": f.detail}
+            for f in bundle.verify(record, markdown).findings
+        ]
+        attempt = _attempt(
+            attempt_key=keys.x_attempt_key(started, dh, 1, no), document_hash=dh,
+            prompt_version=v2.V2_SCHEMA2_TUPLE[0], schema_version="2", validator_version="19",
+            requested_model=v2.MODEL, observed_model=v2.MODEL, record=None,
+            raw_response=json.dumps(emit), outcome="attribution_failed", attempt_no=no,
+            ladder_exhausted=no == 3, validation=findings,
+            started_at=started.isoformat(), finished_at=started.isoformat(),
+        )
+        store.put(attempt.attempt_key, to_bytes(attempt))
+        ladder.append(attempt)
+    return dh, ladder
+
+
+def test_rebuild_settles_a_bookkeeping_only_schema2_ladder_in_both_partitions(
+    pg: Conn, store: ArchiveStore, monkeypatch: Any  # noqa: F811
+) -> None:
+    from tests.l2 import test_runner_v2 as v2
+    from tests.l2.test_runner_v20_bookkeeping import bookkeeping_gap
+
+    _no_engine(monkeypatch)
+    _, ladder = _archive_schema2_ladder(pg, store, "C04", bookkeeping_gap(v2.emit2_of("C04")))
+
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+    for tup, schema, rows in ((v2.V2_SCHEMA2_TUPLE, "2", v2.C04_ROWS_V2),
+                              (v2.V2_TUPLE, "3", v2.C04_ROWS)):
+        row = _row(pg, tup)
+        assert row is not None, tup
+        assert row["status"] == "validated", tup
+        assert row["chosen_attempt"] == ladder[-1].attempt_key
+        assert row["profile"]["schema"] == schema
+        quality = row["profile"]["quality"]
+        assert quality["completeness"] == "accounting_gaps"
+        assert quality["search_eligible"] is False
+        assert [g["code"] for g in quality["accounting_gaps"]] == ["coverage_unevidenced"]
+        assert _mentions(pg, tup) == rows
+    # a settled migrated row is not a refusal: nothing to note on it
+    migrated = _row(pg, v2.V2_TUPLE)
+    assert migrated is not None and (migrated["flags"] or {}).get("migration") is None
+    assert "importance" not in _record_keys(migrated["profile"])
+
+
+def test_rebuild_keeps_quarantining_a_schema2_ladder_with_a_non_accounting_finding(
+    pg: Conn, store: ArchiveStore, monkeypatch: Any  # noqa: F811
+) -> None:
+    from tests.l2 import test_runner_v2 as v2
+    from tests.l2.test_runner_v20_bookkeeping import unknown_reference
+
+    _no_engine(monkeypatch)
+    _archive_schema2_ladder(pg, store, "C04", unknown_reference(v2.emit2_of("C04")))
+
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+    for tup in (v2.V2_SCHEMA2_TUPLE, v2.V2_TUPLE):
+        row = _row(pg, tup)
+        assert row is not None and row["status"] == "quarantined", tup
+        assert row["profile"] is None and row["chosen_attempt"] is None
+        assert _mentions(pg, tup) == []
+
+
+def test_a_live_settle_of_a_migrated_bookkeeping_row_keeps_the_replayed_accounting_verdict(
+    pg: Conn, store: ArchiveStore, monkeypatch: Any  # noqa: F811
+) -> None:
+    """One shared rule: the drain re-folds a migrated row by reading its schema-2
+    attempts (`Bundle.migrated_from`), and must recover the SAME candidate the
+    replay did — same hash, same gaps — or the row would flip on the next
+    review, re-audit or catch-up."""
+    from jobhunter.l2.bundles import get_bundle
+    from jobhunter.l2.runner import settle
+    from jobhunter.timeutil import iso
+    from tests.l2 import test_runner_v2 as v2
+    from tests.l2.test_runner_v20_bookkeeping import bookkeeping_gap
+
+    _no_engine(monkeypatch)
+    dh, _ = _archive_schema2_ladder(pg, store, "C04", bookkeeping_gap(v2.emit2_of("C04")))
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+    replayed = _row(pg, v2.V2_TUPLE)
+    assert replayed is not None and replayed["status"] == "validated"
+
+    settle(pg, store, dh, ("z-ai/*",), iso(utcnow_precise()), bundle=get_bundle("v2"))
+    pg.commit()
+    live = _row(pg, v2.V2_TUPLE)
+    assert live is not None
+    for column in ("status", "chosen_attempt", "profile", "flags"):
+        assert live[column] == replayed[column], column
+    assert _mentions(pg, v2.V2_TUPLE) == v2.C04_ROWS
+
+
+def test_rebuild_reproduces_a_live_bookkeeping_settlement_row_for_row(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """The native (v11, 3) path: a drain settles the bookkeeping-only ladder, and
+    `extract rebuild` re-derives the identical row from the archive."""
+    from tests.l2 import test_runner_v2 as v2
+    from tests.l2.test_runner_v20_bookkeeping import bookkeeping_gap
+
+    v2.seed_case(pg, "C04")
+    engine = v2.AuditingEngine([v2.result(bookkeeping_gap(v2.emit_of("C04")))] * 3,
+                               v2.clean_audit)
+    run(v2.v2_settings(), pg, store, engine=engine, max_docs=10, max_usd=5.0)
+    pg.commit()
+    live = _dump(pg)
+    assert [r["status"] for r in live["extractions"]] == ["validated"]
+    mentions = _mentions(pg, v2.V2_TUPLE)
+
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+    assert _dump(pg) == live
+    assert _mentions(pg, v2.V2_TUPLE) == mentions == v2.C04_ROWS
+
+
+@pytest.mark.parametrize(("check", "code"), [
+    ("accounting", "coverage_unevidenced"),  # a refusal the rule's findings test admits
+    ("binding", "span_moved"),
+], ids=["accounting_refusal", "binding_refusal"])
+def test_a_refused_derivation_is_never_settled_by_the_bookkeeping_rule(
+    pg: Conn, store: ArchiveStore, monkeypatch: Any, check: str, code: str  # noqa: F811
+) -> None:
+    """The rule speaks for a REAL exhausted ladder: attempts that each failed,
+    were fed back, and ran out. A refused derivation has none — its schema-2
+    candidate passed, and only `_spent` marks the derived events exhausted, so
+    the fold writes the refusal instead of erasing the document. Such a document
+    was never asked to fix anything, so it stays the quarantined, reasoned row
+    the migration writes for every refusal, whatever the refusal was about."""
+    from jobhunter.l2 import bundles
+    from jobhunter.l2.report import Report
+    from tests.l2 import test_runner_v2 as v2
+
+    _no_engine(monkeypatch)
+    _archive_schema2_attempt(pg, store, "C03")
+    real = bundles._verify_v2
+
+    def _refuse_schema3(record: Any, md: str, schema_version: str) -> Report:
+        if schema_version != "3":
+            return real(record, md, schema_version=schema_version)
+        report = Report(validator_version="20")
+        report.error(check, "/blocks/0", code)
+        return report
+
+    monkeypatch.setattr(bundles, "_verify_v2", _refuse_schema3)
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+
+    migrated = _row(pg, v2.V2_TUPLE)
+    assert migrated is not None, "the document was erased from the active tuple"
+    assert migrated["status"] == "quarantined"
+    assert migrated["profile"] is None and migrated["chosen_attempt"] is None
+    reasons = (migrated["flags"] or {})["migration"]
+    assert reasons["derived"] == "refused"
+    assert any(code in reason for reason in reasons["reasons"])
+    frozen = _row(pg, v2.V2_SCHEMA2_TUPLE)
+    assert frozen is not None and frozen["status"] == "validated"

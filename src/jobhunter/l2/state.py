@@ -28,6 +28,15 @@ is what this module does with it: a disagreement whose audit found nothing
 blocking on what the samples split over settles instead of parking, while
 those same findings go on gating eligibility. `GATE_DIMENSION_CODES` and
 `audit_touches_dispute` are that policy's whole vocabulary.
+
+Validator/20 also changes what an EXHAUSTED LADDER means (T-Q3S9). A third
+hook, `recovery_hook`, hands the fold a content failure's candidate re-judged
+(`RecoveredCandidate`), and a ladder that ran out holding a candidate that
+extracted the document and whose only failing findings are block bookkeeping
+settles `validated` on it — flagged `completeness: accounting_gaps`, never
+`search_eligible` — instead of quarantining. `BOOKKEEPING_CODES`,
+`RecoveredCandidate` and `bookkeeping_gaps` are that rule's whole vocabulary;
+a fold given no recovery hook quarantines exactly as before.
 """
 
 from __future__ import annotations
@@ -80,6 +89,9 @@ class DerivedState:
     # is why nothing a v1 run produces can be eligible.
     sampling: str = "not_requested"  # not_requested|complete|adjudicated|incomplete|disagreement
     semantics: str = "not_checked"  # no_findings | findings | not_checked | error
+    # the audit's four values, or ACCOUNTING_GAPS when the chosen candidate is
+    # a bookkeeping-only settlement (validator/20): the verifier's gap, which
+    # no audit verdict replaces
     completeness: str = "not_checked"
     blocking: int = 0  # blocking findings + blocking unresolved questions
     # The human disposition the review events leave on record (spec §6). It is
@@ -87,6 +99,13 @@ class DerivedState:
     # a candidate a human rejected; `status` itself is what keeps a *parked*
     # record out of the aggregates (see `quality.assess`'s `lifecycle`).
     human_review: str = "none"  # none | accepted | rejected
+    # The failing bookkeeping findings of a candidate the fold settled on after
+    # its ladder ran out (validator/20, `bookkeeping_gaps`), verbatim as the
+    # verifier reported them; empty for every other settlement. Non-empty is
+    # exactly "the chosen attempt is a content failure, not an `ok`", which is
+    # what tells settlement to publish the RECOVERED candidate and the stored
+    # quality block to say which blocks the record never accounted for.
+    accounting_gaps: tuple[dict[str, Any], ...] = ()
 
 
 def _ts(value: str) -> datetime:
@@ -173,6 +192,96 @@ GATE_DIMENSION_CODES: dict[str, tuple[str, ...]] = {
 #: what a dimension may say once its audit completed; `error` is never a pass
 _AUDITED = ("no_findings", "findings")
 
+#: The validator/20 bookkeeping rule (T-Q3S9): the `accounting` finding codes
+#: that describe INCOMPLETE BLOCK BOOKKEEPING and nothing else. The 2026-09-28
+#: review/quarantine analysis found 271 of the 706 quarantined documents under
+#: the active tuple exhausted their ladder failing only these — statements,
+#: mentions, facts and references all bound and verified — and under parsing
+#: contract v3 ("every verified extraction serves") such a candidate is a
+#: faithful extraction with a completeness gap, not an unfaithful one.
+#:
+#: A whitelist, like `quality._REVIEW_OK`: a code this rule does not name never
+#: passes by default. That keeps out the three `accounting` codes that are not
+#: bookkeeping gaps — `unknown_block` cites a block the source does not have (a
+#: reference defect), and `refs_missing`/`exclusion_reason_missing` are shapes
+#: no settling event of the 706 showed — and every non-accounting check.
+#: The two `*_requirement_language` codes are warnings the verifier reports
+#: beside the gaps; they are listed so their presence does not disqualify a
+#: candidate, and they are never themselves a gap (`bookkeeping_gaps`).
+BOOKKEEPING_CODES: frozenset[str] = frozenset({
+    "coverage_unevidenced", "block_unaccounted",
+    "context_requirement_language", "exclusion_requirement_language",
+})
+
+#: The completeness value a bookkeeping settlement carries. `quality.py` owns
+#: the vocabulary (`quality.ACCOUNTING_GAPS`); restated here because this is
+#: the shared fold and imports no v2 module, and pinned to it by a test.
+ACCOUNTING_GAPS = "accounting_gaps"
+
+
+@dataclass(frozen=True)
+class RecoveredCandidate:
+    """What the bookkeeping rule reads off one recovered candidate.
+
+    `findings` is every finding the fold's own verifier reports on it, plus the
+    verdicts only the ladder could reach and the archive kept (a retry's
+    unexplained deletion, as the bare error it was archived as). The three
+    counts are the candidate's SIZE against its source, which no finding says:
+    `extracted` is its statements plus its fact entries, `blocks` the source's
+    annotated blocks, `accounted` how many of those its accounting rows cover
+    (the verifier's own tally — the exact complement of its
+    `block_unaccounted` findings).
+    """
+
+    findings: tuple[Mapping[str, Any], ...]
+    extracted: int
+    blocks: int
+    accounted: int
+
+
+def bookkeeping_gaps(candidate: RecoveredCandidate) -> tuple[dict[str, Any], ...] | None:
+    """The candidate's gaps when block bookkeeping is ALL that is wrong with it.
+
+    Two tests, and a candidate that fails either is `None`, and the ladder
+    quarantines.
+
+    It has to be an EXTRACTION OF THE DOCUMENT, with a gap in it — the premise
+    the rule rests on (every statement, mention, fact and reference it holds
+    bound and verified) is only worth something when there is content to hold.
+    So it extracted at least one statement or fact entry, and its accounting
+    covers MOST of the source: strictly more than half of the blocks. A
+    candidate that extracted nothing fails nothing but `block_unaccounted`, one
+    per block, and one that accounted a sliver of the source fails nothing
+    else either; both are a failed extraction, not a completeness gap, and the
+    ladder's findings test alone would serve them `validated` — a terminal row
+    no drain comes back for (2026-09-28 review of T-Q3S9). The floor costs the
+    real corpus nothing: every one of the 293 production candidates the rule
+    settles holds 19 or more statements and leaves at most 6% of its blocks
+    unaccounted. A posting with nothing to extract (an empty or placeholder
+    source) settles as an ordinary `ok` once its accounting is complete; one
+    whose accounting is not stays quarantined, as it always did.
+
+    And block bookkeeping has to be all that is wrong: every finding — warnings
+    included — is an `accounting` finding under one of `BOOKKEEPING_CODES`, and
+    at least one fails (a candidate with nothing failing is an `ok`, not this
+    rule's business). Anything else is a faithfulness question this rule never
+    answers: a reference, mention, binding, schema or control-character
+    finding, and any entry that is not a verifier finding at all (a bare
+    `{"error": ...}` — an assembly error, or a retry's unexplained deletion).
+
+    Returns the FAILING findings, verbatim: those are the gaps a reader is shown.
+    """
+    if candidate.extracted < 1 or 2 * candidate.accounted <= candidate.blocks:
+        return None
+    findings = candidate.findings
+    if not findings:
+        return None
+    for finding in findings:
+        if finding.get("check") != "accounting" or finding.get("code") not in BOOKKEEPING_CODES:
+            return None
+    gaps = tuple(dict(f) for f in findings if f.get("severity") != "warning")
+    return gaps or None
+
 
 def _ids_of(node: Mapping[str, Any]) -> set[str]:
     """Every id a finding or question points at: its targets plus the block its
@@ -251,6 +360,18 @@ def _budget_parks(report: Mapping[str, Any]) -> bool:
 # it. No hook means validator/15 behaviour, unchanged.
 AuditHook = Callable[[str], AuditView | None]
 
+# The candidate recovery settle injects (validator/20): a content-failed
+# attempt -> its candidate, re-judged under the fold's own contract
+# (`RecoveredCandidate`: its findings and its size against the source), or
+# None when the archived response holds no candidate at all (it does not
+# parse, or does not assemble). An `attribution_failed` attempt is archived
+# WITHOUT a record — only passing attempts keep one — so the runner and the
+# replay recover it the same way, from the raw response, through one shared
+# function (`runner._Recovery`); this fold only asks, and only once a ladder
+# has run out with nothing settled. No hook is validator/19's exhausted ladder,
+# which is what every fold at an older validator, and v1, keeps getting.
+RecoveryHook = Callable[[Attempt], RecoveredCandidate | None]
+
 
 def _audit_clean(audit: AuditView | None) -> bool:
     """A completed audit that found nothing blocking on either dimension.
@@ -312,6 +433,8 @@ def derive_state(
     accepted_globs: Sequence[str],
     agreement_of: AgreementHook | None = None,
     audit_hook: AuditHook | None = None,
+    *,
+    recovery_hook: RecoveryHook | None = None,
 ) -> DerivedState:
     events: list[tuple[datetime, int, str, Attempt | Review]] = []
     for a in attempts:
@@ -329,6 +452,10 @@ def derive_state(
     adjudicated_from = "disagreement"
     human_review = "none"
     ok_in_glob: list[Attempt] = []
+    # this cohort's content failures from an accepted model, in event order:
+    # the candidates the validator/20 bookkeeping rule may settle on
+    failed_in_glob: list[Attempt] = []
+    gaps: tuple[dict[str, Any], ...] = ()
     slots_attempted: set[int] = set()
     ruled = False  # a review verdict has spoken; later samples never override it
 
@@ -341,12 +468,24 @@ def derive_state(
             audits[attempt_key] = audit_hook(attempt_key)
         return audits[attempt_key]
 
+    recovered: dict[str, tuple[dict[str, Any], ...] | None] = {}  # memoized too
+
+    def gaps_of(attempt: Attempt) -> tuple[dict[str, Any], ...] | None:
+        assert recovery_hook is not None
+        if attempt.attempt_key not in recovered:
+            candidate = recovery_hook(attempt)
+            recovered[attempt.attempt_key] = (
+                bookkeeping_gaps(candidate) if candidate is not None else None
+            )
+        return recovered[attempt.attempt_key]
+
     for _, _, _, event in sorted(events, key=lambda e: (e[0], e[1], e[2])):
         if isinstance(event, Attempt):
             slots_attempted.add(event.sample_slot)
-            in_glob = event.outcome == "ok" and model_matches(
-                event.observed_model, accepted_globs
-            )
+            accepted = model_matches(event.observed_model, accepted_globs)
+            in_glob = event.outcome == "ok" and accepted
+            if event.outcome == "attribution_failed" and accepted:
+                failed_in_glob.append(event)
             if in_glob:
                 ok_in_glob.append(event)
                 # only PENDING work validates: needs_review/rejected/quarantined
@@ -433,7 +572,29 @@ def derive_state(
                     status = "quarantined"
             elif (event.outcome in ("schema_invalid", "attribution_failed")
                   and status is None and event.attempt_no >= 3 and event.ladder_exhausted):
-                status = "quarantined"
+                # Validator/20 (T-Q3S9): the ladder is out of rungs, so this is
+                # the one point at which a bookkeeping-only candidate settles
+                # instead of quarantining — never earlier, because inside the
+                # ladder accounting findings are retry-worthy errors the model
+                # is asked to fix (downgrading them would stop it being asked).
+                # Of the cohort's candidates whose only defect is bookkeeping,
+                # the one with the FEWEST gaps serves: completeness is the
+                # dimension being flagged, so the most complete candidate is
+                # the most faithful answer to it. A tie goes to the LATEST —
+                # under the v10 retry contract each attempt is an edit of the
+                # one before, so the later of two equally complete candidates
+                # is the one that took more of the verifier's feedback.
+                best: tuple[Attempt, tuple[dict[str, Any], ...]] | None = None
+                if recovery_hook is not None:
+                    for candidate in failed_in_glob:
+                        found = gaps_of(candidate)
+                        if found is not None and (best is None or len(found) <= len(best[1])):
+                            best = (candidate, found)
+                if best is None:
+                    status = "quarantined"
+                else:
+                    status, chosen = "validated", best[0].attempt_key
+                    gaps = best[1]
             # transport / throttled / model_rejected / engine_fatal say nothing
             # about the document, so they never settle anything
         else:
@@ -445,6 +606,8 @@ def derive_state(
                 adjudicated_from = "disagreement"
                 human_review = "none"
                 ok_in_glob.clear()
+                failed_in_glob.clear()
+                gaps = ()
                 slots_attempted.clear()
                 ruled = False
             elif event.verb == "reject" and status is not None:
@@ -497,6 +660,12 @@ def derive_state(
         # requires sampling, and a parked one still shows why. Absent means
         # `not_checked` — the phase never ran, which is never a pass.
         audit = audit_of(chosen) if chosen is not None else None
+        completeness = audit.completeness if audit is not None else "not_checked"
+        if gaps:
+            # the verifier's finding, not an audit's: whatever an audit of
+            # this candidate says, its bookkeeping failed, and completeness
+            # (hence eligibility) stays failed until the accounting is fixed
+            completeness = ACCOUNTING_GAPS
         return DerivedState(
             status,
             chosen,
@@ -504,9 +673,10 @@ def derive_state(
             agreement=agreement,
             sampling=sampling,
             semantics=audit.semantics if audit is not None else "not_checked",
-            completeness=audit.completeness if audit is not None else "not_checked",
+            completeness=completeness,
             blocking=audit.blocking if audit is not None else 0,
             human_review=human_review,
+            accounting_gaps=gaps,
         )
     return DerivedState(
         status, None, k=k, agreement=agreement, sampling=sampling,

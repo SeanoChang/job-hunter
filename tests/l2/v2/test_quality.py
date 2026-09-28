@@ -1,4 +1,5 @@
-from jobhunter.l2.v2.quality import assess
+from jobhunter.l2 import state
+from jobhunter.l2.v2.quality import ACCOUNTING_GAPS, COMPLETENESS, assess
 
 
 def test_offline_records_are_never_eligible() -> None:
@@ -101,3 +102,22 @@ def test_an_unrecognized_human_disposition_is_never_a_pass() -> None:
     assert _audited(human_review="accepted")["search_eligible"] is True
     for disposition in ("rejected", "flagged", "reopened", "pending", ""):
         assert _audited(human_review=disposition)["search_eligible"] is False, disposition
+
+
+def test_accounting_gaps_completeness_is_never_eligible() -> None:
+    """Validator/20 (T-Q3S9): a candidate that exhausted its ladder failing only
+    block bookkeeping serves, flagged. Its completeness is the VERIFIER's
+    finding, not an audit's, and nothing else about the record — a clean
+    audit, a complete cohort, a human accept — makes it eligible."""
+    q = _audited(completeness=ACCOUNTING_GAPS, sampling="complete")
+    assert q["completeness"] == "accounting_gaps"
+    assert q["search_eligible"] is False
+    accepted = _audited(completeness=ACCOUNTING_GAPS, human_review="accepted")
+    assert accepted["search_eligible"] is False
+
+
+def test_the_completeness_vocabulary_is_pinned_to_the_fold() -> None:
+    """The fold writes the value (`state.ACCOUNTING_GAPS`, restated there so the
+    shared fold imports no v2 module); this module owns the vocabulary."""
+    assert state.ACCOUNTING_GAPS == ACCOUNTING_GAPS == "accounting_gaps"
+    assert COMPLETENESS == ("no_findings", "findings", "not_checked", "error", "accounting_gaps")

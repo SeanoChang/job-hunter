@@ -122,7 +122,7 @@ import gzip
 import json
 import re
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from itertools import batched
@@ -153,10 +153,12 @@ from jobhunter.l2.engines import (
     EngineTransportError,
 )
 from jobhunter.l2.prompt import PROMPT_VERSION
-from jobhunter.l2.schemas import emit_schema, normalize_emit, validate_emit
+from jobhunter.l2.schemas import emit_schema, normalize_emit, validate_emit, validate_record
 from jobhunter.l2.state import (
+    ACCOUNTING_GAPS,
     AuditView,
     DerivedState,
+    RecoveredCandidate,
     Review,
     derive_state,
     globs_to_regex,
@@ -1188,9 +1190,15 @@ def _flags(
     """
     if active.audit_version is None:
         return None
-    if (state.semantics, state.completeness) == ("not_checked", "not_checked"):
+    # the dimensions the AUDIT owns: a bookkeeping settlement's completeness is
+    # the verifier's (validator/20) and says nothing about whether an audit ran
+    audited = (
+        (state.semantics,) if state.completeness == ACCOUNTING_GAPS
+        else (state.semantics, state.completeness)
+    )
+    if all(dimension == "not_checked" for dimension in audited):
         audit = "not_checked"
-    elif "error" in (state.semantics, state.completeness):
+    elif "error" in audited:
         audit = "error"
     else:
         audit = "ok"
@@ -1219,6 +1227,11 @@ def _audit_retry_owed(store: ArchiveStore, state: DerivedState, active: Bundle) 
     §6's publication boundary.
     """
     if active.audit_version is None or state.chosen_attempt is None:
+        return False
+    if state.completeness == ACCOUNTING_GAPS:
+        # a bookkeeping settlement (validator/20) is never audited: its
+        # completeness is the verifier's and no verdict lifts it, so a pass
+        # would buy nothing and none is owed (`_audit_candidate`)
         return False
     if (state.semantics, state.completeness) == ("not_checked", "not_checked"):
         return True
@@ -1258,6 +1271,14 @@ class _Records:
         self._markdown = markdown
         self._seen: dict[str, Attempt] = {}
         self._records: dict[str, dict[str, Any] | None] = {}
+        # validator/20: set by `_fold` when this fold may settle an exhausted
+        # ladder on a recovered candidate (`_bookkeeping_rule`)
+        self.recovery: _Recovery | None = None
+
+    def recovered(self, attempt_key: str) -> dict[str, Any] | None:
+        """The candidate a bookkeeping settlement chose — a content failure,
+        archived without a record — as the fold recovered and judged it."""
+        return self.recovery.record(attempt_key) if self.recovery is not None else None
 
     def attempt(self, attempt_key: str) -> Attempt:
         if attempt_key not in self._seen:
@@ -1298,6 +1319,156 @@ class _Records:
             # text the derivation cannot re-read: an unpublishable candidate,
             # never a partially-derived one
             return None
+
+
+# --- validator/20: the bookkeeping-only exhausted ladder (T-Q3S9) ------------
+
+
+def _bookkeeping_rule(active: Bundle, validator_version: str) -> bool:
+    """Does this fold settle an exhausted ladder under the bookkeeping rule?
+
+    Two conditions. The fold is the v2 family's: only its verifier reports
+    block accounting at all, and v1's corpus keeps folding exactly as it
+    always has — no candidate recovery, no archive reads it never needed. And
+    the fold is at the bundle's OWN validator: the rule is part of validator
+    20's settlement policy, so a partition folded at an older validator (a
+    live catch-up of rows still keyed 19, replay's historical branch) keeps
+    that validator's rule, which quarantined.
+    """
+    return active.name == "v2" and validator_version == active.validator_version
+
+
+def _count(metrics: Mapping[str, object], key: str) -> int:
+    """One of the verifier's tallies, or 0 when this verifier keeps none — which
+    fails the bookkeeping rule's floor, the safe answer for a shape it never
+    measured."""
+    value = metrics.get(key)
+    return value if isinstance(value, int) else 0
+
+
+def _recovered(
+    attempt: Attempt, markdown: str, bundle: Bundle
+) -> tuple[dict[str, Any], RecoveredCandidate] | None:
+    """A content failure's candidate, recovered from its archived raw response
+    and judged under `bundle`: (the record, what the bookkeeping rule reads off
+    it), or None when the response holds no candidate at all.
+
+    An `attribution_failed` attempt is archived WITHOUT a record — `Attempt.record`
+    is kept on passing attempts only — so the only way back to the candidate is
+    the way `rebuild._rejudge` takes: parse, validate the emit, assemble under
+    the tuple that WROTE the attempt (its own schema, spelled at the instant its
+    assembly saw, so the candidate hash is the one the live drain computed),
+    and derive it forward when the fold's tuple has adopted that shape
+    (`Bundle.adopt`, the v20 migration's derivation). Then the fold's own
+    verifier judges it. The live runner and the replay both reach this through
+    `_Recovery`, which is what makes the rule one rule.
+
+    The verifier cannot see one defect the ladder can: a retry that DROPPED
+    work it was not asked to touch (`unexplained_deletions`) fails as
+    `attribution_failed` with a record the verifier finds clean or merely
+    incomplete. That verdict lives only in the archived validation, so it is
+    carried across as the bare error it was archived as — and a bare error is
+    never bookkeeping (`state.bookkeeping_gaps`).
+
+    The candidate's size against its source (`state.RecoveredCandidate`'s
+    counts) is read off the same verifier report, so the rule's floor and its
+    findings test judge one verdict.
+    """
+    raw = attempt.raw_response
+    if raw is None:
+        return None
+    source = _bundle_for(attempt.prompt_version, attempt.schema_version)
+    try:
+        emit = json.loads(raw)
+        if not isinstance(emit, dict):
+            return None
+        emit = normalize_emit(emit, attempt.schema_version)
+    except ValueError:
+        return None
+    if validate_emit(emit, attempt.schema_version):
+        return None
+    try:
+        record = source.assemble(
+            emit, markdown, document_hash=attempt.document_hash,
+            normalizer_version=attempt.normalizer_version,
+            observed_model=attempt.observed_model or "",
+            at=iso(parse_iso(attempt.started_at)),
+        )
+    except AssembleError:
+        return None
+    if source.schema_version != bundle.schema_version:
+        if bundle.adopt is None:
+            return None
+        try:
+            record = bundle.adopt(record, markdown)
+        except Exception:
+            return None  # the migration refused it: no candidate in this shape
+        if validate_record(record, bundle.schema_version):
+            return None
+    if not _storable(record):
+        return None
+    report = bundle.verify(record, markdown)
+    findings: list[dict[str, Any]] = [
+        {"check": f.check, "path": f.path, "code": f.code,
+         "severity": f.severity, "detail": f.detail}
+        for f in report.findings
+    ]
+    findings += [
+        dict(v) for v in attempt.validation
+        if isinstance(v, dict) and str(v.get("error", "")).startswith("retry:")
+    ]
+    return record, RecoveredCandidate(
+        findings=tuple(findings),
+        extracted=_count(report.metrics, "n_statements")
+        + _count(report.metrics, "n_fact_entries"),
+        blocks=_count(report.metrics, "n_blocks"),
+        accounted=_count(report.metrics, "blocks_accounted"),
+    )
+
+
+class _Recovery:
+    """`_recovered`, memoized per attempt, behind the fold's recovery hook.
+
+    `archived` resolves an attempt key to the ARCHIVED attempt — the live fold
+    folds database rows, which carry no raw response, and the replay folds
+    re-keyed in-memory events — so both paths recover from the same bytes:
+    `_Records.attempt` on the live path, the replay's own archive scan there.
+    The fold asks for the judged candidate (`candidate`); settlement, once the
+    fold has chosen one of these, asks for its record (`record`), and gets the
+    very object the fold judged.
+    """
+
+    def __init__(
+        self, bundle: Bundle, markdown: str, archived: Callable[[str], Attempt]
+    ) -> None:
+        self._bundle = bundle
+        self._markdown = markdown
+        self._archived = archived
+        self._seen: dict[str, tuple[dict[str, Any], RecoveredCandidate] | None] = {}
+
+    def _of(self, attempt_key: str) -> tuple[dict[str, Any], RecoveredCandidate] | None:
+        if attempt_key not in self._seen:
+            self._seen[attempt_key] = _recovered(
+                self._archived(attempt_key), self._markdown, self._bundle
+            )
+        return self._seen[attempt_key]
+
+    def candidate(self, event: Attempt) -> RecoveredCandidate | None:
+        recovered = self._of(event.attempt_key)
+        return recovered[1] if recovered is not None else None
+
+    def record(self, attempt_key: str) -> dict[str, Any] | None:
+        recovered = self._of(attempt_key)
+        return recovered[0] if recovered is not None else None
+
+
+def _ladder_spent(attempts: Sequence[Attempt]) -> bool:
+    """Could a fold over these attempts reach the bookkeeping rule at all? Only
+    an exhausted ladder holding a content failure can, so a fold that cannot
+    reads no source text and recovers nothing."""
+    return any(a.ladder_exhausted for a in attempts) and any(
+        a.outcome == "attribution_failed" for a in attempts
+    )
 
 
 def _adopted_attempts(
@@ -1355,6 +1526,10 @@ def _settled(record: dict[str, Any], state: DerivedState) -> dict[str, Any]:
             # turns the demoted metrics into `quality.sample_notes`). None
             # when no cohort ran, and the projections then write no notes.
             "agreement": state.agreement,
+            # the failing bookkeeping findings of a candidate settled after its
+            # ladder ran out (validator/20; `serve.quality_of` publishes them
+            # as `quality.accounting_gaps`); empty for every other settlement
+            "accounting_gaps": [dict(gap) for gap in state.accounting_gaps],
         },
     }
 
@@ -1409,6 +1584,16 @@ def _fold(
         )
         if attempts:
             markdown = extraction.markdown_for(conn, dh, attempts[0].normalizer_version)
+    # validator/20 (T-Q3S9): a ladder that ran out may settle on a candidate
+    # recovered from an archived raw response, which assembly needs the source
+    # text for — read in this transaction for the same [A1] reason. Only when
+    # the rule applies and the ladder can actually reach it, so the ordinary
+    # fold reads nothing new; and kept apart from `markdown`, which decides
+    # whether `_Records` derives adopted records at all.
+    source_text = markdown
+    bookkeeping = _bookkeeping_rule(active, validator_version) and _ladder_spent(attempts)
+    if bookkeeping and source_text is None:
+        source_text = extraction.markdown_for(conn, dh, attempts[0].normalizer_version)
     reviews = extraction.reviews_for(
         conn, dh, prompt_version=prompt_version, schema_version=schema_version,
         validator_version=validator_version,
@@ -1432,6 +1617,10 @@ def _fold(
     conn.commit()
 
     records = _Records(store, active, markdown)
+    if bookkeeping and source_text is not None:
+        # the database rows carry no raw response, so the recovery reads each
+        # candidate's archived attempt — the same object the replay recovers from
+        records.recovery = _Recovery(active, source_text, records.attempt)
 
     # The ONE gate every fold shares (review P0-1): live settlement loads each
     # ok sample's record from its archived attempt object; rebuild passes the
@@ -1451,6 +1640,7 @@ def _fold(
         # validator/15 byte for byte — the v1 corpus never touches the archive
         # for an artifact its contract cannot produce
         phases.audit if phases.on else None,
+        recovery_hook=records.recovery.candidate if records.recovery is not None else None,
     )
     return attempts, reviews, state, phases, records
 
@@ -1485,7 +1675,14 @@ def settle(
         # unless a repair round replaced the candidate, in which case the
         # repaired record archived beside it is the candidate that settles.
         repaired = records.adopted(phases.record(attempt_key))
-        return repaired if repaired is not None else records.of(attempt_key)
+        if repaired is not None:
+            return repaired
+        if state.accounting_gaps:
+            # a bookkeeping settlement (validator/20) chose a content failure,
+            # archived without a record: the candidate is the one the fold
+            # recovered and judged
+            return records.recovered(attempt_key)
+        return records.of(attempt_key)
 
     _upsert_fold(
         conn, store, dh, active, prompt_version=prompt_version,
@@ -2399,6 +2596,15 @@ def _audit_candidate(
     # has none, and a human-rejected one is terminal (spec §6) — auditing it
     # could not change anything and would only spend the operator's budget.
     if state.chosen_attempt is None or state.status not in ("validated", "needs_review"):
+        return AuditPhase()
+    if state.accounting_gaps:
+        # A bookkeeping settlement (validator/20): the candidate's completeness
+        # is the verifier's finding and stays failed whatever an auditor says,
+        # so no verdict could make it eligible — and spending a call on a
+        # verdict that cannot move eligibility is what this phase never does
+        # (a rejected candidate is skipped above for the same reason). It is
+        # also not a candidate a repair round could be asked for: the trigger
+        # reads a completed audit.
         return AuditPhase()
     scheduled = _next_audit_pass(store, state.chosen_attempt, bundle.audit_version)
     if scheduled is None:
