@@ -94,6 +94,42 @@ def test_the_module_history_line_names_v11() -> None:
     assert "v11 (2026-09-22)" in module.__doc__
 
 
+# --- v11 amended in place (2026-09-28): a short topic, never a capped one ---
+
+#: the one sentence the amendment adds. Schema 3 dropped the 80-character cap
+#: on `topic` because constrained decoding emitted junk at it; the prompt asks
+#: for brevity in words instead of enforcing it in characters.
+TOPIC_SENTENCE = (
+    "Keep each statement's topic short: a few words naming what it is about, "
+    "never the whole clause — its evidence already carries that."
+)
+
+
+def test_the_topic_is_asked_short_without_a_hard_limit() -> None:
+    flat = _flat(TEMPLATE)
+    assert TOPIC_SENTENCE in flat
+    # no numeric length limit anywhere in what the extractor is sent
+    assert not re.search(r"\d+\s*(?:characters?|chars?|words?)\b", TEMPLATE, re.IGNORECASE)
+    assert "maxLength" not in TEMPLATE
+
+
+def test_the_worked_example_topics_are_a_few_words() -> None:
+    """The examples teach the sentence: every topic they carry is short."""
+    for emit in _examples():
+        for statement in emit["statements"]:
+            assert len(statement["topic"].split()) <= 4, statement["topic"]
+
+
+def test_the_module_history_records_the_in_place_amendment() -> None:
+    """v11 was amended rather than bumped only because it had not gone live on
+    main; the history says so, or two different v11 byte strings share one
+    identifier with nothing to tell them apart."""
+    from jobhunter.l2.v2 import prompt as module
+
+    assert module.__doc__ is not None
+    assert "v11, amended in place (2026-09-28" in module.__doc__
+
+
 def test_no_importance_or_proficiency_instruction_survives() -> None:
     """ac-1: the two verdict fields are gone from the contract, so no sentence
     may still ask for them and no example may still carry them."""

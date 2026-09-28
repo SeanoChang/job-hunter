@@ -24,6 +24,21 @@ is the honest reading of what the archive holds — the quote is what the
 extractor cited as its reason — and pretending otherwise would need a judgment
 call this module has no source for.
 
+The one edit the derivation makes to what the model wrote is to STRIP it of
+invisible characters (validator/20's frozen Unicode 15.0.0 table,
+`invisible.py`). Schema-2 assembly keeps validator/17's narrow character rule,
+so a v10 record can end a topic in zero-width junk (~4,600 served v10
+documents, 16%, have no other ok record), while schema-3 assembly refuses that
+junk in a live emit. A replay cannot retry, so rather than refusing the derived
+record the derivation removes those code points from every model-written
+string — topic, area name, note, unresolved reason, identifiers — and
+re-hashes. A topic is the model's paraphrase, not the source's text, so
+removing code points no reader can see does not misstate the source. Anything
+bound to the source is never touched: a quote's text (the posting's own
+zero-width space stays), the code-derived heading, a mention's surface (verify
+proves it a substring of its quote) and the fact values derived from quotes
+(`_SOURCE_BOUND`).
+
 Pure like every other `l2/v2` module: no I/O, no environment, no store imports.
 """
 
@@ -32,8 +47,9 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from jobhunter.l2.v2.assemble import candidate_hash, section_heading
+from jobhunter.l2.v2.assemble import candidate_hash, derive_fact, section_heading
 from jobhunter.l2.v2.facts import VALIDATOR_VERSION
+from jobhunter.l2.v2.invisible import invisible
 from jobhunter.l2.v2.types import Block
 from jobhunter.l2.v2.verify import evidence_blocks
 
@@ -218,6 +234,39 @@ def _reaccounted(
     return derived
 
 
+#: keys whose value is bound to the SOURCE or owned by code, never stripped: a
+#: bound quote's `text` (in a node carrying `block_id`), the heading code copies
+#: from a heading block, a mention's `surface` (verify proves it a substring of
+#: its quote) and the key derived from it, a fact's code-derived values, and the
+#: document/extraction envelopes
+_SOURCE_BOUND = frozenset({"section_heading", "surface", "normalized_key", "derived",
+                           "document", "extraction"})
+
+
+def _stripped(node: Any, *, bound: bool = False) -> Any:
+    """`node` with every invisible-table character (validator/20, `invisible.py`)
+    removed from the strings the MODEL wrote, and nothing removed from anything
+    bound to the source (`_SOURCE_BOUND`). Every string is walked, so an id and
+    the references to it are stripped alike and stay joined."""
+    if isinstance(node, str):
+        return node if bound else "".join(c for c in node if not invisible(c))
+    if isinstance(node, dict):
+        return {
+            k: _stripped(v, bound=bound or k in _SOURCE_BOUND
+                         or (k == "text" and "block_id" in node))
+            for k, v in node.items()
+        }
+    if isinstance(node, list):
+        return [_stripped(v, bound=bound) for v in node]
+    return node
+
+
+def _stripped_object(obj: dict[str, Any]) -> dict[str, Any]:
+    """`_stripped` over a whole emit or record."""
+    stripped: dict[str, Any] = _stripped(obj)
+    return stripped
+
+
 def emit3_of(emit: dict[str, Any], *, blocks: list[Block] | None = None) -> dict[str, Any]:
     """A schema-2 emit's schema-3 form: verdicts out, quoted modality in.
 
@@ -252,7 +301,7 @@ def emit3_of(emit: dict[str, Any], *, blocks: list[Block] | None = None) -> dict
         evidence_blocks(emit, SOURCE_SCHEMA_VERSION),
         evidence_blocks(derived, SCHEMA_VERSION),
     )
-    return derived
+    return _stripped_object(derived)
 
 
 def record3_of(record: dict[str, Any], blocks: list[Block]) -> dict[str, Any]:
@@ -265,6 +314,22 @@ def record3_of(record: dict[str, Any], blocks: list[Block]) -> dict[str, Any]:
     is what `verify` re-derives against) and the candidate hash, because the
     hash covers the record's shape and a migrated candidate is a different
     candidate.
+
+    So is every fact entry's `derived`, through assembly's own `derive_fact`
+    over the archived bound evidence. Validator/20 amended the quantity grammar
+    in place (2026-09-28): the replay re-assembles an attempt's raw emit under
+    20 and derives the amended value, while the live fold adopts the ARCHIVED
+    record, derived under 19. Carrying the archived value across would give one
+    attempt two candidates — two hashes, the audit joined to neither — and let
+    a live re-settle re-publish the "30 days per year" = 360 months misread the
+    amendment removed. For a record whose facts derive the same under 20 this
+    changes nothing, byte for byte.
+
+    Every model-written string is stripped of invisible characters
+    (`_stripped`, module docstring) after the derivation and before the
+    re-hash, so a v10 topic ending in zero-width junk derives a schema-3
+    record that schema 3's own character rule would accept. Quotes and
+    everything else bound to the source keep their bytes.
 
     And the block accounting rows whose proof the derivation itself retired
     (`_reaccounted`): dropping `importance_evidence` drops the only reference a
@@ -305,6 +370,9 @@ def record3_of(record: dict[str, Any], blocks: list[Block]) -> dict[str, Any]:
         evidence_blocks(record, SOURCE_SCHEMA_VERSION),
         evidence_blocks(derived, SCHEMA_VERSION),
     )
+    for entry in (derived.get("facts") or {}).get("entries") or []:
+        entry["derived"] = derive_fact(entry.get("family"), entry["evidence"])
+    derived = _stripped_object(derived)
     extraction = derived.setdefault("extraction", {})
     extraction["schema_version"] = SCHEMA_VERSION
     extraction["validator_version"] = VALIDATOR_VERSION

@@ -53,6 +53,17 @@ above is carried through unchanged — `_prior_errors_block` and
 same inputs, because `retry:unexplained_deletion` grades against those exact
 words. v10's template bytes stay in this module, frozen and reachable: the
 `(demand-profile/v10, "2")` bundle renders them to replay archived attempts.
+
+v11, amended in place (2026-09-28, T-20260928-H5XS) — legitimate only because
+v11 had not gone live on main; once it has, an edit like this is a bump. One
+sentence added: keep each statement's topic short, a few words, never the
+whole clause. It travels with schema 3's amendment, which drops the
+80-character `maxLength` on `topic`: under constrained decoding the cap made
+the model emit junk AT it (19% of v10 topics at 78+ characters end in junk
+against 0.4% below — zero-width joiners, control characters, stray script),
+which was the whole control-character quarantine class. The prompt now asks
+for brevity in words and states no hard limit, because a stated limit is the
+same cliff moved into prose. v10's bytes are untouched (`V10_SHA`).
 """
 
 from __future__ import annotations
@@ -99,6 +110,8 @@ with its own quoted evidence, and the reader judges it from that.
 Split propositions when modality, subject, polarity, scope, or applicability
 differs. Do not turn responsibilities into prerequisites. Use the clause's
 own wording; code reads the document's section structure separately.
+Keep each statement's topic short: a few words naming what it is about,
+never the whole clause — its evidence already carries that.
 
 Preferred-but-not-required is not prohibition. Unavailable employer support
 is not automatically an applicant disqualification. Identify the proposition

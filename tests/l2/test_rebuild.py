@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 import psycopg
+import pytest
 
 from jobhunter.archive.base import ArchiveStore
 from jobhunter.archive.keys import x_review_key
@@ -991,10 +992,12 @@ def _archive_nul_attempt(
     store: ArchiveStore,  # noqa: F811
     case: str = "C01",
     tup: tuple[str, str, str] = HISTORICAL_TUPLE,
+    char: str = "\x00",
 ) -> tuple[str, Any, dict[str, Any]]:
     """One archived `ok` attempt whose record carries a NUL inside a statement
     topic — the defect validator/17 rules `attribution_failed`, sealed by a
-    validator that predates the rule.
+    validator that predates the rule. `char` swaps the NUL for another
+    character the scan rejects (validator/20's invisible format characters).
 
     Synthesized, never copied: the two real artifacts stay read-only in the
     production archive.
@@ -1012,7 +1015,7 @@ def _archive_nul_attempt(
     record = assemble(v2.emit2_of(case), markdown, document_hash=dh,
                       observed_model=v2.MODEL, at="2026-09-12T03:26:18Z",
                       schema_version="2")
-    record["statements"][0]["topic"] += "\x00"  # "…at global<NUL>", 2026-09-12
+    record["statements"][0]["topic"] += char  # "…at global<NUL>", 2026-09-12
     record["extraction"]["validator_version"] = tup[2]
     record["extraction"]["candidate_hash"] = candidate_hash(record)
     started = datetime(2026, 9, 12, 3, 26, 18, tzinfo=UTC)
@@ -1072,6 +1075,192 @@ def test_rebuild_refuses_a_historical_record_carrying_a_control_character(
         {"error": "record.statements[0].topic: control character U+0000"
                   " in emitted string"}
     ]
+
+
+def test_rebuild_folds_a_historical_record_with_an_invisible_topic_tail_as_before(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """Storability is a STORAGE constraint, not validator/20's content rule: a
+    historical record whose topic ends in a zero-width non-joiner — the junk
+    tail v7-v9 records carry, which Postgres stores fine — folds exactly as it
+    did before validator 20, its archived verdict served as sealed."""
+    from jobhunter.l2.rebuild import _storable_event
+
+    _, attempt, record = _archive_nul_attempt(pg, store, char="‌")
+    assert _storable_event(attempt) is attempt
+
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+
+    row = _row(pg, HISTORICAL_TUPLE)
+    assert row is not None
+    assert row["chosen_attempt"] == attempt.attempt_key
+    assert row["profile"] is not None
+    assert row["profile"]["statements"][0]["topic"] == record["statements"][0]["topic"]
+    assert row["profile"]["statements"][0]["topic"].endswith("‌")
+
+
+@pytest.mark.parametrize("schema", ["2", "3"])
+def test_the_storability_check_keeps_invisible_characters_and_refuses_what_jsonb_cannot_hold(
+    schema: str,
+) -> None:
+    """A record quoting the document's own zero-width space is storable, and so
+    is one whose model-written topic ends in one (validator/20's content rule
+    judges live schema-3 emits at assembly, never archived records). What the
+    check refuses is what the store or the hash cannot hold: a code point
+    below U+0020 other than \\n and \\t (validator/17), or a lone surrogate."""
+    from jobhunter.hashing import sha256_hex
+    from jobhunter.l2.rebuild import _storable_event
+    from jobhunter.l2.v2.assemble import assemble
+    from tests.l2.test_attempts import _attempt
+    from tests.l2.v2.conftest import make_emit, make_s3_emit
+
+    heading = "## Require​ments" if schema == "3" else "Require​ments"
+    markdown = f"{heading}\nA minimum of 8 years of experience in sales​.\n"
+    emit = make_s3_emit() if schema == "3" else make_emit()
+    emit["statements"][0]["evidence"] = [
+        {"block_id": "b000002", "text": "experience in sales​.", "occurrence": 0}
+    ]
+    record = assemble(emit, markdown, document_hash=sha256_hex(markdown.encode("utf-8")),
+                      observed_model="m", at="2026-09-12T03:26:18Z", schema_version=schema)
+    # binding accepted the quote: every character of it stands in the document
+    assert record["statements"][0]["evidence"][0]["text"] == "experience in sales​."
+    kept = _attempt(record=record, outcome="ok")
+    assert _storable_event(kept) is kept
+    authored = json.loads(json.dumps(record))
+    authored["statements"][0]["topic"] += "​"
+    historical = _attempt(record=authored, outcome="ok")
+    assert _storable_event(historical) is historical
+    for char in ("\x00", "\udfff"):
+        broken = json.loads(json.dumps(record))
+        broken["statements"][0]["topic"] += char
+        folded = _storable_event(_attempt(record=broken, outcome="ok"))
+        assert folded.outcome == "attribution_failed" and folded.record is None
+        assert folded.validation == [
+            {"error": f"record.statements[0].topic: control character U+{ord(char):04X}"
+                      " in emitted string"}
+        ]
+
+
+def _schema1_record() -> dict[str, Any]:
+    """A real schema-1 record (demand-profile/v5 shape), from the fixture."""
+    from pathlib import Path
+
+    fixture = Path(__file__).parent / "fixtures" / "anthropic.extraction.json"
+    record: dict[str, Any] = json.loads(fixture.read_text(encoding="utf-8"))
+    return record
+
+
+def test_the_storability_check_keeps_a_schema_1_records_own_invisible_format_character(
+) -> None:
+    """Schema 1 (demand-profile/v5, validator 9) binds a quote by `span` and
+    proves its claim fragments are substrings of those quotes: two validated v5
+    rows carry the document's own U+200B there — 09T205048Z-dec03239f7b9-s1a3
+    (boilerplate "**Our Commitment<U+200B>**") and 10T022316Z-ca2d33d7cbc0-s1a1
+    (a claim quote opening on U+200B). Storable, and they fold as sealed."""
+    from jobhunter.l2.rebuild import _storable_event
+    from tests.l2.test_attempts import _attempt
+
+    record = _schema1_record()
+    area = record["demand_profile"]["areas"][0]
+    claim = area["claims"][0]
+    claim["quote"]["text"] = (
+        "​Are proficient in Python​ and a modern web stack (React, TypeScript, or similar)"
+    )
+    claim["level_evidence"] = "proficient in Python​"
+    claim["qualifiers"] = ["in Python​"]
+    claim["evidence_sources"] = ["​Are proficient"]
+    area["mentions"] = ["Python​", "React", "TypeScript"]
+    record["facts"]["boilerplate_spans"] = [
+        {"text": "**Our Commitment​**", "span": [4039, 4058], "occurrence": 0}
+    ]
+    kept = _attempt(record=record, outcome="ok")
+    assert _storable_event(kept) is kept
+
+
+@pytest.mark.parametrize(
+    ("where", "path"),
+    [
+        ("name", "record.demand_profile.areas[0].name"),
+        ("description", "record.demand_profile.areas[0].description.text"),
+    ],
+)
+def test_the_storability_check_on_a_schema_1_record_is_the_storage_set(
+    where: str, path: str
+) -> None:
+    """A zero-width tail in what a schema-1 model wrote folds as sealed; a NUL
+    there is refused, by path, exactly as validator/17 named it."""
+    from jobhunter.l2.rebuild import _storable_event
+    from tests.l2.test_attempts import _attempt
+
+    for char, refused in (("​", False), ("\x00", True)):
+        record = _schema1_record()
+        area = record["demand_profile"]["areas"][0]
+        if where == "name":
+            area["name"] += char
+        else:
+            area["description"] = {"text": f"Builds{char} the product", "synthesis": "llm",
+                                   "run": "r1"}
+        attempt = _attempt(record=record, outcome="ok")
+        folded = _storable_event(attempt)
+        if not refused:
+            assert folded is attempt
+            continue
+        assert folded.outcome == "attribution_failed" and folded.record is None
+        assert folded.validation == [
+            {"error": f"{path}: control character U+0000 in emitted string"}
+        ]
+
+
+def test_rebuild_publishes_a_schema3_candidate_for_a_v10_attempt_with_a_junk_topic_tail(
+    pg: Conn, store: ArchiveStore, monkeypatch: Any  # noqa: F811
+) -> None:
+    """The replay cannot retry, so the frozen v10 tuple keeps validator/17's
+    rule and the derivation to schema 3 strips the model's invisible junk: a
+    v10 ok attempt whose topic ends in U+200C U+200D re-judges ok under schema
+    2 and lands as a published schema-3 candidate with a clean topic — never
+    quarantined."""
+    from datetime import UTC, datetime
+
+    from jobhunter.archive import keys
+    from jobhunter.l2.attempts import to_bytes
+    from jobhunter.l2.v2.assemble import assemble, character_errors
+    from tests.l2 import test_runner_v2 as v2
+    from tests.l2.test_attempts import _attempt
+
+    _no_engine(monkeypatch)
+    case = "C03"
+    markdown = v2.source(case)
+    dh = v2.seed_case(pg, case)
+    emit = v2.emit2_of(case)
+    clean_topic = emit["statements"][0]["topic"]
+    emit["statements"][0]["topic"] = clean_topic + "‌‍"
+    record = assemble(emit, markdown, document_hash=dh, observed_model=v2.MODEL,
+                      at="2026-09-12T06:12:04Z", schema_version="2")
+    started = datetime(2026, 9, 12, 6, 12, 4, tzinfo=UTC)
+    attempt = _attempt(
+        attempt_key=keys.x_attempt_key(started, dh, 1, 1), document_hash=dh,
+        prompt_version=v2.V2_SCHEMA2_TUPLE[0], schema_version="2",
+        validator_version=v2.V2_SCHEMA2_TUPLE[2],
+        requested_model=v2.MODEL, observed_model=v2.MODEL, record=record,
+        raw_response=json.dumps(emit),
+        started_at="2026-09-12T06:12:04Z", finished_at="2026-09-12T06:12:09Z",
+    )
+    store.put(attempt.attempt_key, to_bytes(attempt))
+
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+
+    frozen = _row(pg, v2.V2_SCHEMA2_TUPLE)
+    assert frozen is not None and frozen["profile"] is not None
+    migrated = _row(pg, v2.V2_TUPLE)
+    assert migrated is not None
+    assert migrated["status"] != "quarantined"
+    assert migrated["profile"] is not None and migrated["profile"]["schema"] == "3"
+    statements = migrated["profile"]["statements"]
+    assert statements[0]["topic"] == clean_topic
+    served = {k: v for k, v in migrated["profile"].items() if k != "demand_profile"}
+    assert character_errors("profile", served, schema_version="3") == []
 
 
 def test_the_live_fold_refuses_to_adopt_a_record_the_store_cannot_hold(

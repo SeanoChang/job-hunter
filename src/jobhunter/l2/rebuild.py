@@ -227,11 +227,17 @@ def _storable_event(attempt: Attempt) -> Attempt:
     """An archived `ok` whose record no store can hold, filed as the defect it is.
 
     The historical branch folds an archived verdict as-is — it is not re-judged
-    and must not be — but "as-is" has one floor: a record carrying a control
-    character is not a record the derived surface can express at all (jsonb has
-    no NUL), and two attempts sealed under validators 15 and 16, before
-    validator/17 added assembly's scan, carry one in a statement topic. Any
-    full rebuild since crashed at `upsert_state` rather than settling.
+    and must not be — but "as-is" has one floor: a record carrying a character
+    jsonb or `candidate_hash` cannot hold is not a record the derived surface
+    can express at all. Two attempts sealed under validators 15 and 16, before
+    validator/17 added assembly's scan, carry a NUL in a statement topic, and
+    any full rebuild crashed on them at `upsert_state` rather than settling.
+
+    A STORAGE constraint only (`assemble.control_char_errors`): validator/17's
+    control characters and a lone surrogate. Validator/20's wider content rule
+    — every invisible character in a model-written string — judges live
+    schema-3 emits at assembly and never reaches here, so a historical record
+    whose topic ends in zero-width junk folds exactly as it did before 20.
 
     That defect has a name already, and it is the one validator/17 gives it:
     `attribution_failed`, with the same error string naming the same path. The

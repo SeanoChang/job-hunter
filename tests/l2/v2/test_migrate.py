@@ -22,7 +22,7 @@ import pytest
 from jobhunter.hashing import canonical_json, sha256_hex
 from jobhunter.l2.schemas import validate_emit, validate_record
 from jobhunter.l2.v2 import migrate
-from jobhunter.l2.v2.assemble import assemble, section_heading
+from jobhunter.l2.v2.assemble import assemble, candidate_hash, section_heading
 from jobhunter.l2.v2.source import annotate
 from jobhunter.l2.v2.verify import verify
 
@@ -457,4 +457,136 @@ def test_migrating_the_emit_and_migrating_the_record_derive_the_same_candidate()
         observed_model=MODEL, at=AT, schema_version="3",
     )
     from_record = migrate.record3_of(record2(), blocks)
+    assert canonical_json(from_emit) == canonical_json(from_record)
+
+
+# --- validator/20 amended its quantity grammar in place (2026-09-28) --------
+
+PTO_MD = "## Benefits\n- Up to 30 days per year of paid time off.\n"
+PTO_DOC_HASH = sha256_hex(PTO_MD.encode("utf-8"))
+
+
+def _pto_emit2() -> dict[str, Any]:
+    """The archived shape of attempt 21T201613Z-23d6b3dca786-s1a2: a value and
+    its unit cited apart, the unit being a per-year rate."""
+    emit = emit2()
+    emit["statements"] = [{
+        "id": "s_pto", "kind": "employer_context", "subject": "employer",
+        "topic": "Paid time off", "evidence": [_whole("b000002")],
+        "importance": None, "importance_evidence": None,
+        "polarity": "positive", "polarity_evidence": None,
+        "proficiency": None, "proficiency_evidence": None,
+        "condition_ids": [], "fact_ids": ["f_pto"], "unresolved": [],
+    }]
+    emit["facts"]["entries"] = [{
+        "id": "f_pto", "family": "quantity", "statement_ids": ["s_pto"],
+        "condition_ids": [], "scope": None, "date_kind": None, "component": None,
+        "evidence": {"value": [_ref("b000002", "30")],
+                     "comparison": [_ref("b000002", "Up to")],
+                     "unit": [_ref("b000002", "days per year")],
+                     "currency": None, "component": None, "applicability": None},
+    }]
+    emit["mentions"] = []
+    emit["areas"] = []
+    emit["block_accounting"] = [
+        {"block_id": "b000001", "disposition": "context", "ref_ids": [],
+         "exclusion_reason": None, "evidence": None},
+        {"block_id": "b000002", "disposition": "statements", "ref_ids": ["s_pto"],
+         "exclusion_reason": None, "evidence": None},
+        {"block_id": "b000002", "disposition": "facts", "ref_ids": ["f_pto"],
+         "exclusion_reason": None, "evidence": None},
+    ]
+    return emit
+
+
+def test_the_record_derivation_re_derives_facts_under_the_amended_grammar() -> None:
+    """The live fold ADOPTS an archived schema-2 record — sealed under 19, its
+    "30" · "days per year" derived as 360 months — while the replay re-assembles
+    the raw emit under 20, where it derives nothing. `derived` is code-owned
+    like `section_heading`, so the derivation re-derives it: one candidate, one
+    hash, whichever path folded it (`l2/rebuild` docstring), and a live
+    re-settle never re-publishes the misread the amendment removed."""
+    blocks = annotate(PTO_MD)
+    fresh = assemble(_pto_emit2(), PTO_MD, document_hash=PTO_DOC_HASH,
+                     observed_model=MODEL, at=AT)
+    assert fresh["facts"]["entries"][0]["derived"]["state"] == "present_unparsed"
+    sealed19 = copy.deepcopy(fresh)
+    sealed19["facts"]["entries"][0]["derived"] = {
+        "state": "parsed", "money": None, "date": None,
+        "quantity": {"dimension": "duration", "comparison": "lte", "min_value": None,
+                     "max_value": 360, "inclusive_min": None, "inclusive_max": True,
+                     "unit": "month"},
+    }
+    sealed19["extraction"]["validator_version"] = "19"
+    sealed19["extraction"]["candidate_hash"] = candidate_hash(sealed19)
+
+    adopted = migrate.record3_of(sealed19, blocks)
+    replayed = migrate.record3_of(fresh, blocks)
+    assert adopted["facts"]["entries"][0]["derived"] == fresh["facts"]["entries"][0]["derived"]
+    assert canonical_json(adopted) == canonical_json(replayed)
+    assert errors_of(adopted, PTO_MD) == []
+
+
+# --- validator/20: the derivation strips the model's invisible junk --------
+# Schema 2 keeps validator/17's character rule (the frozen tuple replays and
+# cannot retry), schema 3 enforces the full invisible table, and the derivation
+# between them removes invisible code points from what the MODEL wrote. The
+# document's own bytes — a quote carrying the posting's zero-width space — are
+# never touched.
+
+ZW_MD = (
+    "## What You Will Bring\n"
+    "- Must have 5 years of Python​ experience.\n"
+    "- Demonstrable expertise in distributed systems.\n"
+)
+ZW_DOC_HASH = sha256_hex(ZW_MD.encode("utf-8"))
+
+
+def _junk_emit2() -> dict[str, Any]:
+    """`emit2()` with the junk tails v10 left in 16% of served documents, and a
+    quote of the document's own U+200B."""
+    emit = emit2()
+    python = emit["statements"][0]
+    python["topic"] = "Python experience‌‍"
+    python["evidence"] = [_ref("b000002", "Python​ experience")]
+    python["unresolved"] = [{"reason": "years scope⁠", "evidence": [_whole("b000002")]}]
+    emit["areas"][0]["name"] = "What You Will Bring﻿"
+    emit["source_assessment"]["note"] = "complete posting​"
+    return emit
+
+
+def _junk_record2() -> dict[str, Any]:
+    return assemble(_junk_emit2(), ZW_MD, document_hash=ZW_DOC_HASH,
+                    observed_model=MODEL, at=AT)
+
+
+def test_the_record_derivation_strips_invisible_junk_from_what_the_model_wrote() -> None:
+    """A topic is the model's paraphrase, not a quote: removing code points no
+    reader can see does not misstate the source. The quote keeps the posting's
+    own U+200B, the record re-hashes, and it passes schema 3's full rule."""
+    from jobhunter.l2.v2.assemble import character_errors
+
+    record = _junk_record2()
+    assert record["statements"][0]["topic"] == "Python experience‌‍"
+    derived = migrate.record3_of(record, annotate(ZW_MD))
+    python = by_id(derived["statements"])["s_python"]
+    assert python["topic"] == "Python experience"
+    assert python["evidence"][0]["text"] == "Python​ experience"
+    assert python["unresolved"][0]["reason"] == "years scope"
+    assert derived["areas"][0]["name"] == "What You Will Bring"
+    assert derived["source_assessment"]["note"] == "complete posting"
+    assert validate_record(derived, "3") == []
+    assert errors_of(derived, ZW_MD) == []
+    assert character_errors("record", derived, schema_version="3") == []
+    assert derived["extraction"]["candidate_hash"] == candidate_hash(derived)
+
+
+def test_the_emit_derivation_strips_the_same_junk_and_the_two_paths_agree() -> None:
+    blocks = annotate(ZW_MD)
+    emit3 = migrate.emit3_of(_junk_emit2(), blocks=blocks)
+    assert emit3["statements"][0]["topic"] == "Python experience"
+    assert emit3["statements"][0]["evidence"][0]["text"] == "Python​ experience"
+    from_emit = assemble(emit3, ZW_MD, document_hash=ZW_DOC_HASH, observed_model=MODEL,
+                         at=AT, schema_version="3")
+    from_record = migrate.record3_of(_junk_record2(), blocks)
     assert canonical_json(from_emit) == canonical_json(from_record)

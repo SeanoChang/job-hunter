@@ -268,6 +268,48 @@ def test_schema_3_keeps_every_other_shape(load: Any) -> None:
     assert two["required"] == three["required"]
 
 
+# --- schema 3 amended in place (2026-09-28): no cap on `topic` ---------------
+# The 80-character cap made constrained decoding emit junk AT the cap: 19% of
+# v10 topics at 78+ characters end in junk against 0.4% below — the whole
+# control-character quarantine class (165 docs). Sean approved removing it;
+# schema 3 had not gone live on main, so it is amended rather than bumped.
+# Truncating in code was rejected: the model's text is damaged before code
+# ever sees it.
+
+#: a real topic shape the cap used to cut: past 80 characters, and clean
+LONG_TOPIC = (
+    "Experience designing and operating high-throughput distributed services"
+    " at global scale"
+)
+
+
+def test_schema_3_topic_carries_no_length_cap() -> None:
+    assert len(LONG_TOPIC) > 80
+    for load in (emit_schema, record_schema):
+        topic = load("3")["$defs"]["statement"]["properties"]["topic"]
+        assert "maxLength" not in topic
+        assert topic == {"type": "string", "minLength": 1}
+    assert validate_emit(_emit3(_stmt3(topic=LONG_TOPIC)), "3") == []
+    # empty still fails: the floor stays
+    assert validate_emit(_emit3(_stmt3(topic="")), "3")
+
+
+def test_a_schema_3_record_holds_a_topic_past_80_characters() -> None:
+    from tests.l2.v2.conftest import make_s3_record
+
+    record = make_s3_record()
+    record["statements"][0]["topic"] = LONG_TOPIC
+    assert validate_record(record, "3") == []
+
+
+def test_schema_2_keeps_its_topic_cap() -> None:
+    """Schema 2's bytes are frozen (sha-pinned in tests/l2/v2/test_schemas2.py):
+    the archived corpus was judged with the cap, and replays still are."""
+    for load in (emit_schema, record_schema):
+        topic = load("2")["$defs"]["statement"]["properties"]["topic"]
+        assert topic["maxLength"] == 80
+
+
 def test_normalize_emit_parses_the_threshold_string_bridge() -> None:
     emit = {
         "facts": {"compensation": [], "boilerplate_spans": []},
