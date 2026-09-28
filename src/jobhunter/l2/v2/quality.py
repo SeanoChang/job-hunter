@@ -23,6 +23,25 @@ from typing import Any
 #: not evidence against the record.
 _SAMPLING_OK = ("not_requested", "complete", "adjudicated", "incomplete")
 
+#: `completeness` when the VERIFIER found the gap rather than the auditor
+#: (validator/20, T-Q3S9). A ladder that ran out with a candidate whose only
+#: failing findings are block bookkeeping — coverage claims its named objects
+#: never quote, blocks no row accounts for — settles on that candidate instead
+#: of quarantining (`state.derive_state`): everything it extracted bound and
+#: verified, so it is a faithful extraction with a completeness gap, not an
+#: unfaithful one. Its own value rather than `findings`, because `findings` is
+#: the auditor's claim to have READ the record against the source and found an
+#: omission, and no audit ran here. It fails the `no_findings` test below like
+#: every other value, so such a record is never `search_eligible`; the gaps
+#: themselves travel beside it as `quality.accounting_gaps`
+#: (`serve.quality_of`). Restated in `state.ACCOUNTING_GAPS` — the shared fold
+#: imports no v2 module — and pinned to it by a test.
+ACCOUNTING_GAPS = "accounting_gaps"
+
+#: every value the completeness dimension can take: the audit phase's four
+#: (spec §6) and the verifier's one
+COMPLETENESS = ("no_findings", "findings", "not_checked", "error", ACCOUNTING_GAPS)
+
 #: human dispositions that leave a candidate publishable. A whitelist, not a
 #: `!= "rejected"` check: a disposition this policy does not recognise must
 #: never pass by default (spec §6: "No human rejection can be overridden

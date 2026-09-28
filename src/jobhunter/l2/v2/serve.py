@@ -199,6 +199,15 @@ def quality_of(record: dict[str, Any]) -> dict[str, Any]:
     notes = _sample_notes(settlement.get("agreement"))
     if notes is not None:
         assessed["sample_notes"] = notes
+    # ... and, for a candidate settled after its ladder ran out failing only
+    # block bookkeeping (validator/20), WHICH blocks the record never accounted
+    # for: `completeness: accounting_gaps` says the record is incomplete, and
+    # these findings say where, verbatim as the verifier reported them. They
+    # decide nothing either — the completeness value already keeps the record
+    # out of `search_eligible`.
+    gaps = settlement.get("accounting_gaps")
+    if isinstance(gaps, list) and gaps:
+        assessed["accounting_gaps"] = gaps
     return assessed
 
 

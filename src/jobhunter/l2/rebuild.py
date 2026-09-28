@@ -112,6 +112,20 @@ failed is marked spent (`_spent`) and lands `quarantined`, with the findings
 that refused it written onto the row (`_note_refusal`) — the migrated partition
 holds no attempt rows to read a reason off.
 
+A BOOKKEEPING-ONLY LADDER SERVES (validator/20, T-Q3S9). An exhausted ladder
+whose candidates failed only block accounting settles `validated`, flagged
+`completeness: accounting_gaps`, in both partitions. The re-judge keeps no
+record for a failed attempt, so each fold hands `derive_state` a
+`runner._Recovery` over the ARCHIVED attempts — the object the live fold
+recovers from too — and the derived fold's recovery derives the schema-2
+candidate forward and judges it under the active bundle. That is how the
+documents the 2026-09-28 analysis found quarantined on bookkeeping alone come
+back on the next replay, with zero engine calls. A REFUSED derivation is not
+offered the rule: the exhaustion `_spent` writes is how a refusal lands as a
+row, not a ladder that ran out — its candidate passed under schema 2 and was
+never asked to fix anything — so it stays quarantined with its reasons,
+whatever the refusal was about.
+
 What is NOT migrated: an attempt under a RETIRED schema-2 prompt (v6..v9), which
 already folds down the historical branch below — archived verdicts under their
 own validator, never re-judged. Deriving a new shape from a candidate this
@@ -138,7 +152,16 @@ from jobhunter.l2.agreement import cohort_hook
 from jobhunter.l2.assemble import AssembleError
 from jobhunter.l2.attempts import Attempt, derived_error_detail, from_bytes
 from jobhunter.l2.bundles import Bundle, get_bundle
-from jobhunter.l2.runner import _ArchivedPhases, _bundle_for, _hash_of, _Published, _upsert_fold
+from jobhunter.l2.runner import (
+    _ArchivedPhases,
+    _bookkeeping_rule,
+    _bundle_for,
+    _hash_of,
+    _ladder_spent,
+    _Published,
+    _Recovery,
+    _upsert_fold,
+)
 from jobhunter.l2.schemas import normalize_emit, validate_emit, validate_record
 from jobhunter.l2.state import AuditView, Review, derive_state
 from jobhunter.l2.v2 import migrate
@@ -539,6 +562,7 @@ def _fold_and_upsert(
     globs: tuple[str, ...],
     updated_at: str,
     phases: _ArchivedPhases | _MigratedPhases,
+    recovery: _Recovery | None = None,
 ) -> None:
     # THE SAME gate as live settlement (review P0-1): replay must derive the
     # identical verdict, k, agreement and audit dimensions, or rebuild silently
@@ -555,7 +579,15 @@ def _fold_and_upsert(
 
     def _record_of(attempt_key: str) -> dict[str, Any] | None:
         found = by_key.get(attempt_key)
-        if found is None or found.record is None:
+        if found is None:
+            return None
+        if found.record is None:
+            # a bookkeeping settlement (validator/20) chose a content failure,
+            # which no re-judge keeps a record for: the candidate is the one
+            # the fold recovered and judged — the live path's own answer
+            # (`runner._Records.recovered`), through the same `_Recovery`
+            if state.accounting_gaps and recovery is not None:
+                return recovery.record(attempt_key)
             return None
         repaired = phases.published(found.record).record
         return repaired if repaired is not None else found.record
@@ -563,6 +595,7 @@ def _fold_and_upsert(
     state = derive_state(
         events, reviews, globs, cohort_hook(_record, f1_min=bundle.agreement_f1_min),
         _audit if bundle.audit_version is not None else None,
+        recovery_hook=recovery.candidate if recovery is not None else None,
     )
     _upsert_fold(
         conn, store, dh, bundle, prompt_version=pv, schema_version=sv,
@@ -626,8 +659,18 @@ def rebuild_extractions(
             # (review P0-1): re-judging under today's validator folds only the
             # reviews given under it
             scoped = [r for rvv, r in tagged_reviews if rvv == vv]
-            _fold_and_upsert(conn, store, dh, pv, sv, vv, bundle, events, scoped,
-                             accepted_globs, now, phases)
+            # validator/20 (T-Q3S9): an exhausted ladder may settle on a
+            # candidate recovered from its archived raw response — recovered
+            # from the ARCHIVED attempt, as the live fold does, never from the
+            # re-keyed event (a derived one names the tuple it was re-filed
+            # under, not the one that wrote it)
+            archived = {a.attempt_key: a for a in attempts}
+            _fold_and_upsert(
+                conn, store, dh, pv, sv, vv, bundle, events, scoped, accepted_globs, now,
+                phases,
+                _Recovery(bundle, markdown, archived.__getitem__)
+                if _bookkeeping_rule(bundle, vv) and _ladder_spent(events) else None,
+            )
             target = _migration_target(bundle)
             if target is not None:
                 # the v20 migration (module docstring): the same events, one
@@ -640,6 +683,7 @@ def rebuild_extractions(
                     events,
                     [_derive3(e, blocks, markdown, target, sources) for e in events],
                 )
+                refused = _refused(events, derived)
                 _fold_and_upsert(
                     conn, store, dh, target.prompt_version, target.schema_version,
                     target.validator_version, target, derived,
@@ -659,8 +703,20 @@ def rebuild_extractions(
                     # move.
                     iso(parse_iso(now) + timedelta(seconds=1)),
                     _MigratedPhases(phases, sources, blocks, markdown, target),
+                    # the schema-2 candidate recovered, derived forward and
+                    # judged under the active bundle — which is how the
+                    # bookkeeping-only migrated ladders reach a served row.
+                    # Never for a REFUSED derivation: its exhaustion is the
+                    # one `_spent` wrote so the refusal lands as a row, not a
+                    # ladder that ran out — its candidate passed and was
+                    # never asked to fix anything — so it stays the
+                    # quarantined, reasoned row every refusal is
+                    _Recovery(target, markdown, archived.__getitem__)
+                    if not refused
+                    and _bookkeeping_rule(target, target.validator_version)
+                    and _ladder_spent(derived) else None,
                 )
-                if _refused(events, derived):
+                if refused:
                     _note_refusal(conn, dh, target, _refusal_reasons(derived))
         else:
             # historical config, or document no longer materialized: fold the

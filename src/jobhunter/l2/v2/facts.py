@@ -138,6 +138,17 @@ from typing import Any
 # decoding emitted junk AT the cap (19% of topics at 78+ characters end in
 # junk against 0.4% below), which was the whole control-character quarantine
 # class. Schema 2's bytes keep the cap.
+#   Fourth clause, same identifier (T-Q3S9): a real ladder that runs out (never
+# a refused migration) holding a candidate whose ONLY failing findings are
+# block bookkeeping (`state.BOOKKEEPING_CODES`), and which extracted at least
+# one statement or fact entry and accounted for most of the source's blocks,
+# settles `validated` on the one with the fewest gaps (ties to the latest)
+# instead of quarantining, with `quality.completeness: accounting_gaps`, the
+# gaps in `quality.accounting_gaps`, and never `search_eligible`; the drain
+# and the replay recover that candidate from the archived raw response through
+# one shared function (`runner._Recovery`). Inside the ladder accounting
+# findings stay retry-worthy errors — 271 of the 706 documents quarantined on
+# 2026-09-28 failed on nothing else.
 VALIDATOR_VERSION = "20"
 
 _CMP_PHRASES: list[tuple[str, str]] = [

@@ -1,14 +1,18 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import pytest
 
 from jobhunter.l2.agreement import DIMENSIONS, GATES, Dispute, agree, cohort_hook
 from jobhunter.l2.state import (
+    ACCOUNTING_GAPS,
+    BOOKKEEPING_CODES,
     GATE_DIMENSION_CODES,
     DerivedState,
+    RecoveredCandidate,
     Review,
     audit_touches_dispute,
+    bookkeeping_gaps,
     derive_state,
 )
 from jobhunter.l2.v2.quality import assess
@@ -1133,3 +1137,315 @@ def test_a_cohort_whose_policy_cannot_be_read_parks_as_before() -> None:
     ok_but_unreadable = [_v3(1, 1), _v3(2, 2, **LOST)]
     blind = derive_state(ok_but_unreadable, [], GLOBS, cohort_hook(lambda a: None))
     assert (blind.status, blind.sampling) == ("needs_review", "incomplete")
+
+
+# --- validator/20: a bookkeeping-only exhausted ladder serves (T-Q3S9) -------
+# Parsing contract v3 §3: every assembled-and-verified extraction serves. A
+# candidate whose ONLY defect is incomplete block bookkeeping bound and verified
+# everything it extracted — it is a faithful extraction with a completeness gap.
+# The ladder still asks the model to fix the bookkeeping (accounting findings
+# are retry-worthy errors); only a ladder that ran out settles on its best such
+# candidate instead of quarantining, flagged `completeness: accounting_gaps` and
+# never `search_eligible`. The recovery hook stands in for the runner's and the
+# replay's shared candidate recovery: an attempt -> its candidate's re-judged
+# findings, or None when no candidate can be recovered at all.
+
+
+def _failed(no: int, *, exhausted: bool | None = None, **over: object):
+    key = f"extractions/attempts/2026/09/28T06120{no}Z-abcdefabcdef-s1a{no}.json.gz"
+    base: dict[str, object] = {
+        "attempt_key": key, "attempt_no": no, "outcome": "attribution_failed",
+        "ladder_exhausted": no >= 3 if exhausted is None else exhausted,
+        "started_at": f"2026-09-28T06:12:0{no}Z", "record": None, "raw_response": "{}",
+    }
+    base.update(over)
+    return _attempt(**base)
+
+
+def _acc(code: str = "coverage_unevidenced", *, severity: str = "error",
+         block: str = "b000002") -> dict[str, Any]:
+    return {"check": "accounting", "path": "block_accounting[1]", "code": code,
+            "severity": severity, "detail": {"block_id": block}}
+
+
+def _candidate(findings: list[dict[str, Any]] | RecoveredCandidate, *, extracted: int = 4,
+               blocks: int = 5, accounted: int = 5) -> RecoveredCandidate:
+    """A recovered candidate. By default a C04-sized one that extracted the
+    document (four objects, every one of five blocks accounted), so a findings
+    list alone decides; the counts are overridden where the floor is the test."""
+    if isinstance(findings, RecoveredCandidate):
+        return findings
+    return RecoveredCandidate(tuple(findings), extracted=extracted, blocks=blocks,
+                              accounted=accounted)
+
+
+Scripted = list[dict[str, Any]] | RecoveredCandidate
+
+
+def _recovered(findings: dict[str, Scripted | None] | Scripted,
+               calls: list[str] | None = None):
+    """The recovery hook, scripted: one candidate (or findings list) for every
+    attempt, or one per attempt key (None = no candidate could be recovered)."""
+
+    def hook(attempt) -> RecoveredCandidate | None:
+        if calls is not None:
+            calls.append(attempt.attempt_key)
+        if isinstance(findings, dict):
+            found = findings.get(attempt.attempt_key)
+            return _candidate(found) if found is not None else None
+        return _candidate(findings)
+
+    return hook
+
+
+#: the shape the 271 production documents failed on: coverage claims their
+#: named objects never quote, plus the requirement-language tripwire warning
+BOOKKEEPING_ONLY = [_acc(), _acc(), _acc("context_requirement_language", severity="warning")]
+
+
+def _assessed(state: DerivedState) -> dict[str, Any]:
+    return assess(source="usable", evidence="pass", semantics=state.semantics,
+                  completeness=state.completeness, sampling=state.sampling,
+                  human_review=state.human_review, blocking_findings=state.blocking,
+                  lifecycle=state.status or "pending")
+
+
+def test_the_bookkeeping_codes_are_the_four_the_verifier_reports() -> None:
+    ticket = {
+        "coverage_unevidenced", "block_unaccounted",
+        "context_requirement_language", "exclusion_requirement_language",
+    }
+    assert set(BOOKKEEPING_CODES) == ticket
+    assert ACCOUNTING_GAPS == "accounting_gaps"
+
+
+def test_a_bookkeeping_only_exhausted_ladder_settles_validated_with_accounting_gaps() -> None:
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=_recovered(BOOKKEEPING_ONLY))
+    assert state.status == "validated"
+    # three candidates with the same two gaps: the tie goes to the LATEST, the
+    # one that took the most rounds of the verifier's feedback
+    assert state.chosen_attempt == ladder[2].attempt_key
+    assert state.completeness == ACCOUNTING_GAPS
+    # the gaps the reader is shown are the failing findings, verbatim
+    assert state.accounting_gaps == (_acc(), _acc())
+    assert state.semantics == "not_checked" and state.human_review == "none"
+    quality = _assessed(state)
+    assert quality["completeness"] == "accounting_gaps"
+    assert quality["search_eligible"] is False
+
+
+def test_the_bookkeeping_candidate_with_the_fewest_accounting_gaps_is_chosen() -> None:
+    """Fewest failing bookkeeping findings wins — completeness is the dimension
+    being flagged, so the most complete candidate is the one to serve. The
+    exhausting attempt need not be a candidate itself: a schema-invalid last
+    rung leaves the earlier bookkeeping-only candidates on record."""
+    ladder = [_failed(1), _failed(2),
+              _failed(3, outcome="schema_invalid", raw_response="not json")]
+    calls: list[str] = []
+    hook = _recovered({
+        ladder[0].attempt_key: [_acc(), _acc(), _acc("block_unaccounted")],
+        ladder[1].attempt_key: [_acc("block_unaccounted"),
+                                _acc("exclusion_requirement_language", severity="warning")],
+    }, calls)
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=hook)
+    assert state.status == "validated"
+    assert state.chosen_attempt == ladder[1].attempt_key
+    assert state.accounting_gaps == (_acc("block_unaccounted"),)
+    # only content failures that assembled can hold a candidate
+    assert sorted(calls) == sorted([ladder[0].attempt_key, ladder[1].attempt_key])
+
+
+NOT_BOOKKEEPING = [
+    ("unknown_reference",
+     [_acc(), {"check": "references", "path": "mentions[0].statement_ids",
+               "code": "unknown_reference", "severity": "error", "detail": {}}]),
+    ("ungrounded_mention",
+     [{"check": "mentions", "path": "mentions[0]", "code": "mention_ungrounded",
+       "severity": "error", "detail": {}}]),
+    ("an_accounting_code_that_is_not_bookkeeping", [_acc("unknown_block")]),
+    ("a_bare_error_the_verifier_did_not_report",
+     [_acc(), {"error": "statements[0].topic: control character U+0000"}]),
+    ("an_unexplained_deletion",
+     [_acc(), {"error": "retry:unexplained_deletion at statements[2] (id=s3)"}]),
+    ("a_non_accounting_warning",
+     [_acc(), {"check": "mentions", "path": "mentions[0]", "code": "future_warning",
+               "severity": "warning", "detail": {}}]),
+    ("nothing_failing_at_all",
+     [_acc("context_requirement_language", severity="warning")]),
+    ("no_findings", []),
+]
+
+
+@pytest.mark.parametrize("findings", [f for _, f in NOT_BOOKKEEPING],
+                         ids=[name for name, _ in NOT_BOOKKEEPING])
+def test_any_non_accounting_finding_keeps_an_exhausted_bookkeeping_ladder_quarantined(
+    findings: list[dict[str, Any]],
+) -> None:
+    """Faithfulness defects never serve: the rule is a whitelist of the four
+    bookkeeping codes, and anything it does not recognise quarantines exactly
+    as validator/19 did."""
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=_recovered(findings))
+    assert state.status == "quarantined"
+    assert state.chosen_attempt is None and state.accounting_gaps == ()
+    assert state.completeness == "not_checked"
+
+
+def test_an_unrecoverable_candidate_leaves_the_bookkeeping_ladder_quarantined() -> None:
+    """No candidate (the raw response will not re-assemble) is not a candidate
+    with no findings: there is nothing to serve."""
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=_recovered(
+        {a.attempt_key: None for a in ladder}))
+    assert state.status == "quarantined" and state.chosen_attempt is None
+
+
+def _unaccounted(n: int) -> list[dict[str, Any]]:
+    return [_acc("block_unaccounted", block=f"b00000{i}") for i in range(1, n + 1)]
+
+
+def test_a_candidate_that_extracted_nothing_is_not_a_bookkeeping_gap() -> None:
+    """2026-09-28 review: a candidate with every array empty and no accounting
+    row fails NOTHING but `block_unaccounted`, one per block — the findings
+    test alone reads it as bookkeeping-only and serves an empty profile as a
+    terminal `validated` row. It is a failed extraction, and it quarantines."""
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    nothing = _candidate(_unaccounted(5), extracted=0, blocks=5, accounted=0)
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=_recovered(nothing))
+    assert state.status == "quarantined"
+    assert state.chosen_attempt is None and state.accounting_gaps == ()
+    assert state.completeness == "not_checked"
+
+
+@pytest.mark.parametrize(("extracted", "blocks", "accounted", "settles"), [
+    (4, 5, 5, True),    # the whole source accounted: the gap is elsewhere
+    (4, 5, 3, True),    # most of the source accounted
+    (1, 5, 5, True),    # one extracted object is enough content
+    (4, 4, 2, False),   # exactly half: not most
+    (4, 5, 2, False),   # most of the source never looked at
+    (4, 5, 0, False),   # no accounting at all
+    (0, 5, 5, False),   # accounted everything, extracted nothing
+    (0, 0, 0, False),   # a source with no blocks has no gap to be incomplete by
+], ids=["all", "most", "one_object", "half", "minority", "none", "empty", "no_blocks"])
+def test_a_bookkeeping_candidate_must_have_extracted_the_document(
+    extracted: int, blocks: int, accounted: int, settles: bool
+) -> None:
+    """The floor under the findings test: at least one statement or fact entry,
+    and accounting rows covering strictly more than half of the source."""
+    candidate = _candidate([_acc()], extracted=extracted, blocks=blocks, accounted=accounted)
+    assert (bookkeeping_gaps(candidate) is not None) is settles
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=_recovered(candidate))
+    assert state.status == ("validated" if settles else "quarantined")
+
+
+def test_the_bookkeeping_floor_is_applied_before_the_fewest_gaps_choice() -> None:
+    """A candidate below the floor is no candidate at all — it cannot win on
+    having the fewest gaps. The ladder settles on the one that extracted the
+    document, even with more gaps."""
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    hook = _recovered({
+        ladder[0].attempt_key: _candidate([_acc()], extracted=4, blocks=5, accounted=1),
+        ladder[1].attempt_key: _candidate([_acc(), _acc(), _acc()]),
+        ladder[2].attempt_key: _candidate(_unaccounted(1), extracted=0, blocks=5, accounted=4),
+    })
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=hook)
+    assert state.status == "validated"
+    assert state.chosen_attempt == ladder[1].attempt_key
+    assert state.accounting_gaps == (_acc(), _acc(), _acc())
+
+
+def test_no_recovery_hook_is_the_validator_19_bookkeeping_fold() -> None:
+    """The hook is additive: v1 and every archived partition folded at an older
+    validator pass none, and an exhausted ladder quarantines exactly as before."""
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    assert derive_state(ladder, [], GLOBS, HOOK).status == "quarantined"
+    assert derive_state(ladder, [], GLOBS, HOOK) == derive_state(
+        ladder, [], GLOBS, HOOK, None, recovery_hook=None)
+
+
+def test_accounting_findings_stay_retry_worthy_inside_the_ladder() -> None:
+    """Known-bad approach: settling (or downgrading) before the ladder ran out
+    would stop the model being asked to fix its bookkeeping. A ladder with rungs
+    left is pending, and the recovery hook is never even asked."""
+    calls: list[str] = []
+    ladder = [_failed(1), _failed(2)]
+    state = derive_state(ladder, [], GLOBS, HOOK,
+                         recovery_hook=_recovered(BOOKKEEPING_ONLY, calls))
+    assert state == DerivedState(None, None)
+    assert calls == []
+
+
+def test_the_bookkeeping_rule_reads_only_in_glob_attempts_of_the_current_cohort() -> None:
+    """The same admission test an `ok` attempt passes: an answer from a model
+    outside the globs is never a candidate, and a `retry` review starts a fresh
+    cohort, so a candidate from before it never settles the ladder after it."""
+    outside = [_failed(1, observed_model="claude-haiku-4-5"),
+               _failed(2, observed_model="claude-haiku-4-5"),
+               _failed(3, observed_model="claude-haiku-4-5")]
+    calls: list[str] = []
+    state = derive_state(outside, [], GLOBS, HOOK,
+                         recovery_hook=_recovered(BOOKKEEPING_ONLY, calls))
+    assert state.status == "quarantined" and calls == []
+
+    first = [_failed(1), _failed(2), _failed(3)]
+    retry = Review("retry", "2026-09-28T07:00:00Z", key="r1")
+    second = [
+        _failed(n, attempt_key=f"extractions/attempts/2026/09/28T08000{n}Z-abcdefabcdef-s1a{n}"
+                ".json.gz", started_at=f"2026-09-28T08:00:0{n}Z")
+        for n in (4, 5, 6)
+    ]
+    second = [replace(a, ladder_exhausted=a.attempt_no == 6) for a in second]
+    hook = _recovered({**{a.attempt_key: BOOKKEEPING_ONLY for a in first},
+                       **{a.attempt_key: NOT_BOOKKEEPING[0][1] for a in second}})
+    before = derive_state(first, [], GLOBS, HOOK, recovery_hook=hook)
+    assert before.status == "validated" and before.completeness == ACCOUNTING_GAPS
+    after = derive_state([*first, *second], [retry], GLOBS, HOOK, recovery_hook=hook)
+    assert after.status == "quarantined" and after.accounting_gaps == ()
+
+
+def test_human_dispositions_stay_senior_over_a_bookkeeping_settlement() -> None:
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    hook = _recovered(BOOKKEEPING_ONLY)
+    rejected = derive_state(ladder, [Review("reject", "2026-09-28T07:00:00Z", key="r1")],
+                            GLOBS, HOOK, recovery_hook=hook)
+    assert rejected.status == "rejected" and rejected.human_review == "rejected"
+    assert rejected.chosen_attempt == ladder[2].attempt_key  # provenance survives
+    assert _assessed(rejected)["search_eligible"] is False
+    flagged = derive_state(ladder, [Review("flag", "2026-09-28T07:00:00Z", key="r1")],
+                           GLOBS, HOOK, recovery_hook=hook)
+    assert flagged.status == "needs_review"
+    assert flagged.completeness == ACCOUNTING_GAPS  # still says why it is incomplete
+    accepted = derive_state(
+        ladder,
+        [Review("flag", "2026-09-28T07:00:00Z", key="r1"),
+         Review("accept", "2026-09-28T08:00:00Z", key="r2")],
+        GLOBS, HOOK, recovery_hook=hook,
+    )
+    assert accepted.status == "validated" and accepted.human_review == "accepted"
+    # a human accept is a ruling on the lifecycle, not a repair of the bookkeeping
+    assert accepted.completeness == ACCOUNTING_GAPS
+    assert _assessed(accepted)["search_eligible"] is False
+
+
+def test_an_audit_cannot_lift_an_accounting_gaps_completeness() -> None:
+    """Invariant: the audit judges fidelity, and a clean one is still a verdict
+    on a record whose bookkeeping failed the verifier. Its semantics are
+    reported; completeness stays the verifier's, and eligibility stays off."""
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    state = derive_state(ladder, [], GLOBS, HOOK, _audits(CLEAN),
+                         recovery_hook=_recovered(BOOKKEEPING_ONLY))
+    assert state.status == "validated"
+    assert state.semantics == "no_findings"
+    assert state.completeness == ACCOUNTING_GAPS
+    assert _assessed(state)["search_eligible"] is False
+
+
+def test_an_over_budget_document_has_no_bookkeeping_candidate() -> None:
+    calls: list[str] = []
+    too_big = _attempt(outcome="over_budget", raw_response=None, observed_model=None,
+                       ladder_exhausted=True)
+    state = derive_state([too_big], [], GLOBS, HOOK,
+                         recovery_hook=_recovered(BOOKKEEPING_ONLY, calls))
+    assert state.status == "quarantined" and calls == []
