@@ -24,3 +24,15 @@ def test_every_validator_identifier_keeps_its_history_line() -> None:
     source = inspect.getsource(facts)
     missing = [f"validator/{n}" for n in range(13, 21) if f"validator/{n}" not in source]
     assert missing == []
+
+
+def test_the_in_place_amendment_of_20_is_recorded() -> None:
+    """Validator 20 was amended in place (2026-09-28) instead of bumped, which
+    is only legitimate because 20 had not gone live on main. The history says
+    so, and says what moved, or a reader of an archived stamp cannot tell which
+    20 judged it."""
+    source = inspect.getsource(facts)
+    assert "validator/20, amended in place (2026-09-28" in source
+    for moved in ("the unit is the word the number carries",
+                  "format", "topic"):
+        assert moved in source.lower(), moved

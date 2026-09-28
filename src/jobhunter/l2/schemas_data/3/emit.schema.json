@@ -45,7 +45,7 @@
         "kind": { "enum": ["qualification", "responsibility", "employment_constraint",
                             "compensation_statement", "hiring_policy", "employer_context"] },
         "subject": { "enum": ["candidate", "employer", "role", "unstated"] },
-        "topic": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "topic": { "type": "string", "minLength": 1 },
         "evidence": { "$ref": "#/$defs/evidence" },
         "modality_evidence": { "anyOf": [{ "$ref": "#/$defs/modality" }, { "type": "null" }] },
         "polarity": { "$ref": "#/$defs/polarity" },

@@ -9,6 +9,7 @@ the statement union — which is conditionals on fields schema 3 deleted — is
 asserted absent rather than assumed absent.
 """
 
+import json
 from typing import Any
 
 import jsonschema
@@ -74,6 +75,34 @@ def test_the_schema_3_statement_carries_no_union_and_no_verdicts() -> None:
     assert "modality_evidence" in fields
     assert not fields & {"importance", "importance_evidence",
                          "proficiency", "proficiency_evidence"}
+
+
+def test_the_engine_facing_schema_3_topic_carries_no_length_cap() -> None:
+    """The engine is handed `strict_schema(engine_emit_schema("3"))`, not the
+    packaged file: a cap re-added by either transform would put back the
+    constrained-decoding junk the schema-3 amendment (2026-09-28) removed."""
+    for schema in (engine_emit_schema("3"), strict_schema(engine_emit_schema("3"))):
+        statement = schema["$defs"]["statement"]
+        assert "maxLength" not in statement["properties"]["topic"]
+        assert "maxLength" not in json.dumps(statement)
+    schema3 = engine_emit_schema("3")
+    v = jsonschema.Draft202012Validator({"$defs": schema3["$defs"],
+                                         **schema3["$defs"]["statement"]})
+    statement3 = {
+        "id": "s1", "kind": "qualification", "subject": "candidate",
+        "topic": "Experience designing and operating high-throughput distributed services"
+                 " at global scale",
+        "evidence": [{"block_id": "b000001", "text": None, "occurrence": None}],
+        "modality_evidence": None, "polarity": "positive", "polarity_evidence": None,
+        "condition_ids": [], "fact_ids": [], "unresolved": [],
+    }
+    assert v.is_valid(statement3)
+
+
+def test_the_engine_facing_schema_2_union_keeps_the_topic_cap() -> None:
+    """Schema 2 is frozen: every variant of its statement union still caps."""
+    variants = engine_emit_schema("2")["$defs"]["statement"]["anyOf"]
+    assert {v["properties"]["topic"]["maxLength"] for v in variants} == {80}
 
 
 @pytest.mark.parametrize("schema_version", SCHEMAS)

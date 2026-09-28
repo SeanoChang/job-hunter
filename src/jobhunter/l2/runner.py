@@ -676,16 +676,19 @@ def _repair_audit_key(attempt_key: str, audit_version: str | None) -> str:
 def _storable(record: dict[str, Any]) -> bool:
     """Can a derived row hold this archived record at all?
 
-    Validator/17's scan (`assemble.control_char_errors`), applied where a
-    record is read back OUT of the archive rather than assembled. Assembly
-    rejects a control character in the emit, so nothing sealed since carries
-    one; two records sealed before it do, and a jsonb column cannot hold a NUL
-    — a full `extract rebuild` died on them at `upsert_state`. A record that
-    fails here publishes NOTHING, which is the answer every other
-    unpublishable candidate on these paths already gets (an adoption the
-    migration refuses, a patch the repair judge refused); replay files the
-    attempt's own verdict as the `attribution_failed` validator/17 calls it
-    (`rebuild._storable_event`).
+    The storability check (`assemble.control_char_errors`), applied where a
+    record is read back OUT of the archive rather than assembled: validator/17's
+    control characters below U+0020 and a lone surrogate, which jsonb or
+    `candidate_hash` cannot hold. Two records sealed before 17 carry a NUL, and
+    a full `extract rebuild` died on them at `upsert_state`. A storage
+    constraint only — validator/20's invisible-character rule judges live
+    schema-3 emits at assembly, and the schema-2 → 3 derivation strips that
+    junk from model-written strings (`migrate._stripped`) — so a record whose
+    topic ends in a zero-width character is storable here. A record that fails
+    publishes NOTHING, which is the answer every other unpublishable candidate
+    on these paths already gets (an adoption the migration refuses, a patch the
+    repair judge refused); replay files the attempt's own verdict as the
+    `attribution_failed` validator/17 calls it (`rebuild._storable_event`).
     """
     return not control_char_errors("record", record)
 
