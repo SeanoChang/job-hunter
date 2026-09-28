@@ -16,12 +16,14 @@ ABOUT, expressed in the medoid's own id namespace plus document-wide block ids.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
 from jobhunter.l2.agreement import (
+    DIMENSIONS,
     F1_MIN,
     GATES,
     IMPORTANCE_MIN,
@@ -33,6 +35,7 @@ from jobhunter.l2.agreement import (
     dispute_set,
 )
 from jobhunter.l2.v2.serve import SCHEMA_VERSION, claim_index
+from jobhunter.l2.v2.types import STATEMENT_KINDS
 
 
 def claim(
@@ -286,6 +289,53 @@ def experience(fid: str, span: tuple[int, int], *, months: int, sids: list[str],
                                  "min_value": months, "max_value": None,
                                  "inclusive_min": True, "inclusive_max": None,
                                  "unit": "month"}},
+    }
+
+
+def quantity(
+    fid: str,
+    span: tuple[int, int],
+    *,
+    sids: list[str],
+    dimension: str,
+    comparison: str,
+    lo: float | int | None,
+    hi: float | int | None,
+    unit: str | None,
+    inclusive: tuple[bool | None, bool | None] = (None, None),
+) -> dict[str, Any]:
+    """One derived quantity fact, every derivation field spelled out — the
+    numeric-gate fixtures vary exactly one of them at a time."""
+    entry = experience(fid, span, months=0, sids=sids)
+    entry["family"] = "quantity" if dimension != "duration" else "experience"
+    entry["derived"]["quantity"] = {
+        "dimension": dimension, "comparison": comparison, "min_value": lo, "max_value": hi,
+        "inclusive_min": inclusive[0], "inclusive_max": inclusive[1], "unit": unit,
+    }
+    return entry
+
+
+def compensation(
+    fid: str,
+    span: tuple[int, int],
+    *,
+    sids: list[str],
+    lo: str | None,
+    hi: str | None,
+    comparison: str = "range",
+    currency: str | None = "USD",
+    period: str | None = "year",
+) -> dict[str, Any]:
+    """One derived money fact — "$240,000–$315,000 USD/year" by default, the
+    2026-09-28 shape whose period one sample cited and the other did not."""
+    return {
+        "id": fid, "family": "compensation", "statement_ids": sids, "condition_ids": [],
+        "scope": None, "date_kind": None, "component": "base",
+        "evidence": {"value": [ref("b1", span)], "comparison": None, "unit": None,
+                     "currency": None, "component": None, "applicability": None},
+        "derived": {"state": "parsed", "quantity": None, "date": None,
+                    "money": {"comparison": comparison, "min_amount": lo, "max_amount": hi,
+                              "currency": currency, "period": period}},
     }
 
 
@@ -580,23 +630,26 @@ def test_the_same_number_under_different_scope_tags_never_conflicts() -> None:
 def test_a_negation_pointed_at_a_different_subject_is_a_metric() -> None:
     """"No sponsorship available" is an employer constraint, not a candidate
     disqualification. Both samples negate something; they disagree about what,
-    which the `negated` boolean cannot see — and under 20 the boolean is the
-    only half of polarity that gates."""
+    and the gate asks only WHETHER a claim is negated — who it points at is the
+    `polarity_target` metric."""
     a = sample(statement3("s1", (0, 100), polarity="negative", subject="employer"))
     b = sample(statement3("s1", (0, 100), polarity="negative", subject="candidate"))
     r = agree([a, b])
     assert r.report["negation_disagreements"] == 0  # both read as negated
     assert r.report["polarity_target_disagreements"] == 1
+    assert r.report["metrics"]["splits"]["polarity"] == 0  # same polarity
     assert r.report["failures"] == [] and r.passed is True
 
 
-def test_a_negative_and_an_ambiguous_polarity_split_is_a_metric() -> None:
-    """`negated` collapses `negative` and `ambiguous` into "not plainly
-    positive", so this pair agrees on the gate and splits on the metric."""
-    a = sample(statement3("s1", (0, 100), polarity="negative"))
-    b = sample(statement3("s1", (0, 100), polarity="ambiguous"))
+def test_a_negative_and_an_ambiguous_split_in_boilerplate_is_a_metric() -> None:
+    """Negative against a hedge is a negation split (ambiguous is not a
+    negation) — but on employer description the reader acts on neither, so it
+    is counted twice over as metrics: the polarity itself, and the target."""
+    a = sample(statement3("s1", (0, 100), kind="employer_context", polarity="negative"))
+    b = sample(statement3("s1", (0, 100), kind="employer_context", polarity="ambiguous"))
     r = agree([a, b])
     assert r.report["negation_disagreements"] == 0
+    assert r.report["metrics"]["splits"]["polarity"] == 1
     assert r.report["metrics"]["splits"]["polarity_target"] == 1
     assert r.report["failures"] == [] and r.passed is True
 
@@ -824,7 +877,8 @@ def test_an_incomplete_cohort_reports_every_dimension_key() -> None:
     assert report["metrics"] == {
         "aligned_pairs": 0, "f1": None,
         "splits": {"kind": 0, "polarity_target": 0, "scoped_values": 0,
-                   "alternatives": 0, "entity_links": 0},
+                   "alternatives": 0, "entity_links": 0,
+                   "polarity": 0, "numeric_tags": 0},
     }
 
 
@@ -880,3 +934,414 @@ def test_the_dispute_is_computed_against_the_medoid_the_gate_chose() -> None:
     assert dispute is not None
     assert dispute.statement_ids == frozenset({"c2"})
     assert dispute.block_ids == frozenset({"b6"})
+
+
+# ---- validator/20, 2026-09-28 amendment: the gates compare meaning ----------
+# The 2026-09-28 review-queue analysis (400-doc sample, verified independently)
+# found both surviving gates firing mostly on labels. Negation: 59% of its
+# splits were `ambiguous` against `positive` — a hedge ("may require travel")
+# that the stored `negated` bit reads as a denial — and most of the
+# positive-vs-negative rest was one fact framed from opposite ends in
+# hiring-policy boilerplate. Numeric: 347 of 354 conflicting pairs carried
+# identical numbers under a different comparator, currency or period. Sean
+# approved: negation reads only `negative` as negated, and only on the statement
+# kinds a reader acts on; the numeric gate compares the numbers and their
+# dimension. What the gates stopped counting is still counted, as metrics.
+
+#: the kinds a reader acts on, and the rest — together, every statement kind
+ACTED_ON = ("qualification", "employment_constraint", "compensation_statement")
+BOILERPLATE = ("hiring_policy", "employer_context", "responsibility")
+
+
+def test_the_negation_kinds_are_the_statement_kinds_a_reader_acts_on() -> None:
+    """Pinned against the schema's own vocabulary, so a renamed kind cannot
+    silently fall out of the gate."""
+    from jobhunter.l2.agreement import NEGATION_KINDS
+
+    assert frozenset(ACTED_ON) == NEGATION_KINDS
+    assert set(ACTED_ON) | set(BOILERPLATE) == set(STATEMENT_KINDS)
+    assert set(ACTED_ON).isdisjoint(BOILERPLATE)
+
+
+def test_the_split_metrics_are_the_dimensions_plus_what_the_gates_stopped_counting() -> None:
+    from jobhunter.l2.agreement import SPLITS
+
+    assert (*DIMENSIONS, "polarity", "numeric_tags") == SPLITS
+    # neither new count reaches validator/12's frozen failure set
+    assert "polarity" not in LEGACY_GATES and "numeric_tags" not in LEGACY_GATES
+
+
+@pytest.mark.parametrize("kind", STATEMENT_KINDS)
+def test_a_hedge_against_an_assertion_never_splits_negation(kind: str) -> None:
+    """"This role may require travel": one sample reads the hedge, the other
+    the assertion. `ambiguous` is not a negation on any kind — the reader
+    learns of the split from `metrics.splits.polarity`, nothing parks."""
+    a = sample(statement3("s1", (0, 100), kind=kind))
+    b = sample(statement3("s1", (0, 100), kind=kind, polarity="ambiguous"))
+    r = agree([a, b])
+    assert r.report["negation_disagreements"] == 0
+    assert r.report["metrics"]["splits"]["polarity"] == 1
+    assert r.report["failures"] == [] and r.passed is True
+
+
+@pytest.mark.parametrize("other", ["positive", "ambiguous"])
+@pytest.mark.parametrize("kind", ACTED_ON)
+def test_a_negation_split_on_a_kind_a_reader_acts_on_gates(kind: str, other: str) -> None:
+    """"We don't expect you to know OCaml" read as an OCaml requirement: the
+    one error the gate exists for, on the kinds that tell a candidate what the
+    job needs, forbids or pays. A negation against a hedge is still a
+    negation read one way and not the other."""
+    a = sample(statement3("s1", (0, 100), kind=kind, polarity="negative"))
+    b = sample(statement3("s1", (0, 100), kind=kind, polarity=other))
+    r = agree([a, b])
+    assert r.report["negation_disagreements"] == 1
+    assert r.report["metrics"]["splits"]["polarity"] == 0  # it gated; not also a metric
+    assert r.report["failures"] == ["negation"] and r.passed is False
+
+
+@pytest.mark.parametrize("other", ["positive", "ambiguous"])
+@pytest.mark.parametrize("kind", BOILERPLATE)
+def test_a_negation_split_in_boilerplate_is_a_polarity_metric(kind: str, other: str) -> None:
+    """"We hire for on-site roles only" against "remote work will not be
+    considered": one fact framed from opposite ends, concentrated in
+    hiring-policy boilerplate in the 2026-09-28 sample. Counted, never parked."""
+    a = sample(statement3("s1", (0, 100), kind=kind, polarity="negative"))
+    b = sample(statement3("s1", (0, 100), kind=kind, polarity=other))
+    r = agree([a, b])
+    assert r.report["negation_disagreements"] == 0
+    assert r.report["metrics"]["splits"]["polarity"] == 1
+    assert r.report["failures"] == [] and r.passed is True
+
+
+@pytest.mark.parametrize("acted_on", ACTED_ON)
+def test_a_negation_split_gates_when_either_side_is_a_kind_a_reader_acts_on(
+    acted_on: str,
+) -> None:
+    """Either side is enough: one sample filing a negated requirement under
+    hiring policy does not launder the other sample's positive requirement."""
+    boiler = sample(statement3("s1", (0, 100), kind="hiring_policy", polarity="negative"))
+    acted = sample(statement3("s1", (0, 100), kind=acted_on))
+    for cohort in ([boiler, acted], [acted, boiler]):
+        r = agree(cohort)
+        assert r.report["failures"] == ["negation"] and r.passed is False
+        assert r.report["metrics"]["splits"]["kind"] == 1  # the kind split, as ever
+
+
+def test_the_gate_reads_polarity_off_the_stored_claim_without_changing_it() -> None:
+    """The known-bad approach is editing `negated` — it is the v1 claim shape
+    readers depend on. The gate reads polarity from what a schema-2 claim
+    already stores: `polarity_target` names a non-positive polarity, and a
+    statement claim without one is positive. A fact no statement claims has no
+    polarity at all."""
+    from jobhunter.l2.agreement import _claims
+
+    s = sample(
+        statement3("pos", (0, 10)),
+        statement3("neg", (20, 30), polarity="negative"),
+        statement3("amb", (40, 50), polarity="ambiguous", subject="role"),
+        entries=[experience("f_free", (60, 70), months=12, sids=[])],
+    )
+    polarity = {c.owner: c.polarity for c in _claims(s)}
+    assert polarity == {"pos": "positive", "neg": "negative", "amb": "ambiguous",
+                        "f_free": None}
+    stored = {a["id"]: a["claims"][0] for a in s["demand_profile"]["areas"]}
+    assert stored["amb"]["negated"] is True  # the v1 bit still collapses the hedge
+    assert stored["amb"]["polarity_target"] == "ambiguous:role"
+    assert stored["pos"]["negated"] is False and stored["pos"]["polarity_target"] is None
+
+
+@pytest.mark.parametrize("polarity,counted", [("negative", 1), ("ambiguous", 1), ("positive", 0)])
+def test_a_fact_no_statement_claims_against_a_negated_statement_is_a_polarity_metric(
+    polarity: str, counted: int
+) -> None:
+    """An unlinked fact entry asserts no polarity; its stored `negated` is
+    false only because no statement makes it. Aligned against a statement read
+    as not plainly positive, that is a split the `negated` bit always counted,
+    so it is still counted, under `metrics.splits.polarity` ("every dimension
+    is still measured"). It parks nothing, even on a qualification: the gate
+    splits a `negative` against a positive or a hedge, and a claim no statement
+    makes is neither. Against a positive statement the bit never split, and
+    nothing is counted. The pair is aligned, so neither F1 nor the dispute set
+    sees it: this count is the only place it is reported."""
+    stated = sample(statement3("s1", (0, 100), polarity=polarity))
+    unlinked = sample(entries=[experience("f1", (0, 100), months=12, sids=[])])
+    for cohort in ([stated, unlinked], [unlinked, stated]):
+        r = agree(cohort)
+        assert r.report["metrics"]["aligned_pairs"] == 1 and r.report["mean_f1"] == 1.0
+        assert r.report["negation_disagreements"] == 0
+        assert r.report["metrics"]["splits"]["polarity"] == counted
+        assert r.report["failures"] == [] and r.passed is True
+
+
+def test_a_legacy_claim_is_judged_on_its_negated_bit() -> None:
+    """A claim that stores no polarity fields (every v1 claim) has only the
+    bit, and no kind to be exempted by: it gates exactly as validator/12
+    always did, and counts nothing under the new polarity metric."""
+    a = v1_profile(claim((0, 100)), claim((200, 300), negated=True))
+    b = v1_profile(claim((0, 100), negated=True), claim((200, 300)))
+    r = agree([a, b])
+    assert r.report["negation_disagreements"] == 2
+    assert r.report["metrics"]["splits"]["polarity"] == 0
+    assert r.report["failures"] == ["negation"] and r.passed is False
+
+
+# The numeric gate: the set of numbers each aligned claim parsed, with their
+# dimension. Comparator, unit, currency, period and inclusivity are tags.
+
+
+def _money_cohort(**b_changes: Any) -> list[dict[str, Any]]:
+    def one(**changes: Any) -> dict[str, Any]:
+        entry = compensation("f1", (0, 100), sids=["s1"], lo="240000", hi="315000", **changes)
+        return sample(statement3("s1", (0, 100), kind="compensation_statement",
+                                 fact_ids=("f1",)), entries=[entry])
+
+    return [one(), one(**b_changes)]
+
+
+def _quantity_cohort(a: dict[str, Any], b: dict[str, Any]) -> list[dict[str, Any]]:
+    def one(fields: dict[str, Any]) -> dict[str, Any]:
+        return sample(statement3("s1", (0, 100), fact_ids=("f1",)),
+                      entries=[quantity("f1", (0, 100), sids=["s1"], **fields)])
+
+    return [one(a), one(b)]
+
+
+def _range_as_endpoints() -> list[dict[str, Any]]:
+    """"$52,624 - $57,408": one sample derives one range, the other the two
+    endpoints as separate amounts. Same numbers, different comparator.
+
+    The spans are the text's own: "$52,624 - $57,408" at (40, 57), each
+    endpoint at 7 of its 17 characters. An endpoint fact therefore never
+    aligns with the range fact (Jaccard 0.41 < `JACCARD_MIN`), and the
+    statement claims compare the same set of numbers, restructured. A fact
+    that cites most of the range's text yet reads one bound is not this
+    shape; it is `DROPPED_BOUNDS`."""
+    whole = sample(statement3("s1", (0, 100), kind="compensation_statement", fact_ids=("f1",)),
+                   entries=[compensation("f1", (40, 57), sids=["s1"], lo="52624", hi="57408",
+                                         currency=None, period=None)])
+    ends = sample(
+        statement3("s1", (0, 100), kind="compensation_statement", fact_ids=("f1", "f2")),
+        entries=[compensation("f1", (40, 47), sids=["s1"], lo="52624", hi="52624",
+                              comparison="unstated", currency=None, period=None),
+                 compensation("f2", (50, 57), sids=["s1"], lo="57408", hi="57408",
+                              comparison="unstated", currency=None, period=None)],
+    )
+    return [whole, ends]
+
+
+PCT = {"dimension": "percentage", "unit": "percent"}
+NUMERIC_TAG_SPLITS = [
+    ("currency", lambda: _money_cohort(currency=None)),
+    ("period", lambda: _money_cohort(period=None)),
+    ("comparator", lambda: _quantity_cohort(
+        {**PCT, "comparison": "gte", "lo": 25, "hi": None, "inclusive": (True, None)},
+        {**PCT, "comparison": "unstated", "lo": 25, "hi": 25})),
+    ("inclusivity", lambda: _quantity_cohort(
+        {"dimension": "count", "unit": None, "comparison": "range", "lo": 2, "hi": 3,
+         "inclusive": (True, True)},
+        {"dimension": "count", "unit": None, "comparison": "range", "lo": 2, "hi": 3})),
+    ("unit", lambda: _quantity_cohort(
+        {"dimension": "frequency", "unit": "per_week", "comparison": "unstated",
+         "lo": 2, "hi": 2},
+        {"dimension": "frequency", "unit": "per_month", "comparison": "unstated",
+         "lo": 2, "hi": 2})),
+    ("range-as-endpoints", _range_as_endpoints),
+]
+
+
+@pytest.mark.parametrize("name,build", NUMERIC_TAG_SPLITS, ids=[n for n, _ in NUMERIC_TAG_SPLITS])
+def test_the_same_numbers_under_a_different_tag_are_a_numeric_tag_metric(
+    name: str, build: Any
+) -> None:
+    """"$240,000–$315,000 USD/year" against the same range with no period,
+    "at least 25%" against "25%": the numbers agree, a tag does not. The gate
+    used to park all of these (347 of 354 conflicting pairs); they are now
+    `metrics.splits.numeric_tags`."""
+    r = agree(build())
+    assert r.report["numeric_conflicts"] == 0
+    assert r.report["metrics"]["splits"]["numeric_tags"] > 0
+    assert r.report["failures"] == [] and r.passed is True
+
+
+def test_different_numbers_on_one_span_are_a_numeric_conflict() -> None:
+    """"5+ years ..., or 8+ years for the Staff level": both samples cite the
+    one bullet, one derives 60 months and the other 96. The fact claims cite
+    different words and never align; the statement claims do, and they
+    disagree about the number."""
+    def reading(months: int, at: tuple[int, int]) -> dict[str, Any]:
+        return sample(statement3("s1", (0, 100), fact_ids=("f1",)),
+                      entries=[experience("f1", at, months=months, sids=["s1"])])
+
+    r = agree([reading(60, (2, 10)), reading(96, (60, 68))])
+    assert r.report["numeric_conflicts"] == 1
+    assert r.report["metrics"]["splits"]["numeric_tags"] == 0
+    assert r.report["failures"] == ["numeric_conflict"] and r.passed is False
+
+
+def _money_pair(a: dict[str, Any], b: dict[str, Any]) -> list[dict[str, Any]]:
+    """Two samples' readings of one pay line, every money field spelled out."""
+    def one(fields: dict[str, Any]) -> dict[str, Any]:
+        entry = compensation("f1", (0, 100), sids=["s1"], currency=None, period=None, **fields)
+        return sample(statement3("s1", (0, 100), kind="compensation_statement",
+                                 fact_ids=("f1",)), entries=[entry])
+
+    return [one(a), one(b)]
+
+
+YEARS = {"dimension": "duration", "unit": "month"}
+#: one derivation of a range against one of its own bounds: the bound's number
+#: set is a strict subset of the range's, which is a different set of numbers
+#: (ac-2), not an omitted fact. The last is doc 9875ceb0266b in the 2026-09-28
+#: sample: "$231,000.00 to $323,500.00", one sample parsing only the top.
+DROPPED_BOUNDS = [
+    ("5-8 years vs 5+ years", lambda: _quantity_cohort(
+        {**YEARS, "comparison": "range", "lo": 60, "hi": 96, "inclusive": (True, True)},
+        {**YEARS, "comparison": "gte", "lo": 60, "hi": None, "inclusive": (True, None)})),
+    ("5-8 years vs up to 8 years", lambda: _quantity_cohort(
+        {**YEARS, "comparison": "range", "lo": 60, "hi": 96, "inclusive": (True, True)},
+        {**YEARS, "comparison": "lte", "lo": None, "hi": 96, "inclusive": (None, True)})),
+    ("$110,500-$155,000 vs up to $155,000", lambda: _money_pair(
+        {"comparison": "range", "lo": "110500", "hi": "155000"},
+        {"comparison": "lte", "lo": None, "hi": "155000"})),
+    ("$231,000-$323,500 vs $323,500", lambda: _money_pair(
+        {"comparison": "range", "lo": "231000.00", "hi": "323500.00"},
+        {"comparison": "unstated", "lo": "323500.00", "hi": "323500.00"})),
+]
+
+
+@pytest.mark.parametrize("name,build", DROPPED_BOUNDS, ids=[n for n, _ in DROPPED_BOUNDS])
+def test_a_range_read_as_one_of_its_bounds_is_a_numeric_conflict(name: str, build: Any) -> None:
+    """"5-8 years" read as "5+ years", a pay range read as its ceiling: both
+    samples parsed the one span, and one read fewer numbers off it. That is a
+    misread a reader acts on (the ceiling, the floor), so it parks — and it is
+    not a tag difference, so `numeric_tags` does not count it."""
+    r = agree(build())
+    assert r.report["numeric_conflicts"] == 2  # the statement and the fact
+    assert r.report["metrics"]["splits"]["numeric_tags"] == 0
+    assert r.report["failures"] == ["numeric_conflict"] and r.passed is False
+
+
+def test_a_derivation_one_sample_never_made_is_neither_a_conflict_nor_a_tag() -> None:
+    """Omission stays silent: sample B derived one of A's two facts, and
+    derived it the same way. Only a derivation both samples made, read two
+    ways, is a reading to compare."""
+    both = sample(
+        statement3("s1", (0, 100), fact_ids=("f1", "f2")),
+        entries=[experience("f1", (10, 30), months=60, sids=["s1"]),
+                 experience("f2", (60, 80), months=24, sids=["s1"], scope="management")],
+    )
+    one = sample(statement3("s1", (0, 100), fact_ids=("f1",)),
+                 entries=[experience("f1", (10, 30), months=60, sids=["s1"])])
+    r = agree([both, one])
+    assert r.report["numeric_conflicts"] == 0
+    assert r.report["metrics"]["splits"]["numeric_tags"] == 0
+    assert r.passed is True
+
+
+def test_an_omitted_derivation_beside_a_tag_difference_is_a_numeric_tag() -> None:
+    """Doc 75b4f698071d in the 2026-09-28 sample: one sample files the SF
+    range under its own statement with a yearly period, another merges the SF
+    and NYC ranges into one statement with no period. One derivation omitted,
+    the other the same numbers under another period: neither is a misread, and
+    together they are still not one — a tag metric, never a park."""
+    sf = sample(
+        statement3("s1", (0, 100), kind="compensation_statement", fact_ids=("f1",)),
+        entries=[compensation("f1", (60, 79), sids=["s1"], lo="138000", hi="190000",
+                              currency=None, period="year")],
+    )
+    merged = sample(
+        statement3("s1", (0, 100), kind="compensation_statement", fact_ids=("f1", "f2")),
+        entries=[compensation("f1", (60, 79), sids=["s1"], lo="138000", hi="190000",
+                              currency=None, period=None),
+                 compensation("f2", (80, 99), sids=["s1"], lo="132000", hi="182000",
+                              currency=None, period=None)],
+    )
+    r = agree([sf, merged])
+    assert r.report["numeric_conflicts"] == 0
+    assert r.report["metrics"]["splits"]["numeric_tags"] == 2  # the statement and the fact
+    assert r.report["failures"] == [] and r.passed is True
+
+
+def test_the_same_number_in_another_dimension_is_a_numeric_conflict() -> None:
+    """Dimension is part of what the gate compares: "up to 6 months" of
+    parental leave read as a duration by one sample and as an amount of money
+    by the other is not the same reading of the text."""
+    months = sample(statement3("s1", (0, 100), fact_ids=("f1",)),
+                    entries=[quantity("f1", (0, 100), sids=["s1"], dimension="duration",
+                                      comparison="unstated", lo=6, hi=6, unit="month")])
+    money = sample(statement3("s1", (0, 100), fact_ids=("f1",)),
+                   entries=[compensation("f1", (0, 100), sids=["s1"], lo="6", hi="6",
+                                         comparison="unstated", currency=None, period=None)])
+    r = agree([months, money])
+    assert r.report["numeric_conflicts"] == 2  # the statement and the fact
+    assert r.report["failures"] == ["numeric_conflict"]
+
+
+def test_numeric_amounts_compare_as_numbers_not_as_text() -> None:
+    """"$240,000.00" and "$240,000" are one amount; `facts.py` keeps the
+    document's decimals, so the comparison has to read them as numbers."""
+    def pay(lo: str, hi: str) -> dict[str, Any]:
+        return sample(statement3("s1", (0, 100), kind="compensation_statement",
+                                 fact_ids=("f1",)),
+                      entries=[compensation("f1", (0, 100), sids=["s1"], lo=lo, hi=hi)])
+
+    r = agree([pay("240000", "315000"), pay("240000.00", "315000.0")])
+    assert r.report["numeric_conflicts"] == 0 and r.passed is True
+
+
+def test_the_numeric_readings_are_read_out_of_the_stored_value_signature() -> None:
+    """The coupling the numeric gate rests on, pinned on the real writer
+    (`serve._value_signature`) for every derivation layout it writes. A date is
+    a reading too: a deadline read as two different days is a misread."""
+    from jobhunter.l2.agreement import _readings
+    from jobhunter.l2.v2.serve import _value_signature
+
+    date_entry = experience("f1", (0, 100), months=0, sids=["s1"])
+    date_entry.update(family="date", date_kind="application_deadline")
+    date_entry["derived"] = {"state": "parsed", "quantity": None, "money": None,
+                             "date": {"date": "2026-10-01", "candidates": None}}
+    ambiguous_date = copy.deepcopy(date_entry)
+    ambiguous_date["derived"]["date"] = {"date": None,
+                                         "candidates": ["2026-03-04", "2026-04-03"]}
+    unparsed = experience("f1", (0, 100), months=24, sids=["s1"])
+    unparsed["derived"] = {"state": "present_unparsed", "money": None, "date": None,
+                           "quantity": None}
+
+    def read(entry: dict[str, Any]) -> tuple[tuple[str, ...], ...]:
+        return _readings((_value_signature(entry),))
+
+    assert read(experience("f1", (0, 100), months=24, sids=["s1"])) == (("duration|24",),)
+    assert read(compensation("f1", (0, 100), sids=["s1"], lo="240000", hi="315000")) == (
+        ("money|240000", "money|315000"),)
+    assert read(date_entry) == (("date|2026-10-01",),)
+    assert read(ambiguous_date) == (("date|2026-03-04", "date|2026-04-03"),)
+    assert read(unparsed) == ()
+    # one reading per derivation: a claim's two facts stay two, so the gate can
+    # tell an omitted fact from a dropped bound
+    two = (_value_signature(experience("f1", (0, 100), months=24, sids=["s1"])),
+           _value_signature(compensation("f2", (0, 100), sids=["s1"], lo="5", hi="9")))
+    assert _readings(two) == (("duration|24",), ("money|5", "money|9"))
+
+
+def test_a_numeric_signature_of_an_unknown_layout_is_compared_whole() -> None:
+    """A derivation this module cannot lay out is compared exactly as the gate
+    always compared it — a signature it cannot read is never the one that
+    fails less."""
+    from jobhunter.l2.agreement import _readings
+
+    # `family|scope|date_kind|component|state`, then the derivation
+    assert _readings(("quantity||||parsed|z|1|2",)) == (("z|1|2",),)
+    assert _readings(("quantity||||parsed|q|count",)) == (("q|count",),)  # truncated
+
+
+def test_the_v1_legacy_gate_set_never_reads_the_new_counts() -> None:
+    """Validator "12" is frozen: a v1 cohort's failure set is the one it always
+    was, and the two new counts are reported for it (as zeroes — v1 claims
+    derive no values and store no polarity) without being able to fail it."""
+    a = v1_profile(claim((0, 100)), claim((200, 300), importance="preferred"))
+    b = v1_profile(claim((0, 100), negated=True), claim((200, 300), importance="required"))
+    r = agree([a, b])
+    assert r.report["gates"] == list(LEGACY_GATES)
+    assert r.report["failures"] == ["importance", "negation"]
+    assert r.report["metrics"]["splits"]["polarity"] == 0
+    assert r.report["metrics"]["splits"]["numeric_tags"] == 0

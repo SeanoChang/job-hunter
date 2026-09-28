@@ -23,9 +23,10 @@ from typing import Any
 import psycopg
 
 from jobhunter.archive.base import ArchiveStore
+from jobhunter.hashing import sha256_hex
 from jobhunter.l2.engines import EngineResult, EngineTransportError
 from jobhunter.l2.runner import run
-from tests.l2.test_runner import store  # noqa: F401
+from tests.l2.test_runner import _seed_doc, store  # noqa: F401
 from tests.l2.test_runner_v2 import (
     MODEL,
     AuditingEngine,
@@ -196,4 +197,209 @@ def test_a_polarity_split_still_parks_the_document_after_sampling(
     row = row_of(pg)
     assert row["status"] == "needs_review"
     assert row["agreement"]["failures"] == ["negation"]
+    assert row["profile"]["quality"]["sampling"] == "disagreement"
+
+
+# --- validator/20, 2026-09-28 amendment: the gates compare meaning -----------
+# The 2026-09-28 review-queue analysis found both surviving gates parking
+# documents on labels: a hedge read as a denial, one hiring policy framed from
+# opposite ends, one salary with and without its period tag. Sean approved
+# (2026-09-28) negation reading only `negative` on the statement kinds a reader
+# acts on, and the numeric gate comparing numbers and their dimension. These
+# drive the real drain over one posting assembled from the sentences the
+# analysis named: slot 1 reads it as below, slots 2 and 3 move exactly one
+# reading. The auditor errors, so validator/16 adjudication is out of the way
+# and what settles each document is the gate itself.
+
+POSTING = "\n".join([
+    "## Senior Software Engineer, Trading Systems",
+    "We build the exchange connectivity layer for a global trading firm.",
+    "## What we look for",
+    "- 5+ years of professional software engineering experience, or 8+ years for the Staff"
+    " level.",
+    "- We don't expect you to know OCaml; we will teach you here.",
+    "## Compensation",
+    "The base salary range for this role is $240,000–$315,000 USD/year.",
+    "## Working here",
+    "We hire for on-site roles only; applications for remote work will not be considered.",
+    "This role may require travel.",
+])
+
+
+def _ref(block: str, text: str | None) -> dict[str, Any]:
+    return {"block_id": block, "text": text, "occurrence": None if text is None else 0}
+
+
+def _statement(sid: str, kind: str, subject: str, topic: str, block: str, *,
+               polarity: str = "positive", polarity_evidence: str | None = None,
+               modality: str | None = None, fact_ids: tuple[str, ...] = ()) -> dict[str, Any]:
+    return {
+        "id": sid, "kind": kind, "subject": subject, "topic": topic,
+        "evidence": [_ref(block, None)],
+        "modality_evidence": [_ref(block, modality)] if modality else None,
+        "polarity": polarity,
+        "polarity_evidence": [_ref(block, polarity_evidence)] if polarity_evidence else None,
+        "condition_ids": [], "fact_ids": list(fact_ids), "unresolved": [],
+    }
+
+
+def _accounted(block: str, disposition: str, *ref_ids: str,
+               reason: str | None = None) -> dict[str, Any]:
+    return {"block_id": block, "disposition": disposition, "ref_ids": list(ref_ids),
+            "exclusion_reason": reason, "evidence": None}
+
+
+def _posting_emit() -> dict[str, Any]:
+    """Slot 1's schema-3 reading of `POSTING` — every reading the right one."""
+    return {
+        "source_assessment": {"usability": "usable", "evidence": None, "note": None},
+        "statements": [
+            _statement("s_years", "qualification", "candidate",
+                       "Professional software engineering experience", "b000004",
+                       fact_ids=("f_years",)),
+            _statement("s_ocaml", "qualification", "candidate", "OCaml knowledge", "b000005",
+                       polarity="negative", polarity_evidence="We don't expect you to"),
+            _statement("s_pay", "compensation_statement", "role", "Base salary range",
+                       "b000007", fact_ids=("f_pay",)),
+            _statement("s_onsite", "hiring_policy", "candidate", "On-site roles only",
+                       "b000009"),
+            _statement("s_travel", "employment_constraint", "role", "Travel", "b000010",
+                       modality="may require"),
+        ],
+        "relations": {"groups": [], "conditions": [], "example_sets": []},
+        "facts": {
+            "presence": {
+                "experience": {"state": "stated", "evidence": [_ref("b000004", "5+ years")]},
+                "compensation": {"state": "stated",
+                                 "evidence": [_ref("b000007", "$240,000–$315,000")]},
+                "quantities": {"state": "none_found", "evidence": None},
+                "dates": {"state": "none_found", "evidence": None},
+            },
+            "entries": [
+                {"id": "f_years", "family": "experience", "statement_ids": ["s_years"],
+                 "condition_ids": [],
+                 "scope": {"kind": "domain", "evidence": [
+                     _ref("b000004", "professional software engineering")]},
+                 "date_kind": None, "component": None,
+                 "evidence": {"value": [_ref("b000004", "5+ years")], "comparison": None,
+                              "unit": None, "currency": None, "component": None,
+                              "applicability": None}},
+                {"id": "f_pay", "family": "compensation", "statement_ids": ["s_pay"],
+                 "condition_ids": [], "scope": None, "date_kind": None, "component": "base",
+                 "evidence": {"value": [_ref("b000007", "$240,000–$315,000")],
+                              "comparison": None, "unit": [_ref("b000007", "/year")],
+                              "currency": [_ref("b000007", "USD")],
+                              "component": [_ref("b000007", "base salary")],
+                              "applicability": None}},
+            ],
+        },
+        "mentions": [{"id": "m_ocaml", "surface": "OCaml", "evidence": _ref("b000005", "OCaml"),
+                      "statement_ids": ["s_ocaml"], "role": "direct"}],
+        "areas": [
+            {"id": "a_fit", "name": "What we look for", "kind": "capability",
+             "statement_ids": ["s_years", "s_ocaml"], "evidence": [_ref("b000003", None)]},
+            {"id": "a_terms", "name": "Compensation and working here", "kind": "constraint",
+             "statement_ids": ["s_pay", "s_onsite", "s_travel"],
+             "evidence": [_ref("b000006", None)]},
+        ],
+        "block_accounting": [
+            _accounted("b000001", "context"),
+            _accounted("b000002", "excluded", reason="employer_description"),
+            _accounted("b000003", "context"),
+            _accounted("b000004", "statements", "s_years"),
+            _accounted("b000004", "facts", "f_years"),
+            _accounted("b000005", "statements", "s_ocaml"),
+            _accounted("b000006", "context"),
+            _accounted("b000007", "statements", "s_pay"),
+            _accounted("b000007", "facts", "f_pay"),
+            _accounted("b000008", "context"),
+            _accounted("b000009", "statements", "s_onsite"),
+            _accounted("b000010", "statements", "s_travel"),
+        ],
+    }
+
+
+def _reread(sid: str, **changes: Any) -> dict[str, Any]:
+    """`_posting_emit` with one statement read differently."""
+    emit = _posting_emit()
+    next(s for s in emit["statements"] if s["id"] == sid).update(changes)
+    return emit
+
+
+def _drain_posting(pg: Conn, archive: ArchiveStore, variant: dict[str, Any]) -> dict[str, Any]:
+    _seed_doc(pg, dh=sha256_hex(POSTING.encode("utf-8")), markdown=POSTING,
+              uid="gh:x:2026-09-28")
+    engine = AuditingEngine([result(_posting_emit()), result(variant), result(variant)],
+                            unparseable_audit)
+    run(v2_settings(**ON_SLOT), pg, archive, engine=engine, max_docs=10, max_usd=5.0)
+    row = row_of(pg)
+    assert row["k"] == 3
+    return row
+
+
+def test_a_may_require_travel_hedge_split_settles_validated_end_to_end(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """"This role may require travel" read as a hedge by two samples and as an
+    assertion by the first. `ambiguous` is not a negation; the split is served
+    as a polarity note."""
+    hedge = _reread("s_travel", polarity="ambiguous",
+                    polarity_evidence=[_ref("b000010", "may")])
+    row = _drain_posting(pg, store, hedge)
+    assert row["status"] == "validated"
+    assert row["agreement"]["failures"] == []
+    assert row["profile"]["quality"]["sample_notes"]["splits"]["polarity"] == 2
+
+
+def test_an_on_site_remote_framing_split_in_hiring_policy_settles_end_to_end(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """"On-site roles only" against "remote work will not be considered": one
+    hiring policy from two ends, which a reader acts on no differently."""
+    framed = _reread("s_onsite", polarity="negative", topic="Remote work not considered",
+                     polarity_evidence=[_ref("b000009", "will not be considered")])
+    row = _drain_posting(pg, store, framed)
+    assert row["status"] == "validated"
+    assert row["agreement"]["failures"] == []
+    assert row["profile"]["quality"]["sample_notes"]["splits"]["polarity"] == 2
+
+
+def test_an_ocaml_negation_split_read_positive_still_parks_end_to_end(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """"We don't expect you to know OCaml" read as an OCaml requirement — the
+    real flip, on a qualification, and the reason the gate exists."""
+    required = _reread("s_ocaml", polarity="positive", polarity_evidence=None)
+    row = _drain_posting(pg, store, required)
+    assert row["status"] == "needs_review"
+    assert row["agreement"]["failures"] == ["negation"]
+    assert row["profile"]["quality"]["sampling"] == "disagreement"
+
+
+def test_a_salary_period_tag_split_settles_validated_end_to_end(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """"$240,000–$315,000 USD/year" with and without its period anchor: the
+    same two amounts, one tag apart."""
+    untagged = _posting_emit()
+    untagged["facts"]["entries"][1]["evidence"]["unit"] = None
+    row = _drain_posting(pg, store, untagged)
+    assert row["status"] == "validated"
+    assert row["agreement"]["failures"] == []
+    assert row["agreement"]["numeric_conflicts"] == 0
+    assert row["profile"]["quality"]["sample_notes"]["splits"]["numeric_tags"] == 4
+
+
+def test_five_against_eight_years_still_splits_the_numeric_gate_end_to_end(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """"5+ years ..., or 8+ years for the Staff level": two samples link the
+    requirement to the other number in the same bullet. A different number is
+    a misread, and it parks."""
+    staff = _posting_emit()
+    staff["facts"]["entries"][0]["evidence"]["value"] = [_ref("b000004", "8+ years")]
+    staff["facts"]["presence"]["experience"]["evidence"] = [_ref("b000004", "8+ years")]
+    row = _drain_posting(pg, store, staff)
+    assert row["status"] == "needs_review"
+    assert row["agreement"]["failures"] == ["numeric_conflict"]
     assert row["profile"]["quality"]["sampling"] == "disagreement"

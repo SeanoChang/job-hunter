@@ -961,6 +961,91 @@ def test_a_numeric_conflict_still_settles_needs_review() -> None:
     assert state.agreement and state.agreement["failures"] == ["numeric_conflict"]
 
 
+# --- validator/20, 2026-09-28 amendment: the gates compare meaning -----------
+# The five shapes the 2026-09-28 review-queue analysis named, folded through
+# the production comparator on schema-3 cohorts (the v11 partition). Three of
+# them parked under the label-reading gates and settle now; the two real
+# misreads the gates exist for still park. What settles still says what it
+# split on, in `metrics.splits`.
+
+
+def _fold(a: dict[str, Any], b: dict[str, Any]) -> DerivedState:
+    events = [_slot(1, 1, record=a), _slot(2, 2, record=b), _slot(3, 3, record=b)]
+    return derive_state(events, [], GLOBS, HOOK)
+
+
+def _travel(polarity: str) -> dict[str, Any]:
+    return sample(statement3("s_travel", (0, 29), kind="employment_constraint",
+                             subject="role", polarity=polarity), schema="3")
+
+
+def test_a_may_require_travel_hedge_split_settles_validated() -> None:
+    """"This role may require travel": the hedge against the assertion."""
+    state = _fold(_travel("positive"), _travel("ambiguous"))
+    assert (state.status, state.sampling) == ("validated", "complete")
+    assert state.agreement and state.agreement["failures"] == []
+    assert state.agreement["metrics"]["splits"]["polarity"] == 2
+
+
+def test_an_on_site_against_remote_not_considered_split_in_hiring_policy_settles() -> None:
+    """"We hire for on-site roles only" and "remote work will not be
+    considered" are one policy read from opposite ends."""
+    def onsite(polarity: str) -> dict[str, Any]:
+        return sample(statement3("s_onsite", (0, 86), kind="hiring_policy",
+                                 polarity=polarity), schema="3")
+
+    state = _fold(onsite("positive"), onsite("negative"))
+    assert (state.status, state.sampling) == ("validated", "complete")
+    assert state.agreement and state.agreement["failures"] == []
+    assert state.agreement["metrics"]["splits"]["polarity"] == 2
+
+
+def test_an_ocaml_not_required_split_read_positive_still_parks() -> None:
+    """"We don't expect you to know OCaml" read as an OCaml requirement: the
+    real flip, on a qualification. It parks exactly as before."""
+    def ocaml(polarity: str) -> dict[str, Any]:
+        return sample(statement3("s_ocaml", (0, 60), polarity=polarity), schema="3")
+
+    state = _fold(ocaml("negative"), ocaml("positive"))
+    assert (state.status, state.sampling) == ("needs_review", "disagreement")
+    assert state.agreement and state.agreement["failures"] == ["negation"]
+
+
+def test_a_salary_period_tag_split_settles_validated() -> None:
+    """"$240,000–$315,000 USD/year" against the same numbers with period
+    null: the numbers agree and the tag is reported."""
+    from tests.l2.test_agreement import compensation
+
+    def pay(period: str | None) -> dict[str, Any]:
+        return sample(
+            statement3("s_pay", (0, 67), kind="compensation_statement", fact_ids=("f_pay",)),
+            entries=[compensation("f_pay", (39, 57), sids=["s_pay"], lo="240000",
+                                  hi="315000", period=period)],
+            schema="3",
+        )
+
+    state = _fold(pay("year"), pay(None))
+    assert (state.status, state.sampling) == ("validated", "complete")
+    assert state.agreement and state.agreement["failures"] == []
+    assert state.agreement["numeric_conflicts"] == 0
+    assert state.agreement["metrics"]["splits"]["numeric_tags"] == 4  # statement + fact, x2
+
+
+def test_five_against_eight_years_on_one_span_still_splits_the_numeric_gate() -> None:
+    """"5+ years ..., or 8+ years for the Staff level": one bullet, two
+    different numbers read off it. A misread, and it parks."""
+    from tests.l2.test_agreement import experience
+
+    def years(months: int, at: tuple[int, int]) -> dict[str, Any]:
+        return sample(statement3("s_years", (0, 93), fact_ids=("f_years",)),
+                      entries=[experience("f_years", at, months=months, sids=["s_years"])],
+                      schema="3")
+
+    state = _fold(years(60, (2, 10)), years(96, (63, 71)))
+    assert (state.status, state.sampling) == ("needs_review", "disagreement")
+    assert state.agreement and state.agreement["failures"] == ["numeric_conflict"]
+
+
 # --- validator/20: an exhausted sample budget is not a verdict --------------
 # Parsing contract v3 §3: "a document with at least one assembled-and-verified
 # candidate is validated. `needs_review` is reserved for the two gate failures
@@ -995,7 +1080,9 @@ def test_an_incomplete_v3_cohort_settles_validated() -> None:
     assert state.agreement and state.agreement["failures"] == ["sample_failed"]
     # what `serve._sample_notes` publishes as requested/arrived
     assert (state.agreement["k"], state.agreement["arrived"]) == (3, 1)
-    assert state.agreement["metrics"]["splits"] == dict.fromkeys(DIMENSIONS, 0)
+    assert state.agreement["metrics"]["splits"] == {
+        **dict.fromkeys(DIMENSIONS, 0), "polarity": 0, "numeric_tags": 0,
+    }
 
 
 def test_an_incomplete_v3_cohort_with_a_demoted_split_settles_too() -> None:

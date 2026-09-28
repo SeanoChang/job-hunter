@@ -278,7 +278,7 @@ def claim_index(record: dict[str, Any]) -> dict[str, Any]:
     so no aligned pair can split, so the audit slot (5% of documents, the only
     cohorts validator/20 samples) would certify itself however far apart its
     samples were. Everything settlement does with a cohort reads through here:
-    both gates — a polarity split and a numeric conflict, each asked of an
+    both gates — a negation split and a numeric conflict, each asked of an
     ALIGNED pair — the medoid the audit then runs on, the dispute set findings
     are scoped against, and the demoted metrics `profile_of` publishes as
     `quality.sample_notes`. `profile_of` therefore carries it.
@@ -297,11 +297,14 @@ def claim_index(record: dict[str, Any]) -> dict[str, Any]:
     over text both samples read the same way). They are still carried and still
     compared, because what they measure is what `quality.sample_notes` tells the
     reading agent; they simply park nothing. `values` is the exception that
-    still gates, and only in part: `agreement._numbers` strips the family/scope
-    tags off each signature, so two samples that both PARSED a number from one
-    span and disagree about it fail `numeric_conflict`, while the same number
-    under two scope tags stays a metric. Carrying all of it is this function's
-    half; comparing it is `agreement`'s, and none of it touches F1.
+    still gates, and only in part: `agreement._readings` keeps each parsed
+    number and its dimension and drops every tag, so two samples that both
+    PARSED a number from one span and read different numbers — a range read
+    as one of its own bounds included (`agreement._misread`) — fail
+    `numeric_conflict`, while the same number under two scope tags, or under
+    another comparator, unit, currency or period (2026-09-28 amendment), stays
+    a metric. Carrying all of it is this function's half; comparing it is
+    `agreement`'s, and none of it touches F1.
 
     Two of the five are deliberately namespace-free — derived values come from
     `facts.py` under a frozen validator, and entity links are casefolded source
@@ -386,13 +389,18 @@ def _claim(
     """One claim: the cited text and its span, under its statement's labels.
 
     `negated` is v1's boolean, so `negative` and `ambiguous` both read as "not
-    plainly positive" — any split against `positive` escalates, which is what
-    the gate asks of polarity. `polarity_target` is where the rest of polarity
-    lives (validator/19): the pair a negation actually points at, so two samples
-    that agree something is negated and disagree about WHAT ("No sponsorship
+    plainly positive". It is kept exactly as it is — it is the v1 claim shape
+    readers depend on — and the negation gate no longer reads it: since the
+    2026-09-28 amendment a hedge is not a denial, so `agreement._polarity`
+    recovers the statement's polarity from `polarity_target` (and `kind`)
+    instead. `polarity_target` is where the rest of polarity lives
+    (validator/19): the pair a negation actually points at, so two samples that
+    agree something is negated and disagree about WHAT ("No sponsorship
     available" as an employer constraint or as a candidate disqualification, the
     spec §3 case) split here, as does negative against ambiguous. It is null for
-    a positive statement, which negates nothing and has no target.
+    a positive statement, which negates nothing and has no target — which is
+    exactly what lets the gate read a statement claim with no target as
+    positive.
 
     A SCHEMA-3 claim carries two more fields and a schema-2 one carries neither
     (parsing contract v3 §2.1): the code-derived `section_heading` and

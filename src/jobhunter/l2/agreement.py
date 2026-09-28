@@ -8,13 +8,28 @@ object backs.
 
 Validator/20 (parsing contract v3 §3) keeps exactly two checks, `GATES`:
 
-- negation — aligned claims must agree on polarity. It is the attribution
-  gate's documented blind spot, "no sponsorship" read as "sponsorship
-  available" is the one extraction error that actively harms the reader, and
-  the split is rare and cheap.
+- negation — aligned claims must agree on whether the text is NEGATED. It is
+  the attribution gate's documented blind spot, "no sponsorship" read as
+  "sponsorship available" is the one extraction error that actively harms the
+  reader, and the split is rare and cheap.
 - numeric conflict — two aligned claims that both PARSED a number from the
-  same span must agree on dimension, bounds and unit. 144 months against 12 is
-  a misread; the same number under two scope tags is not.
+  same span must read the same numbers in the same dimension. 144 months
+  against 12 is a misread; the same number under two scope tags is not.
+
+Both were narrowed by the 2026-09-28 amendment (approved by Sean that day),
+because the 2026-09-28 review-queue analysis found them firing mostly on
+labels too. Negation had been reading v1's `negated` bit, which collapses
+`ambiguous` into "not plainly positive": 59% of its splits were a hedge ("may
+require travel") against an assertion, most of the positive-vs-negative rest
+was one fact framed from opposite ends in hiring-policy boilerplate, and about
+7% were the real flips. Numeric compared the whole derivation, so "USD"
+against no currency, or "at least 25%" against "25%", was a conflict: 347 of
+354 conflicting pairs carried identical numbers. Now negation reads statement
+polarity, counts only `negative` as negated, and gates only on the statement
+kinds a reader acts on (`NEGATION_KINDS`); the numeric gate compares the set
+of numbers and their dimension (`_readings`, `_misread`). Every split either
+gate stopped parking on is still counted: `metrics.splits.polarity` and
+`metrics.splits.numeric_tags` (`SPLITS`).
 
 Everything else is still computed and, for a v2 cohort, fails nothing. Mean
 pairwise claim-set F1 and validator/19's five semantic dimensions — statement
@@ -57,6 +72,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 JACCARD_MIN = 0.5
@@ -77,6 +93,35 @@ GATES: tuple[str, ...] = ("negation", "numeric_conflict")
 #: sample were one number under two tags) and a misread number visible.
 _SIGNATURE_STATE = 4
 _SIGNATURE_NUMBER = 5
+
+#: Each derivation's layout after its marker, as `_value_signature` writes it:
+#: (field count, the dimension — a field index, or a fixed name — and the
+#: indexes of the fields holding its numbers). A quantity is
+#: `dimension|comparison|min|max|inclusive_min|inclusive_max|unit`, money
+#: `comparison|min|max|currency|period`, a date `date|candidates`. Everything a
+#: layout does not list as a number or a dimension is a TAG to the gate.
+_LAYOUTS: dict[str, tuple[int, int | str, tuple[int, ...]]] = {
+    "q": (7, 0, (2, 3)),
+    "m": (5, "money", (1, 2)),
+    "d": (2, "date", (0, 1)),
+}
+
+#: The statement kinds a negation split parks a document on (2026-09-28
+#: amendment): what the candidate needs, what the job forbids or requires of
+#: them, and what it pays — the kinds a reader acts on. A negation read one way
+#: and not the other in a hiring policy, an employer description or a duty is
+#: counted (`metrics.splits.polarity`) and never parks: in the 2026-09-28
+#: sample those were one fact framed from opposite ends ("on-site only" /
+#: "remote not considered"), not a reading a candidate could be misled by.
+NEGATION_KINDS: frozenset[str] = frozenset(
+    {"qualification", "employment_constraint", "compensation_statement"}
+)
+
+#: The one polarity that negates. `ambiguous` is a hedge ("may require
+#: travel"), and a hedge against an assertion is a reading of modality, not of
+#: whether the text says no.
+_NEGATIVE = "negative"
+_POSITIVE = "positive"
 
 #: The v2 semantic dimensions (spec §6, validator/19): dimension name -> the key
 #: its disagreement count is reported under. Under validator/20 they are METRICS
@@ -104,6 +149,15 @@ DIMENSIONS: dict[str, str] = {
 #: parked. The five dimensions are in the list and cannot fire on a v1 claim
 #: (it carries none of those fields), which is exactly what 19 promised.
 LEGACY_GATES: tuple[str, ...] = ("f1", "importance", "negation", *DIMENSIONS)
+
+#: Every count `report["metrics"]["splits"]` carries, zeroes included: the five
+#: demoted dimensions, plus what the 2026-09-28 amendment stopped the two gates
+#: from parking on — `polarity`, a polarity split that is not a negation on a
+#: kind a reader acts on, and `numeric_tags`, derivations that read the same
+#: numbers under a different comparator, unit, currency, period or
+#: inclusivity. Neither is in `LEGACY_GATES`: validator "12" is frozen, and a
+#: count that did not exist when it shipped cannot park a v1 document.
+SPLITS: tuple[str, ...] = (*DIMENSIONS, "polarity", "numeric_tags")
 
 #: What picks between them. The stored profile blob declares its own contract —
 #: `v2/serve.profile_of` stamps `schema`, `bundles._v1_profile_of` carries only
@@ -189,7 +243,7 @@ def cohort_hook(
                 "thresholds": {"jaccard": JACCARD_MIN, "f1": f1_min,
                                "importance": IMPORTANCE_MIN},
                 "metrics": {"aligned_pairs": 0, "f1": None,
-                            "splits": dict.fromkeys(DIMENSIONS, 0)},
+                            "splits": dict.fromkeys(SPLITS, 0)},
                 "failures": ["sample_failed"],
                 "medoid": 0,
             }
@@ -238,10 +292,17 @@ class _Claim:
     values: tuple[str, ...] = ()
     alternatives: tuple[str, ...] = ()
     entity_links: tuple[str, ...] = ()
-    # the gating half of `values` (validator/20): the same derivations with
-    # their family/scope tags stripped, so the numeric check compares numbers
-    # and the demoted `scoped_values` dimension keeps comparing tags too
+    # `values` with the family/scope tags stripped: the derivations themselves,
+    # comparator, unit, currency and period included. The gate compared these
+    # until the 2026-09-28 amendment; they now decide `numeric_tags`.
     numbers: tuple[str, ...] = ()
+    # the statement polarity this claim was read under (`_polarity`), or None
+    # for a claim no statement makes — the negation gate reads this, never the
+    # stored `negated` bit, which cannot tell a hedge from a denial
+    polarity: str | None = None
+    # the gating half of `values` (2026-09-28 amendment): per parsed
+    # derivation, its numbers with their dimension (`_readings`), every tag gone
+    readings: tuple[tuple[str, ...], ...] = ()
 
 
 def _strings(value: Any) -> tuple[str, ...]:
@@ -252,22 +313,107 @@ def _strings(value: Any) -> tuple[str, ...]:
     return tuple(v for v in value if isinstance(v, str))
 
 
-def _numbers(values: tuple[str, ...]) -> tuple[str, ...]:
-    """The NUMBERS a claim's stored value signatures carry, tags stripped.
+def _derivations(value: str) -> list[str] | None:
+    """The derivation half of one stored value signature (from the marker
+    on), or None when it carries no parsed derivation at all: a `parsed`
+    state is what "both PARSED a number" means (spec §3)."""
+    parts = value.split("|")
+    if len(parts) <= _SIGNATURE_NUMBER or parts[_SIGNATURE_STATE] != "parsed":
+        return None
+    return parts[_SIGNATURE_NUMBER:]
 
-    Spec §3's numeric check is "two samples that both parsed a number from the
-    same span must agree on dimension, bounds and unit" — so a signature whose
-    state is not `parsed`, or that carries no derivation at all, contributes
-    nothing to compare, and the family/scope/date-kind/component prefix is
-    dropped because disagreeing about a TAG is not disagreeing about a number.
+
+def _numbers(values: tuple[str, ...]) -> tuple[str, ...]:
+    """The DERIVATIONS a claim's stored value signatures carry, scope tags
+    stripped.
+
+    The family/scope/date-kind/component prefix is dropped because disagreeing
+    about a scope TAG is not disagreeing about a number. What is left still
+    carries the comparator, unit, currency and period, which is why the gate
+    stopped comparing it (2026-09-28): it is what `numeric_tags` counts.
     """
     out: set[str] = set()
     for value in values:
-        parts = value.split("|")
-        if len(parts) <= _SIGNATURE_NUMBER or parts[_SIGNATURE_STATE] != "parsed":
-            continue
-        out.add("|".join(parts[_SIGNATURE_NUMBER:]))
+        if (derivation := _derivations(value)) is not None:
+            out.add("|".join(derivation))
     return tuple(sorted(out))
+
+
+def _canonical(number: str) -> str:
+    """A derived number as one spelling: "240000.00", "240000.0" and "240000"
+    are one amount. `facts.py` keeps the document's own decimals for money,
+    and `serve._number` already folds 144.0 into 144 for quantities; anything
+    that is not a number is compared as written."""
+    try:
+        return format(Decimal(number).normalize(), "f")
+    except InvalidOperation:
+        return number
+
+
+def _readings(values: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
+    """What a claim's parsed derivations READ: per derivation, each number
+    with its dimension.
+
+    The numeric gate's input under the 2026-09-28 amendment. A quantity reads
+    as its own dimension (`duration`, `count`, `percentage`, `frequency`),
+    money as `money`, a date as `date`; the numbers are the bounds (and a
+    date's locale-ambiguous candidates), as a set. Comparator, unit, currency,
+    period and inclusivity are tags, so "at least 25%" and "25%" read the same,
+    as do "$240,000–$315,000 USD/year" and the same range with no period. A
+    different number, or the same number in another dimension, reads
+    differently.
+
+    One reading per stored value signature — one fact entry's derivation — and
+    not one flat set per claim, because `_misread` must tell a fact one sample
+    never derived (omission, silent) from a bound one derivation dropped ("5-8
+    years" read as "5+ years": a different set of numbers, a conflict). Flat,
+    both are a strict subset.
+
+    A derivation whose marker or length this module does not know is kept
+    whole, so it is compared exactly as the gate always compared it: a layout
+    this reader cannot take apart is never the one that fails less.
+    """
+    out: set[tuple[str, ...]] = set()
+    for value in values:
+        reading: set[str] = set()
+        fields = _derivations(value)
+        while fields:
+            layout = _LAYOUTS.get(fields[0])
+            if layout is None or len(fields) <= layout[0]:
+                reading.add("|".join(fields))
+                break
+            size, dimension, number_at = layout
+            body, fields = fields[1:size + 1], fields[size + 1:]
+            name = body[dimension] if isinstance(dimension, int) else dimension
+            for at in number_at:
+                for number in body[at].split(","):
+                    if number not in ("", "None"):
+                        reading.add(f"{name}|{_canonical(number)}")
+        if reading:
+            out.add(tuple(sorted(reading)))
+    return tuple(sorted(out))
+
+
+def _polarity(claim: Mapping[str, Any], kind: str | None) -> str | None:
+    """The statement polarity a stored claim was read under.
+
+    Read off what a schema-2 claim already stores — the blob does not change
+    (`negated` is v1's shape, and readers depend on it). `serve._claim` writes
+    `polarity_target` as `polarity:subject` for every non-positive statement
+    and null for a positive one, so a claim with a kind (every statement claim
+    has one) and no target is positive. A claim with neither is a fact entry no
+    statement claims: it asserts no polarity at all, and says None.
+
+    A claim with no `polarity_target` KEY predates the field — every v1 claim
+    does — and has only its bit, so the bit is its polarity: it is judged
+    exactly as validator/12 always judged it.
+    """
+    if "polarity_target" not in claim:
+        return _NEGATIVE if claim.get("negated") else _POSITIVE
+    target = claim["polarity_target"]
+    if isinstance(target, str):
+        return target.partition(":")[0] or None
+    return _POSITIVE if kind is not None else None
 
 
 def _operators(value: Any) -> tuple[str, ...]:
@@ -316,7 +462,8 @@ def _claims(profile: Mapping[str, Any]) -> list[_Claim]:
             # one and it is still read, because the ratio is still reported —
             # it simply decides nothing (validator/20)
             imp = c.get("importance")
-            kind = c.get("kind")
+            raw_kind = c.get("kind")
+            kind = raw_kind if isinstance(raw_kind, str) else None
             target = c.get("polarity_target")
             values = _strings(c.get("values"))
             out.append(
@@ -325,12 +472,14 @@ def _claims(profile: Mapping[str, Any]) -> list[_Claim]:
                     importance=imp if isinstance(imp, str) else None,
                     negated=bool(c.get("negated")),
                     owner=owner if isinstance(owner, str) else None,
-                    kind=kind if isinstance(kind, str) else None,
+                    kind=kind,
                     polarity_target=target if isinstance(target, str) else None,
                     values=values,
                     alternatives=_operators(c.get("alternatives")),
                     entity_links=_strings(c.get("entity_links")),
                     numbers=_numbers(values),
+                    polarity=_polarity(c, kind),
+                    readings=_readings(values),
                 )
             )
     return out
@@ -466,6 +615,53 @@ def _conflicts(x: tuple[str, ...], y: tuple[str, ...]) -> bool:
     return bool(xs) and bool(ys) and not (xs <= ys or ys <= xs)
 
 
+def _misread(x: tuple[tuple[str, ...], ...], y: tuple[tuple[str, ...], ...]) -> bool:
+    """The numeric gate (2026-09-28 amendment): two aligned claims that both
+    parsed numbers read different numbers.
+
+    Per derivation first, as `_conflicts` does for a whole value: a claim that
+    carries only derivations the other also carries, read the same way, omits
+    a fact and disagrees about none (the omission side is F1's and the dispute
+    set's). Anything else compares the numbers both claims read as sets, so
+    one range derived as its two endpoints is the same reading restructured —
+    a comparator difference — while a range read as one of its own bounds
+    ("5-8 years" as "5+ years", a pay range as its ceiling) reads a different
+    set and conflicts: ac-2's "different numbers on the same span".
+    """
+    xs, ys = set(x), set(y)
+    if not xs or not ys or xs <= ys or ys <= xs:
+        return False
+    return {n for r in xs for n in r} != {n for r in ys for n in r}
+
+
+def _polarity_split(x: _Claim, y: _Claim) -> str | None:
+    """Where an aligned pair's polarity disagreement is counted, if it has one.
+
+    `negation` — the gate — when exactly one side is `negative` and the other
+    read the same text as positive or as a hedge, on a statement kind a reader
+    acts on (`NEGATION_KINDS`, either side's kind is enough). A claim that
+    names no kind (every v1 claim) cannot be exempted by one, which keeps a v1
+    cohort's negation count the `negated`-bit count validator/12 shipped.
+
+    `polarity` — the metric — for every other disagreement: a hedge against an
+    assertion on any kind, and a negation in hiring-policy or employer
+    boilerplate or a duty. That includes a fact no statement claims (polarity
+    None) aligned against a statement that is not plainly positive: the
+    `negated` bit always split there, and the pair is aligned, so neither F1
+    nor the dispute set reports it — this count is the only place it is still
+    measured. It never gates: a claim no statement makes asserts no polarity,
+    so it is neither the positive nor the hedge a negation is split against.
+    Against a positive statement the bit never split, and nothing is counted.
+    """
+    if x.polarity == y.polarity:
+        return None
+    if x.polarity is None or y.polarity is None:
+        return "polarity" if (x.polarity or y.polarity) != _POSITIVE else None
+    one_negated = (x.polarity == _NEGATIVE) != (y.polarity == _NEGATIVE)
+    acted_on = x.kind is None or y.kind is None or bool({x.kind, y.kind} & NEGATION_KINDS)
+    return "negation" if one_negated and acted_on else "polarity"
+
+
 def _dimension_splits(x: _Claim, y: _Claim) -> tuple[tuple[str, int], ...]:
     """What this aligned pair disagrees about, per spec §6 dimension.
 
@@ -492,15 +688,21 @@ def _dimension_splits(x: _Claim, y: _Claim) -> tuple[tuple[str, int], ...]:
 def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> AgreementResult:
     """The §4.5 gate over k samples of one document, in slot order.
 
-    Under validator/20 the gate keeps TWO checks (parsing contract v3 §3) and
-    everything else it computes becomes a metric:
+    Under validator/20 the gate keeps TWO checks (parsing contract v3 §3, as
+    narrowed by the 2026-09-28 amendment) and everything else it computes
+    becomes a metric:
 
-    - `negation`: aligned claims must agree on polarity. "No sponsorship" read
-      as "sponsorship available" is the one extraction error that actively
-      harms the reader, and it is rare and cheap to catch.
+    - `negation`: aligned claims must agree on whether the text is negated,
+      on the statement kinds a reader acts on (`_polarity_split`). "No
+      sponsorship" read as "sponsorship available" is the one extraction error
+      that actively harms the reader, and it is rare and cheap to catch. A
+      hedge against an assertion, and a negation split in boilerplate, are
+      `metrics.splits.polarity`.
     - `numeric_conflict`: two aligned claims that BOTH parsed a number from the
-      same span must agree on dimension, bounds and unit. 144 months against 12
-      is a misread; the same number under two scope tags is not.
+      same span must read the same numbers in the same dimension (`_misread`).
+      144 months against 12 is a misread; the same number under two scope tags
+      is not, and neither is the same number under a different comparator,
+      unit, currency or period — `metrics.splits.numeric_tags`.
 
     `f1_min` is still the bundle's calibration (0.80 for v1's coarse area/claim
     sets, 0.70 for v2's finer statements) and still reported, but for a v2
@@ -526,7 +728,9 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
     f1s: list[float] = []
     pair_f1: dict[tuple[int, int], float] = {}
     negation_splits = 0
+    polarity_splits = 0
     numeric_conflicts = 0
+    numeric_tags = 0
     aligned_pairs = 0
     required_pairs = 0
     required_agree = 0
@@ -542,10 +746,15 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
             aligned_pairs += len(pairs)
             for i, j in pairs:
                 x, y = xs[i], ys[j]
-                if x.negated != y.negated:
-                    negation_splits += 1
-                if _conflicts(x.numbers, y.numbers):
+                polarity = _polarity_split(x, y)
+                negation_splits += int(polarity == "negation")
+                polarity_splits += int(polarity == "polarity")
+                if _misread(x.readings, y.readings):
                     numeric_conflicts += 1
+                elif _conflicts(x.numbers, y.numbers):
+                    # what the gate counted until 2026-09-28: the same numbers
+                    # under another comparator, unit, currency or period
+                    numeric_tags += 1
                 if "required" in (x.importance, y.importance):
                     required_pairs += 1
                     if x.importance == y.importance:
@@ -596,7 +805,8 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
         "metrics": {
             "aligned_pairs": aligned_pairs,
             "f1": mean_f1,
-            "splits": dict(dimensions),
+            "splits": {**dimensions, "polarity": polarity_splits,
+                       "numeric_tags": numeric_tags},
         },
         "failures": failures,
         "medoid": medoid,

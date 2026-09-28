@@ -80,6 +80,16 @@ from typing import Any
 # `global positioning systems (gps)` — and calibrating those five was tried and
 # refuted at 10 recovered of 267. `state.GATE_DIMENSION_CODES` shrinks to the
 # two gates with it, because rule 3 can only restate a failure that can happen.
+#   Third clause, same identifier (2026-09-28 amendment, approved by Sean; 20
+# was not yet live): the two gates compare meaning, not labels — `negation`
+# reads statement polarity, counts only `negative` as negated (a hedge is not a
+# denial) and parks only on qualification, employment-constraint and
+# compensation statements; `numeric_conflict` compares each claim's parsed
+# numbers and their dimension, so a comparator, unit, currency, period or
+# inclusivity difference parks nothing. What either stopped parking on is
+# reported as `metrics.splits.polarity` / `numeric_tags` (2026-09-28 analysis:
+# 59% of negation splits were a hedge, 347 of 354 numeric conflicts were one
+# number under two tags).
 VALIDATOR_VERSION = "20"
 
 _CMP_PHRASES: list[tuple[str, str]] = [

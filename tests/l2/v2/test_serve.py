@@ -169,13 +169,57 @@ def test_a_flipped_importance_no_longer_gates() -> None:
 
 
 def test_a_flipped_polarity_escalates() -> None:
-    """Polarity is the attribution gate's documented blind spot, so any split
-    escalates unconditionally (`agreement` module docstring). C01's statement
-    and the experience fact hanging off it both carry that polarity, so the flip
-    shows up on both aligned pairs."""
+    """Polarity is the attribution gate's documented blind spot, so a negation
+    read one way and not the other escalates on a statement kind a reader acts
+    on (`agreement` module docstring) — C01's is a qualification. C01's
+    statement and the experience fact hanging off it both carry that polarity,
+    so the flip shows up on both aligned pairs."""
     result = agree([serve.profile_of(case_record("C01")), _c01_variant(polarity="negative")])
     assert result.report["negation_disagreements"] == 2
     assert "negation" in result.report["failures"] and result.passed is False
+
+
+def _variant(case: str, index: int, **changes: Any) -> dict[str, Any]:
+    """A second sample of a case document: its schema-2 emit with statement
+    `index` moved."""
+    emit = copy.deepcopy(case_emit(case))
+    emit["statements"][index].update(changes)
+    return serve.profile_of(case_record(case, emit))
+
+
+def test_a_hedged_polarity_is_a_metric_not_a_negation() -> None:
+    """The 2026-09-28 amendment on the real projection: a hedge is not a
+    denial. The stored claim still says `negated: true` for an `ambiguous`
+    statement — that bit is v1's shape and stays — so the gate has to read
+    polarity itself, and a positive-vs-ambiguous split lands in the polarity
+    metric on both of C01's aligned pairs instead of parking the document."""
+    result = agree([serve.profile_of(case_record("C01")), _c01_variant(polarity="ambiguous")])
+    assert result.report["negation_disagreements"] == 0
+    assert result.report["metrics"]["splits"]["polarity"] == 2
+    assert result.report["failures"] == [] and result.passed is True
+
+
+def test_a_negation_in_a_hiring_policy_is_a_polarity_split_not_a_gate() -> None:
+    """C02's English-language requirement is a hiring policy: one sample
+    reading it as a restriction on who is considered is a framing split in
+    boilerplate, which the gate reports and does not park on."""
+    hiring = serve.profile_of(case_record("C02"))
+    assert hiring["statements"][1]["kind"] == "hiring_policy"
+    result = agree([hiring, _variant("C02", 1, polarity="negative")])
+    assert result.report["negation_disagreements"] == 0
+    assert result.report["metrics"]["splits"]["polarity"] == 1
+    assert result.report["failures"] == [] and result.passed is True
+
+
+def test_the_gate_leaves_a_hedged_schema_2_claim_byte_identical() -> None:
+    """The stored blob is not where the amendment lives: an ambiguous
+    statement's claim keeps v1's collapsed bit and the polarity target it has
+    carried since validator/19, key for key."""
+    blob = _variant("C01", 0, polarity="ambiguous")
+    claim = blob["demand_profile"]["areas"][0]["claims"][0]
+    assert set(claim) == V2_CLAIM_KEYS
+    assert claim["negated"] is True
+    assert claim["polarity_target"] == "ambiguous:candidate"
 
 
 def test_the_claim_index_covers_every_statement_mention_and_fact() -> None:
@@ -414,6 +458,16 @@ def test_sample_notes_name_the_dimensions_the_samples_split_on() -> None:
     assert notes["splits"] == {"kind": report["metrics"]["splits"]["kind"]}
     assert notes["aligned_pairs"] == report["metrics"]["aligned_pairs"]
     assert notes["f1"] == report["mean_f1"]
+
+
+def test_sample_notes_name_a_polarity_split_the_gate_let_through() -> None:
+    """What the negation gate stops parking on, the reader still hears about:
+    a hedge against an assertion is published as a `polarity` split."""
+    report = agree([serve.profile_of(case_record("C01")),
+                    _c01_variant(polarity="ambiguous")]).report
+    notes = serve.profile_of(_settled(case_record("C01"), report))["quality"]["sample_notes"]
+    # a positive statement has no target, so only the polarity itself split
+    assert notes["splits"] == {"polarity": 2}
 
 
 def test_sample_notes_are_absent_when_no_cohort_ran() -> None:
