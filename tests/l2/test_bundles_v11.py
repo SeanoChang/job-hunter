@@ -174,7 +174,9 @@ def test_the_frozen_registration_is_not_selectable() -> None:
     a live drain may be pointed at by name."""
     from jobhunter import config
 
-    assert registered() == ("v1", "v2")
+    assert registered() == ("v1", "v2", "v3")  # v3: parsing contract v4
+    frozen = get_bundle_for_tuple("demand-profile/v10", "2")
+    assert all(get_bundle(name) is not frozen for name in registered())
     assert set(config._L2_BUNDLES_WIRED) == set(registered())
     assert get_bundle("v2").prompt_version == "demand-profile/v11"
 

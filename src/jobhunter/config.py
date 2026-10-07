@@ -71,8 +71,8 @@ def env_snapshot() -> dict[str, str]:
 # what the environment may spell, _WIRED is what `l2.bundles` registers today.
 # A name in the first list but not the second gets a teaching error, not a
 # stack trace at the first document.
-_L2_BUNDLE_NAMES = ("v1", "v2")
-_L2_BUNDLES_WIRED = ("v1", "v2")
+_L2_BUNDLE_NAMES = ("v1", "v2", "v3")
+_L2_BUNDLES_WIRED = ("v1", "v2", "v3")
 
 
 @dataclass(frozen=True, slots=True)

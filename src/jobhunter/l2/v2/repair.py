@@ -74,7 +74,19 @@ from jobhunter.l2.v2.source import RefBindError, annotate, blocks_by_id, resolve
 #       the schema it is judged under move together. Policy — one round, one
 #       re-audit, old-object-hash guards, failed repair mutates nothing — is
 #       unchanged.
+#   v3: parsing contract v4 §4 — operations follow the schema-4 shapes. A
+#       mention carries its `type`; `presence` reaches the three authorization
+#       families, each held to its own definition (work_authorization takes no
+#       polarity); and `tracks` is a kind of its own, because
+#       `relations.tracks` is one nullable object rather than a collection:
+#       added when the candidate has none, replaced or removed (back to null)
+#       under its printed hash. The code-owned `authorization` block is never
+#       sent back — assembly re-derives it from the repaired presence. Policy
+#       is v2's. The schema-4 handling keys off the BASE RECORD's shape, so v2
+#       (which only ever sees schema 2 and 3 records) is unaffected, and its
+#       bytes and advertised schemas stay as bundle v2 ships them.
 REPAIR_VERSION = "semantic-repair/v2"
+REPAIR_VERSION_V3 = "semantic-repair/v3"
 
 #: spec §4: "Operations add/replace/remove objects in statements, relations,
 #: fact entries, mentions, and areas, or replace a fact-presence object,
@@ -110,6 +122,31 @@ _DEFS = {"statement": "statement", "group": "group", "condition": "condition",
          "accounting_entry": "accounting_entry", "presence": "presence"}
 
 _PRESENCE_FAMILIES = ("experience", "compensation", "quantities", "dates")
+
+# --- schema 4 (semantic-repair/v3) ------------------------------------------
+#: the record shapes that carry parsing contract v4's additions
+_CONTRACT_4_SCHEMAS = frozenset({"4"})
+#: schema 4's own kind: `relations.tracks`, one nullable object
+_TRACKS = "tracks"
+#: the authorization presence families and the definition each is held to
+_AUTHORIZATION_DEFS = {"sponsorship": "authorization_presence",
+                       "citizenship": "authorization_presence",
+                       "work_authorization": "work_authorization_presence"}
+
+
+def _contract_4(schema_version: str) -> bool:
+    return schema_version in _CONTRACT_4_SCHEMAS
+
+
+def _presence_families(schema_version: str) -> tuple[str, ...]:
+    if _contract_4(schema_version):
+        return (*_PRESENCE_FAMILIES, *_AUTHORIZATION_DEFS)
+    return _PRESENCE_FAMILIES
+
+
+def _kinds(schema_version: str) -> tuple[str, ...]:
+    """The kinds a round over a record of this shape may address."""
+    return (*KINDS, _TRACKS) if _contract_4(schema_version) else KINDS
 
 #: the emit's own top-level keys — everything a repair may reach
 _EMIT_KEYS = ("source_assessment", "statements", "relations", "facts",
@@ -245,9 +282,72 @@ _MID_SOURCE, _rest = _rest.split("{source_blocks}", 1)
 _MID_CANDIDATE, _rest = _rest.split("{candidate_json}", 1)
 _MID_FINDINGS, _TAIL = _rest.split("{findings_json}", 1)
 
+# semantic-repair/v3: the schema-4 shapes, appended after v2's format note
+# rather than edited into it — v2's bytes are bundle v2's.
+_SCHEMA_4_NOTE = """\
+When the candidate is a parsing contract v4 record (extraction schema 4), three
+more shapes are yours to repair:
+  mention — every mention carries a "type": skill, field_of_study, credential,
+    location, organization or other. A mistyped mention is replaced whole,
+    keeping its id; a missing one is added with its type.
+  presence — "target_id" may also be sponsorship, citizenship or
+    work_authorization. Each is {state, evidence, polarity, polarity_evidence};
+    sponsorship and citizenship carry a polarity (positive, negative or
+    ambiguous) on a stated entry, quoted in polarity_evidence, and
+    work_authorization's polarity and polarity_evidence are always null.
+  tracks — "kind" tracks addresses relations.tracks, the list of kinds of work
+    the candidate is placed on. "target_id" is null. Add it when the candidate
+    has none (old_object_hash null); replace it whole, or remove it back to
+    null, by echoing the "object_hash" printed inside relations.tracks. Its
+    object is {selection, selection_evidence, items}, every item {id,
+    name_evidence, evidence, open, statement_ids, mention_ids}.
+The top-level "authorization" block is code's, derived from the presence
+families: never send the "authorization" block, and repair the presence entry
+it is derived from instead.
+"""
+
+TEMPLATE_V3 = (
+    _GUARD
+    + "\n"
+    + _REPAIRER
+    + "\n"
+    + _EMIT_FORMAT_NOTE
+    + "\n"
+    + _SCHEMA_4_NOTE
+    + "\n"
+    + "BASE CANDIDATE HASH: {candidate_hash}\n\n"
+    + "DOCUMENT (numbered source blocks):\n"
+    + "<<<SOURCE BLOCKS\n"
+    + "{source_blocks}\n"
+    + "SOURCE BLOCKS>>>\n\n"
+    + "CANDIDATE EXTRACTION (untrusted data):\n"
+    + "<<<CANDIDATE JSON\n"
+    + "{candidate_json}\n"
+    + "CANDIDATE JSON>>>\n\n"
+    + "VALIDATED AUDIT FINDINGS:\n"
+    + "<<<FINDINGS JSON\n"
+    + "{findings_json}\n"
+    + "FINDINGS JSON>>>\n"
+)
+
+
+def _parts(template: str) -> tuple[str, str, str, str, str]:
+    head, rest = template.split("{candidate_hash}", 1)
+    mid_source, rest = rest.split("{source_blocks}", 1)
+    mid_candidate, rest = rest.split("{candidate_json}", 1)
+    mid_findings, tail = rest.split("{findings_json}", 1)
+    return head, mid_source, mid_candidate, mid_findings, tail
+
+
+_PARTS_V3 = _parts(TEMPLATE_V3)
+
 
 def template_sha() -> str:
     return sha256_hex(TEMPLATE.encode("utf-8"))
+
+
+def template_sha_v3() -> str:
+    return sha256_hex(TEMPLATE_V3.encode("utf-8"))
 
 
 def _stamp(obj: Any) -> None:
@@ -269,7 +369,32 @@ def _shown(record: dict[str, Any]) -> dict[str, Any]:
         for obj in presence.values():
             _stamp(obj)
     _stamp(shown.get("source_assessment"))
+    # schema 4: `relations.tracks` is addressed whole; null prints nothing
+    _stamp((shown.get("relations") or {}).get(_TRACKS))
     return shown
+
+
+def _render(
+    parts: tuple[str, str, str, str, str],
+    markdown: str,
+    candidate_hash: str,
+    record: dict[str, Any],
+    findings: list[dict[str, Any]],
+) -> str:
+    head, mid_source, mid_candidate, mid_findings, tail = parts
+    source_blocks = "\n".join(f"{b.id}: {b.text}" for b in annotate(markdown))
+    listed = [{**finding, "id": f"f{i + 1}"} for i, finding in enumerate(findings)]
+    return (
+        head
+        + candidate_hash
+        + mid_source
+        + source_blocks
+        + mid_candidate
+        + json.dumps(_shown(record), indent=2, sort_keys=True, ensure_ascii=False)
+        + mid_findings
+        + json.dumps(listed, indent=2, sort_keys=True, ensure_ascii=False)
+        + tail
+    )
 
 
 def render(
@@ -285,19 +410,18 @@ def render(
     Findings are numbered here — an audit emit carries no ids — so `finding_id`
     on an operation names a finding the model was actually shown.
     """
-    source_blocks = "\n".join(f"{b.id}: {b.text}" for b in annotate(markdown))
-    listed = [{**finding, "id": f"f{i + 1}"} for i, finding in enumerate(findings)]
-    return (
-        _HEAD
-        + candidate_hash
-        + _MID_SOURCE
-        + source_blocks
-        + _MID_CANDIDATE
-        + json.dumps(_shown(record), indent=2, sort_keys=True, ensure_ascii=False)
-        + _MID_FINDINGS
-        + json.dumps(listed, indent=2, sort_keys=True, ensure_ascii=False)
-        + _TAIL
-    )
+    return _render((_HEAD, _MID_SOURCE, _MID_CANDIDATE, _MID_FINDINGS, _TAIL),
+                   markdown, candidate_hash, record, findings)
+
+
+def render_v3(
+    markdown: str,
+    candidate_hash: str,
+    record: dict[str, Any],
+    findings: list[dict[str, Any]],
+) -> str:
+    """`render` over the semantic-repair/v3 bytes (a schema-4 candidate)."""
+    return _render(_PARTS_V3, markdown, candidate_hash, record, findings)
 
 
 def _json_type(value: Any) -> str:
@@ -344,15 +468,35 @@ def _inline(node: Any, defs: dict[str, Any]) -> Any:
 
 
 def _object_def(kind: str, schema_version: str) -> dict[str, Any]:
+    """The emit definition an object is held to. `kind` is an operation kind,
+    or — schema 4 — the name of one of the extra definitions an operation
+    kind resolves to (`_def_key`)."""
     schema = packaged_emit_schema(schema_version)
     defs = schema["$defs"]
     node = (
         schema["properties"]["source_assessment"]
         if kind == "source_assessment"
-        else defs[_DEFS[kind]]
+        else defs[_DEFS.get(kind, kind)]
     )
     inlined: dict[str, Any] = _inline(node, defs)
     return inlined
+
+
+def _def_key(kind: str, target: Any, schema_version: str) -> str:
+    """Which definition this operation's object is held to: the kind's own,
+    except a schema-4 authorization family, whose presence entry is its own
+    shape (a bound polarity; none at all for work_authorization)."""
+    if kind == "presence" and _contract_4(schema_version) and target in _AUTHORIZATION_DEFS:
+        return _AUTHORIZATION_DEFS[str(target)]
+    return kind
+
+
+def _object_defs(schema_version: str) -> list[str]:
+    """Every definition an operation's object may take under this shape."""
+    keys = list(KINDS)
+    if _contract_4(schema_version):
+        keys += sorted(set(_AUTHORIZATION_DEFS.values())) + [_TRACKS]
+    return keys
 
 
 def _evidence_def(schema_version: str) -> dict[str, Any]:
@@ -361,7 +505,11 @@ def _evidence_def(schema_version: str) -> dict[str, Any]:
     return inlined
 
 
-def _operation_schema(schema_version: str) -> dict[str, Any]:
+def _operation_schema(
+    schema_version: str,
+    kinds: tuple[str, ...] = KINDS,
+    object_keys: tuple[str, ...] | list[str] = KINDS,
+) -> dict[str, Any]:
     return {
         "type": "object",
         "additionalProperties": False,
@@ -370,7 +518,7 @@ def _operation_schema(schema_version: str) -> dict[str, Any]:
         "properties": {
             "op": {"type": "string", "enum": list(OPS),
                    "description": "add and remove apply to collection members only"},
-            "kind": {"type": "string", "enum": list(KINDS),
+            "kind": {"type": "string", "enum": list(kinds),
                      "description": "what this operation addresses; decides the "
                                     "shape of object and the meaning of target_id"},
             "target_id": {
@@ -381,7 +529,7 @@ def _operation_schema(schema_version: str) -> dict[str, Any]:
             },
             "object": {
                 "anyOf": [
-                    *(_object_def(kind, schema_version) for kind in KINDS),
+                    *(_object_def(kind, schema_version) for kind in object_keys),
                     {"type": "null"},
                 ],
                 "description": "the complete object in this kind's emit shape; "
@@ -429,9 +577,26 @@ def emit_schema(schema_version: str = SCHEMA_VERSION) -> dict[str, Any]:
     the base contract (tests, a replay of an archived candidate), never an
     advertisement: no caller in `src/` takes it.
     """
+    return _emit_schema(REPAIR_VERSION, _operation_schema(schema_version))
+
+
+def emit_schema_v3(schema_version: str = SCHEMA_VERSION) -> dict[str, Any]:
+    """semantic-repair/v3's operation schema for a round at `schema_version`.
+
+    Schema 2 and 3 advertise exactly v2's operations. Schema 4 widens the kind
+    enum with `tracks` and the object union with the definitions a schema-4
+    operation may carry: the two authorization presence shapes and the tracks
+    object. `apply` still holds each object to the one definition its kind and
+    target resolve to (`_def_key`); the union is the engine's hint.
+    """
+    return _emit_schema(REPAIR_VERSION_V3, _operation_schema(
+        schema_version, _kinds(schema_version), _object_defs(schema_version)))
+
+
+def _emit_schema(version: str, operation: dict[str, Any]) -> dict[str, Any]:
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "job-hunter L2 semantic repair emit schema (semantic-repair/v2)",
+        "title": f"job-hunter L2 semantic repair emit schema ({version})",
         "type": "object",
         "additionalProperties": False,
         "required": ["base_candidate_hash", "operations"],
@@ -442,7 +607,7 @@ def emit_schema(schema_version: str = SCHEMA_VERSION) -> dict[str, Any]:
             },
             "operations": {
                 "type": "array",
-                "items": _operation_schema(schema_version),
+                "items": operation,
                 "description": "the typed repair operations, one per change",
             },
         },
@@ -616,7 +781,7 @@ def _op_evidence(path: str, value: Any, blocks: dict[str, Any], errors: list[str
 
 
 def _object(path: str, op: str, kind: str, value: Any, errors: list[str],
-            schema_version: str) -> dict[str, Any] | None:
+            schema_version: str, target: Any = None) -> dict[str, Any] | None:
     if op == "remove":
         if value is not None:
             errors.append(f"{path}.object: a removal carries no object")
@@ -636,7 +801,9 @@ def _object(path: str, op: str, kind: str, value: Any, errors: list[str],
         return None
     obj = _to_emit(value)
     broken = _schema_defects(
-        f"{path}.object", _object_validator(kind, schema_version), obj, errors
+        f"{path}.object",
+        _object_validator(_def_key(kind, target, schema_version), schema_version),
+        obj, errors,
     )
     return None if broken else obj
 
@@ -649,6 +816,7 @@ def _locate(
     record: dict[str, Any],
     obj: dict[str, Any] | None,
     errors: list[str],
+    schema_version: str = SCHEMA_VERSION,
 ) -> tuple[str, int, str] | None:
     """Where the operation lands: (conflict slot, list index, presence family).
 
@@ -658,6 +826,8 @@ def _locate(
     """
     target = node.get("target_id")
     old = node.get("old_object_hash")
+    if kind == _TRACKS:
+        return _locate_tracks(path, op, target, old, record, errors)
     if op == "add":
         if old is not None:
             errors.append(f"{path}.old_object_hash: an addition replaces nothing")
@@ -690,7 +860,7 @@ def _locate(
             return None
         return "source_assessment", -1, ""
     if kind == "presence":
-        if target not in _PRESENCE_FAMILIES:
+        if target not in _presence_families(schema_version):
             errors.append(
                 f"{path}.target_id: no such fact-presence family: {_excerpt(target)}"
             )
@@ -737,6 +907,40 @@ def _locate(
     return f"{kind}:{target}", index, ""
 
 
+def _locate_tracks(
+    path: str, op: str, target: Any, old: Any, record: dict[str, Any], errors: list[str]
+) -> tuple[str, int, str] | None:
+    """Schema 4's `relations.tracks`: one nullable object with no id.
+
+    An addition fills a null (anything else would overwrite tracks the model
+    never echoed a hash for); a replacement or removal needs tracks to exist
+    and the hash printed inside them. The slot is the same for all three, so
+    two operations on tracks conflict.
+    """
+    if target is not None:
+        errors.append(f"{path}.target_id: tracks have no id — target_id is null")
+        return None
+    current = (record.get("relations") or {}).get(_TRACKS)
+    if op == "add":
+        if old is not None:
+            errors.append(f"{path}.old_object_hash: an addition replaces nothing")
+            return None
+        if current is not None:
+            errors.append(
+                f"{path}: the candidate already has tracks — replace them under their "
+                "printed object_hash"
+            )
+            return None
+        return _TRACKS, -1, ""
+    if current is None:
+        errors.append(f"{path}: the candidate has no tracks to {op} — add them instead")
+        return None
+    if not isinstance(old, str) or object_hash(current) != old:
+        errors.append(f"{path}.old_object_hash: tracks have changed")
+        return None
+    return _TRACKS, -1, ""
+
+
 def _operation(
     path: str,
     node: Any,
@@ -756,14 +960,15 @@ def _operation(
     if not isinstance(op, str) or op not in OPS:
         errors.append(f"{path}.op: unknown operation {_excerpt(op)}")
         return None
-    if not isinstance(kind, str) or kind not in KINDS:
+    if not isinstance(kind, str) or kind not in _kinds(schema_version):
         errors.append(f"{path}.kind: unknown object kind {_excerpt(kind)}")
         return None
     if kind in _REPLACE_ONLY and op != "replace":
         errors.append(f"{path}.op: a {kind} is part of the record — it can only be replaced")
         return None
-    obj = _object(path, op, kind, node.get("object"), errors, schema_version)
-    placed = _locate(path, op, kind, node, record, obj, errors)
+    obj = _object(path, op, kind, node.get("object"), errors, schema_version,
+                  node.get("target_id"))
+    placed = _locate(path, op, kind, node, record, obj, errors, schema_version)
     if placed is None:
         return None
     slot, index, family = placed
@@ -823,6 +1028,8 @@ def _rebuild(record: dict[str, Any], ops: list[_Op]) -> dict[str, Any]:
             working["facts"]["presence"][one.family] = one.object
         elif one.kind == "source_assessment":
             working["source_assessment"] = one.object
+        elif one.kind == _TRACKS:  # schema 4: a removal puts null back
+            working["relations"][_TRACKS] = one.object
     return working
 
 
