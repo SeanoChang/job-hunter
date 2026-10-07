@@ -49,6 +49,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from jobhunter.config import env_snapshot
+from jobhunter.l2.bundles import DEFAULT_BUNDLE, get_bundle
 from jobhunter.timeutil import iso, parse_iso, utcnow
 
 REPO = Path(__file__).resolve().parents[1]
@@ -184,7 +186,10 @@ def resolve_run(workflow: str, after: datetime, *, run: Run, sleep: Sleep, seen:
     raise CycleError(f"no {workflow} run appeared after {iso(after)}")
 
 
-def dump(pool: str, batch: int, workdir: Path, *, run: Run, sleep: Sleep, seen: set[int]) -> Dump:
+def dump(
+    pool: str, batch: int, workdir: Path, *, run: Run, sleep: Sleep, seen: set[int],
+    bundle: str = DEFAULT_BUNDLE,
+) -> Dump:
     """Dispatch a queue dump, wait for it, download it into a fresh dir.
 
     The download goes into a directory named for the run, and the queue is
@@ -193,7 +198,8 @@ def dump(pool: str, batch: int, workdir: Path, *, run: Run, sleep: Sleep, seen: 
     too, and draining that one would burn a CI run to extract nothing new.
     """
     run_id = dispatch(
-        DUMP_WORKFLOW, [f"count={batch}", f"pool={pool}"], run=run, sleep=sleep, seen=seen
+        DUMP_WORKFLOW, [f"count={batch}", f"pool={pool}", f"bundle={bundle}"],
+        run=run, sleep=sleep, seen=seen,
     )
     _check(run(["gh", "run", "watch", str(run_id), "--exit-status"], capture=False),
            f"queue-dump run {run_id}")
@@ -228,14 +234,16 @@ def _last_summary(stdout: str) -> dict[str, Any]:
     return {}
 
 
-def drain(queue: Path, outbox: Path, batch: int, *, run: Run) -> tuple[int, dict[str, Any]]:
+def drain(
+    queue: Path, outbox: Path, batch: int, *, run: Run, bundle: str = DEFAULT_BUNDLE
+) -> tuple[int, dict[str, Any]]:
     """One local codex drain. Returns its exit code and its summary line.
 
     Exit 0 is a finished pass, 3 is "codex throttled" (the caller decides
     whether to wait it out); anything else means the script itself broke.
     """
     res = run(["uv", "run", "python", str(DRAIN_SCRIPT), str(queue), str(outbox),
-               "--max-docs", str(batch)])
+               "--bundle", bundle, "--max-docs", str(batch)])
     out = res.stdout or ""
     if out:
         print(out, end="" if out.endswith("\n") else "\n", flush=True)
@@ -371,6 +379,13 @@ def loop(args: argparse.Namespace, *, run: Run, sleep: Sleep) -> int:
         # outbox-ingest.yml untars into `outbox/` and reads that path; a
         # differently named directory would ingest nothing, silently.
         raise CycleError(f"--outbox must be a directory named 'outbox' (got {outbox.name!r})")
+    # one tuple for the dump and the drain: the queue is keyed by it
+    setting = (env_snapshot().get("JOB_HUNTER_L2_BUNDLE") or "").strip()
+    bundle = args.bundle or setting or DEFAULT_BUNDLE
+    try:
+        get_bundle(bundle)  # fail before buying a CI run, not after the dump
+    except KeyError as exc:
+        raise CycleError(str(exc.args[0])) from exc
     key = Path(args.key).expanduser()
     if not key.is_file():
         raise CycleError(f"encryption key not found at {key} (see the local-codex-drain runbook)")
@@ -379,7 +394,8 @@ def loop(args: argparse.Namespace, *, run: Run, sleep: Sleep) -> int:
     pool = "queue" if args.pool == "auto" else args.pool
     # stdout stays the cycle log; the banner (and the throttle notices) are for
     # the operator watching an unattended run.
-    print(f"drain-cycle: pool={args.pool} batch={args.batch} cycles={args.cycles or 'until dry'} "
+    print(f"drain-cycle: pool={args.pool} bundle={bundle} batch={args.batch} "
+          f"cycles={args.cycles or 'until dry'} "
           f"outbox={outbox} work-dir={work_root}", file=sys.stderr, flush=True)
     seen: set[int] = set()  # every run id this process has adopted; never reused
     cycle = 0
@@ -387,7 +403,7 @@ def loop(args: argparse.Namespace, *, run: Run, sleep: Sleep) -> int:
         cycle += 1
         workdir = work_root / f"cycle-{cycle:03d}"
         before = blobs(outbox)
-        dumped = dump(pool, args.batch, workdir, run=run, sleep=sleep, seen=seen)
+        dumped = dump(pool, args.batch, workdir, run=run, sleep=sleep, seen=seen, bundle=bundle)
         base: dict[str, Any] = {
             "cycle": cycle, "pool": pool, "dump_run": dumped.run_id, "dumped": dumped.docs,
             "at": iso(utcnow()),
@@ -401,7 +417,7 @@ def loop(args: argparse.Namespace, *, run: Run, sleep: Sleep) -> int:
             return 0
 
         totals: dict[str, Any] = {"attempted": 0, "counts": {}}
-        code, summary = drain(dumped.queue, outbox, args.batch, run=run)
+        code, summary = drain(dumped.queue, outbox, args.batch, run=run, bundle=bundle)
         _merge(totals, summary)
         retries = 0
         while code == 3 and retries < args.throttle_retries:
@@ -409,7 +425,7 @@ def loop(args: argparse.Namespace, *, run: Run, sleep: Sleep) -> int:
             print(f"drain-cycle: throttled, waiting {args.throttle_wait:g}m "
                   f"(retry {retries}/{args.throttle_retries})", flush=True)
             sleep(args.throttle_wait * 60)
-            code, summary = drain(dumped.queue, outbox, args.batch, run=run)
+            code, summary = drain(dumped.queue, outbox, args.batch, run=run, bundle=bundle)
             _merge(totals, summary)
 
         held = blobs(outbox)
@@ -462,6 +478,9 @@ def main(argv: Sequence[str] | None = None, *, run: Run = shell, sleep: Sleep = 
     ap.add_argument("--pool", choices=("auto", "queue", "quarantined"), default="auto",
                     help="auto starts on 'queue' and falls through to 'quarantined'")
     ap.add_argument("--batch", type=int, default=100, help="documents per cycle")
+    ap.add_argument("--bundle", default=None,
+                    help="engine tuple for both the dump and the drain "
+                         "(default: JOB_HUNTER_L2_BUNDLE, else v1)")
     ap.add_argument("--cycles", type=int, default=0, help="0 = until a pool is dry")
     ap.add_argument("--outbox", type=Path, default=Path("outbox"))
     ap.add_argument("--work-dir", type=Path, default=None,

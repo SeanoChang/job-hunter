@@ -39,6 +39,7 @@ from jobhunter.cli_output import Exit
 from jobhunter.cli_q import EVENT_KINDS, IMPORTANCES, _clamp
 from jobhunter.config import ConfigError, Settings, env_snapshot
 from jobhunter.store import db, mcp_state
+from jobhunter.store.extraction import SPONSORSHIP
 from jobhunter.timeutil import parse_iso, utcnow
 
 MCP_PATH = "/mcp"
@@ -169,23 +170,32 @@ def postings(
     status: str | None = None,
     since: str | None = None,
     search: str | None = None,
+    sponsorship: str | None = None,
+    citizenship_required: bool | None = None,
     limit: int = 50,
     after: str | None = None,
 ) -> dict[str, Any]:
-    """List postings, newest first: uid, board, status, title, company, lifecycle dates.
+    """List postings, newest first: uid, board, status, title, company, lifecycle
+    dates, and the sponsorship/citizenship reading of the current text.
 
     board is source:board (ashby:ramp), status is open or closed, since is a
     window (7d) or an ISO instant over first_seen_at, search is a case-insensitive
-    match on title and company. Bounded at 500; when truncated is true, pass
-    next_cursor back as after for the next page.
+    match on title and company. sponsorship is yes, no or undeclared (the
+    posting's stated visa-sponsorship policy); citizenship_required filters on a
+    citizenship or U.S.-person restriction. A posting not yet read for
+    authorization reports null for both and matches neither filter. Bounded at
+    500; when truncated is true, pass next_cursor back as after for the next page.
     """
     if status not in (None, "open", "closed"):
         raise ToolError(f"status must be open or closed: {status!r}")
+    if sponsorship is not None and sponsorship not in SPONSORSHIP:
+        raise ToolError(f"sponsorship must be one of: {', '.join(SPONSORSHIP)}")
     src, brd = _split_board(board)
     window = _since(since)
-    with _read() as (_, conn):
+    with _read() as (settings, conn):
         return _page(views.postings_view(
-            conn, source=src, board=brd, status=status, since=window, search=search,
+            conn, settings, source=src, board=brd, status=status, since=window,
+            search=search, sponsorship=sponsorship, citizenship_required=citizenship_required,
             limit=_clamp(limit), after=_cursor(after)))
 
 

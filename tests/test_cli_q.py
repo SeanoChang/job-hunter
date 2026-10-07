@@ -634,3 +634,91 @@ def test_q_postings_bad_since_is_an_envelope_error(qenv: Path) -> None:
     assert body["ok"] is False
     assert body["error"]["kind"] == "usage"
     assert "soon" in body["error"]["message"]
+
+
+# --- the authorization filter (parsing contract v4 §5) -----------------------
+
+
+def _doc_of(uid: str) -> str:
+    return str(_data(["q", "posting", uid])["data"]["document_hash"])
+
+
+def _seed_v4_authorizations(
+    pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """x refuses sponsorship (V1 Visa); z requires U.S.-person status and says
+    nothing on sponsorship (V4 Anduril); y may sponsor (V6); w has no
+    extraction under the tuple in force."""
+    from tests.l2.v2.v4_serving import v4_record
+
+    for uid, case in (("ab:ramp:x", "visa"), ("ab:ramp:z", "anduril"),
+                      ("ab:ramp:y", "may_sponsor")):
+        _seed_v3_profile(pg, _doc_of(uid), monkeypatch, status="validated",
+                         record=v4_record(case, lifecycle="validated"))
+
+
+def _uids(args: list[str]) -> list[str]:
+    return [r["uid"] for r in _data(["q", "postings", *args])["data"]]
+
+
+def test_q_postings_filters_on_sponsorship_and_citizenship(
+    qenv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_v4_authorizations(pg, monkeypatch)
+    assert _uids(["--sponsorship", "no"]) == ["ab:ramp:x"]
+    assert _uids(["--sponsorship", "yes"]) == ["ab:ramp:y"]
+    # not extracted is not undeclared: w matches no sponsorship value
+    assert _uids(["--sponsorship", "undeclared"]) == ["ab:ramp:z"]
+    assert _uids(["--citizenship-required", "true"]) == ["ab:ramp:z"]
+    assert _uids(["--citizenship-required", "false"]) == ["ab:ramp:y", "ab:ramp:x"]
+    assert _uids(["--sponsorship", "no", "--citizenship-required", "true"]) == []
+    assert _uids(["--sponsorship", "yes", "--status", "open"]) == []  # y is closed
+
+
+def test_q_postings_rows_report_the_reading_or_null(
+    qenv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_v4_authorizations(pg, monkeypatch)
+    rows = {r["uid"]: (r["sponsorship"], r["citizenship_required"])
+            for r in _data(["q", "postings"])["data"]}
+    assert rows == {
+        "ab:ramp:x": ("no", False),
+        "ab:ramp:z": ("undeclared", True),
+        "ab:ramp:y": ("yes", False),
+        # no extraction under the tuple in force: null, never undeclared
+        "ab:ramp:w": (None, None),
+    }
+
+
+def test_q_postings_sponsorship_is_scoped_to_the_engine_in_force(
+    qenv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_v4_authorizations(pg, monkeypatch)
+    monkeypatch.setenv("JOB_HUNTER_L2_BUNDLE", "v1")  # another corpus partition
+    assert _uids(["--sponsorship", "no"]) == []
+    assert _data(["q", "postings"])["data"][0]["sponsorship"] is None
+
+
+@pytest.mark.parametrize(("flag", "value"), [
+    ("--sponsorship", "maybe"),
+    ("--sponsorship", "NO"),
+    ("--citizenship-required", "yes"),
+])
+def test_q_postings_refuses_an_authorization_value_outside_the_vocabulary(
+    qenv: Path, flag: str, value: str
+) -> None:
+    body = _data(["q", "postings", flag, value], code=2)
+    assert body["error"]["kind"] == "usage" and body["error"]["valid"]
+
+
+def test_q_profile_digest_carries_the_authorization(
+    qenv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_v4_authorizations(pg, monkeypatch)
+    dh = _doc_of("ab:ramp:z")
+    summary = _data(["q", "profile", "--doc", dh[:12]])["data"]["profile"]
+    assert summary["authorization"]["sponsorship"] == "undeclared"
+    assert summary["authorization"]["citizenship_required"] is True
+    r = runner.invoke(cli.app, ["q", "profile", "--doc", dh[:12], "-o", "table"])
+    assert r.exit_code == 0, r.stdout + r.stderr
+    assert "sponsorship   undeclared, citizenship required" in r.stdout

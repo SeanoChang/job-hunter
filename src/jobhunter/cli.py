@@ -27,7 +27,7 @@ from jobhunter import __version__
 from jobhunter.archive import ArchiveError, ArchiveStore, open_store
 from jobhunter.archive.manifests import iter_manifests, latest_per_board
 from jobhunter.cli_output import Exit, emit, fail, output_option, use_json
-from jobhunter.cli_q import MAX_LIMIT, _clamp, q_app
+from jobhunter.cli_q import MAX_LIMIT, _clamp, authorization_label, q_app
 from jobhunter.config import ConfigError, Settings, env_snapshot
 from jobhunter.cursors import read_cursor, write_cursor
 from jobhunter.fetch import RunSummary, UnknownBoardError, is_healthy
@@ -510,6 +510,8 @@ def _pulse_human(payload: dict[str, Any], truncated: bool) -> str:
                 omitted = summary.get("mentions_omitted") or 0
                 more = f" (+{omitted} more)" if omitted else ""
                 lines.append(f"      mentions: {', '.join(summary['mentions'])}{more}")
+            if "authorization" in summary:  # schema 4 only (parsing contract v4 §5)
+                lines.append(f"      sponsorship: {authorization_label(summary['authorization'])}")
     if truncated:
         lines.append("  ... truncated: call again to continue")
     attention = payload["attention"]

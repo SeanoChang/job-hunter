@@ -58,7 +58,7 @@ _SCHEMA_KEY = "schema"
 #: the live shape carried a marker no reader recognised and fell through to the
 #: v1 walk, which drops mentions and invents an importance the shape does not
 #: have. The membership test is `reads_as_v2`, and both readers use it.
-V2_SHAPES: frozenset[str] = frozenset({"2", "3"})
+V2_SHAPES: frozenset[str] = frozenset({"2", "3", "4"})
 
 #: The reserved record key `runner.settle` attaches its verdict under, and the
 #: only thing in this module that knows settlement happened (spec §6).
@@ -69,6 +69,17 @@ V2_SHAPES: frozenset[str] = frozenset({"2", "3"})
 #: assembled with, which is what the archived candidate, the agreement gate and
 #: a stored blob re-projected through `profile_of` all carry.
 SETTLEMENT = "settlement"
+
+#: The record key assembly derives the schema-4 authorization block under
+#: (parsing contract v4 §2.2), and the blob key `profile_of` keeps it under.
+AUTHORIZATION = "authorization"
+
+#: The one mention type the digest and `profile_mentions` treat as a skill
+#: (parsing contract v4 §2.3).
+SKILL_TYPE = "skill"
+
+#: The mention types the schema-4 digest reports as education.
+EDUCATION_TYPES = ("field_of_study", "credential")
 
 #: `pulse.MAX_MENTIONS`, restated rather than imported: `pulse` reaches into the
 #: store and importing it here would end this module's purity. The two are pinned
@@ -266,8 +277,14 @@ def profile_of(record: dict[str, Any]) -> dict[str, Any]:
     audit cleared would make every reader recompute the policy for itself. The
     reserved settlement key is consumed here and never stored — the blob's keys
     are these six.
+
+    A schema-4 record adds a seventh, the code-derived `authorization` block
+    (parsing contract v4 §2.2): the digest reports it and the store's
+    `profile_authorization` rows are read off it. `relations.tracks` already
+    travels inside `relations`. An older record has no such key and gains
+    none, so its blob stays byte-identical.
     """
-    return {
+    blob = {
         _SCHEMA_KEY: _schema_of(record),
         "statements": record["statements"],
         "relations": record["relations"],
@@ -276,6 +293,9 @@ def profile_of(record: dict[str, Any]) -> dict[str, Any]:
         "quality": quality_of(record),
         "demand_profile": claim_index(record),
     }
+    if AUTHORIZATION in record:
+        blob[AUTHORIZATION] = record[AUTHORIZATION]
+    return blob
 
 
 def claim_index(record: dict[str, Any]) -> dict[str, Any]:
@@ -577,6 +597,12 @@ def mention_rows(record: dict[str, Any]) -> list[tuple[str, str, str]]:
     """
     rows: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str, str]] = set()
+    if _schema_of(record) == "4":
+        # typed mentions (parsing contract v4 §2.3): the aggregate behind
+        # `q claims` is a skill index, so a place, an employer, a degree or a
+        # field of study is not a row in it. They stay in the blob.
+        record = {**record, "mentions": [
+            m for m in record["mentions"] if m.get("type") == SKILL_TYPE]}
     # two-tier serving (2026-09-18 ruling): the skill LISTING serves for every
     # record the store accepts (validated status, gated there) — grounding is
     # validator-enforced and needs no audit. `search_eligible` stays the gate
@@ -611,8 +637,25 @@ def summary(profile: dict[str, Any]) -> dict[str, Any]:
     posting had said it. Its skills are the mentions linked to a qualification
     or responsibility statement, and `mentions_omitted` counts what the bound
     cut. Schema-2 output is unchanged.
+
+    A schema-4 blob (parsing contract v4 §5) keeps the schema-3 areas and
+    facts. Its skills are the mentions typed `skill`, bounded the same way;
+    the statement-kind filter does not apply, because the type now says what a
+    name is. It adds `education` (field-of-study and credential surfaces), the
+    derived `authorization` with one quote per family, and `tracks`.
     """
     statements = profile.get("statements") or []
+    if profile.get("schema") == "4":
+        mentions = profile.get("mentions") or []
+        relations = profile.get("relations")
+        return {
+            "areas": _areas_s3(statements),
+            **_bounded(_surfaces(mentions, (SKILL_TYPE,))),
+            "education": {kind: _surfaces(mentions, (kind,)) for kind in EDUCATION_TYPES},
+            "authorization": _authorization(profile.get(AUTHORIZATION)),
+            "tracks": _tracks(relations.get("tracks") if isinstance(relations, dict) else None),
+            "facts": _facts(profile.get("facts") or {}),
+        }
     if profile.get("schema") == "3":
         return {
             "areas": _areas_s3(statements),
@@ -686,6 +729,62 @@ def _skills_s3(mentions: list[Any], statements: list[Any]) -> dict[str, Any]:
     surfaces = list(seen)
     return {"mentions": surfaces[:MAX_MENTIONS],
             "mentions_omitted": max(0, len(surfaces) - MAX_MENTIONS)}
+
+
+def _surfaces(mentions: list[Any], types: tuple[str, ...]) -> list[str]:
+    """The surfaces of the mentions typed one of `types`, in record order, deduped."""
+    seen: dict[str, None] = {}
+    for mention in mentions:
+        if not isinstance(mention, dict) or mention.get("type") not in types:
+            continue
+        surface = mention.get("surface")
+        if isinstance(surface, str) and surface:
+            seen.setdefault(surface, None)
+    return list(seen)
+
+
+def _bounded(surfaces: list[str]) -> dict[str, Any]:
+    """The digest's bounded skill list and how many the bound cut."""
+    return {"mentions": surfaces[:MAX_MENTIONS],
+            "mentions_omitted": max(0, len(surfaces) - MAX_MENTIONS)}
+
+
+def _quote(refs: Any) -> str | None:
+    """One reference list as the text a reader quotes, or None when absent."""
+    if not isinstance(refs, list):
+        return None
+    texts = [r["text"] for r in refs if isinstance(r, dict) and isinstance(r.get("text"), str)]
+    return " ".join(texts) or None
+
+
+def _authorization(block: Any) -> dict[str, Any] | None:
+    """The derived authorization (contract v4 §2.2) as the digest reports it:
+    the two values verbatim, and one quote per family, null when absent.
+    Nothing is re-derived; None when the blob carries no block."""
+    if not isinstance(block, dict):
+        return None
+    evidence = block.get("evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
+    return {
+        "sponsorship": block.get("sponsorship"),
+        "citizenship_required": block.get("citizenship_required"),
+        "quotes": {family: _quote(evidence.get(family))
+                   for family in ("sponsorship", "citizenship", "work_authorization")},
+    }
+
+
+def _tracks(tracks: Any) -> dict[str, Any] | None:
+    """`relations.tracks` (contract v4 §2.5) reduced to what a digest reader
+    needs: how the track is chosen, and each track's name and `open` flag."""
+    if not isinstance(tracks, dict):
+        return None
+    return {
+        "selection": tracks.get("selection"),
+        "items": [
+            {"name": _quote(item.get("name_evidence")), "open": item.get("open") is True}
+            for item in tracks.get("items") or [] if isinstance(item, dict)
+        ],
+    }
 
 
 def _areas(statements: list[Any]) -> list[dict[str, Any]]:

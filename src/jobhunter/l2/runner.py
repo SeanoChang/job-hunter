@@ -993,6 +993,15 @@ _REPAIR_CONTRACTS: dict[str, _RepairContract] = {
     )
     for version in ("2", "3")
 }
+#: schema 4 (parsing contract v4, bundle v3) repairs under `semantic-repair/v3`,
+#: which knows the typed mention, the authorization presence families and
+#: `relations.tracks`; the 2 and 3 entries above keep v2 untouched.
+_REPAIR_CONTRACTS["4"] = _RepairContract(
+    version=_v2_repair.REPAIR_VERSION_V3,
+    render=_v2_repair.render_v3,
+    emit_schema=_v2_repair.emit_schema_v3,
+    apply=_v2_repair.apply,
+)
 
 
 def _repair_contract(bundle: Bundle) -> _RepairContract | None:

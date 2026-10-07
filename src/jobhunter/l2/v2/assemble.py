@@ -16,10 +16,10 @@ from typing import Any, cast
 
 from jobhunter.hashing import canonical_json, sha256_hex
 from jobhunter.l2.v2.facts import (
-    VALIDATOR_VERSION,
     derive_date,
     derive_money,
     derive_quantity,
+    validator_version_for,
 )
 from jobhunter.l2.v2.invisible import invisible
 from jobhunter.l2.v2.quality import assess
@@ -31,7 +31,7 @@ from jobhunter.l2.v2.source import (
     heading_of,
     resolve,
 )
-from jobhunter.l2.v2.types import Block
+from jobhunter.l2.v2.types import AUTHORIZATION_FAMILIES, Block
 from jobhunter.markdown import NORMALIZER_VERSION
 
 # /3 re-anchor · /4 derived presence · /5 typo tiers · /6 emphasis fold and
@@ -48,6 +48,9 @@ _PRESENCE_FAMILIES = ("experience", "compensation", "quantities", "dates")
 # from assemble, so the map lives here to avoid the cycle)
 _PRESENCE_KEY = {"experience": "experience", "compensation": "compensation",
                  "quantity": "quantities", "date": "dates"}
+#: the record shapes that carry parsing contract v4's additions: authorization
+#: presence and its derived block, typed mentions, `relations.tracks`
+_CONTRACT_4_SCHEMAS = frozenset({"4"})
 
 
 _LEGAL_CONTROLS = frozenset("\n\t")
@@ -364,6 +367,78 @@ def _presence(binder: _Binder, family: str, node: Any) -> dict[str, Any]:
     }
 
 
+def _authorization_presence(binder: _Binder, family: str, node: Any) -> dict[str, Any]:
+    """Schema 4: the presence shape plus a bound polarity (contract v4 §2.1)."""
+    node = node if isinstance(node, dict) else {}
+    path = f"facts.presence.{family}"
+    return {
+        "state": node.get("state"),
+        "evidence": binder.field(path, node, "evidence"),
+        "polarity": node.get("polarity"),
+        "polarity_evidence": binder.field(path, node, "polarity_evidence"),
+    }
+
+
+def derive_authorization(presence: dict[str, Any]) -> dict[str, Any]:
+    """The code-owned `authorization` block of a schema-4 record (contract v4 §2.2).
+
+    Only an explicit sponsorship sentence sets `yes` or `no`: a stated entry
+    whose polarity is positive ("sponsorship may be available" counts, ruling
+    2026-10-07) or negative. Everything else is `undeclared` — none found,
+    unresolved, an ambiguous polarity, no polarity, or no evidence to stand
+    on. Citizenship is its own field and never folds into `sponsorship: no`.
+    Each family's bound evidence is carried whenever it is present, so an
+    `undeclared` reading keeps its quote for the reader to judge.
+
+    Public because verify re-derives it, the same discipline as
+    `section_heading`.
+    """
+
+    def entry(family: str) -> dict[str, Any]:
+        node = presence.get(family)
+        return node if isinstance(node, dict) else {}
+
+    def stated(family: str, polarity: str) -> bool:
+        node = entry(family)
+        return (node.get("state") == "stated" and bool(node.get("evidence"))
+                and node.get("polarity") == polarity)
+
+    sponsorship = ("yes" if stated("sponsorship", "positive")
+                   else "no" if stated("sponsorship", "negative") else "undeclared")
+    return {
+        "sponsorship": sponsorship,
+        "citizenship_required": stated("citizenship", "positive"),
+        "evidence": {
+            family: copy.deepcopy(entry(family).get("evidence") or None)
+            for family in AUTHORIZATION_FAMILIES
+        },
+    }
+
+
+def _track(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, Any]:
+    path = f"relations.tracks.items[{index}]"
+    return {
+        "id": node.get("id"),
+        "name_evidence": binder.refs(f"{path}.name_evidence", node.get("name_evidence")),
+        "evidence": binder.refs(f"{path}.evidence", node.get("evidence")),
+        "open": node.get("open"),
+        "statement_ids": list(node.get("statement_ids") or []),
+        "mention_ids": list(node.get("mention_ids") or []),
+    }
+
+
+def _tracks(binder: _Binder, node: Any) -> dict[str, Any] | None:
+    """Schema 4 `relations.tracks` (contract v4 §2.5): null, or a selection
+    and its items, every reference bound like any other."""
+    if not isinstance(node, dict):
+        return None
+    return {
+        "selection": node.get("selection"),
+        "selection_evidence": binder.field("relations.tracks", node, "selection_evidence"),
+        "items": [_track(binder, i, item) for i, item in enumerate(node.get("items") or [])],
+    }
+
+
 def _entry(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, Any]:
     path = f"facts.entries[{index}]"
     emitted = node.get("evidence")
@@ -392,9 +467,10 @@ def _entry(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _mention(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, Any]:
+def _mention(binder: _Binder, index: int, node: dict[str, Any], *,
+             schema_version: str) -> dict[str, Any]:
     surface = node.get("surface")
-    return {
+    mention = {
         "id": node.get("id"),
         "surface": surface,
         "evidence": binder.ref(f"mentions[{index}].evidence", node.get("evidence"), lenient=True),
@@ -402,6 +478,9 @@ def _mention(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, Any
         "role": node.get("role"),
         "normalized_key": normalize_key(surface if isinstance(surface, str) else ""),
     }
+    if schema_version in _CONTRACT_4_SCHEMAS:
+        mention["type"] = node.get("type")  # what kind of thing it is (v4 §2.3)
+    return mention
 
 
 def _area(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, Any]:
@@ -441,7 +520,10 @@ def assemble(
     The schema version travels as a parameter for the same reason the prompt
     version does: the bundle owns the engine tuple, and assembly is one of the
     six functions it selects. Only the statement shape differs between 2 and
-    3 (parsing contract v3 §2.1); everything else is byte-identical.
+    3 (parsing contract v3 §2.1); everything else is byte-identical. Schema 4
+    (parsing contract v4) adds the authorization presence families and the
+    derived `authorization` block, mention `type` and `relations.tracks`;
+    schema 2 and 3 records are built exactly as before.
 
     Raises AssembleError carrying every binding failure at once.
     """
@@ -459,6 +541,7 @@ def assemble(
     relations = emit.get("relations") or {}
     facts = emit.get("facts") or {}
     presence = facts.get("presence") or {}
+    contract_4 = schema_version in _CONTRACT_4_SCHEMAS
     record: dict[str, Any] = {
         "document": {
             "document_hash": document_hash,
@@ -483,15 +566,21 @@ def assemble(
                 _example_set(binder, i, e)
                 for i, e in enumerate(relations.get("example_sets") or [])
             ],
+            **({"tracks": _tracks(binder, relations.get("tracks"))} if contract_4 else {}),
         },
         "facts": {
             "presence": {
-                family: _presence(binder, family, presence.get(family))
-                for family in _PRESENCE_FAMILIES
+                **{family: _presence(binder, family, presence.get(family))
+                   for family in _PRESENCE_FAMILIES},
+                **{family: _authorization_presence(binder, family, presence.get(family))
+                   for family in (AUTHORIZATION_FAMILIES if contract_4 else ())},
             },
             "entries": [_entry(binder, i, e) for i, e in enumerate(facts.get("entries") or [])],
         },
-        "mentions": [_mention(binder, i, m) for i, m in enumerate(emit.get("mentions") or [])],
+        "mentions": [
+            _mention(binder, i, m, schema_version=schema_version)
+            for i, m in enumerate(emit.get("mentions") or [])
+        ],
         "areas": [_area(binder, i, a) for i, a in enumerate(emit.get("areas") or [])],
         "block_accounting": [
             _accounting(binder, i, e) for i, e in enumerate(emit.get("block_accounting") or [])
@@ -500,7 +589,7 @@ def assemble(
             "model": observed_model,
             "prompt_version": prompt_version,
             "schema_version": schema_version,
-            "validator_version": VALIDATOR_VERSION,
+            "validator_version": validator_version_for(schema_version),
             "rules_version": RULES_VERSION,
             "at": at,
             "candidate_hash": "",
@@ -513,6 +602,9 @@ def assemble(
     if binder.errors:
         raise AssembleError(binder.errors)
     _reconcile_presence(record)
+    if contract_4:
+        # after binding succeeded: derived from bound evidence only, never the emit
+        record["authorization"] = derive_authorization(record["facts"]["presence"])
     record["extraction"]["candidate_hash"] = candidate_hash(record)
     return record
 

@@ -176,6 +176,26 @@ def test_v2_bundle_is_the_v6_engine_tuple() -> None:
     assert b.mention_rows is serve.mention_rows
 
 
+def test_validator_21_leaves_bundle_v2_at_validator_20() -> None:
+    """Validator 21 judges schema 4 only (parsing contract v4). Bundle v2's
+    tuple, and every schema-3 record it assembles and verifies, stays at 20."""
+    from jobhunter.l2.v2 import facts
+    from tests.l2.v2.conftest import AT, S3_DOC_HASH, S3_MD, make_s3_emit
+
+    b = get_bundle("v2")
+    assert (b.prompt_version, b.schema_version, b.validator_version) == (
+        "demand-profile/v11", "3", "20",
+    )
+    assert facts.VALIDATOR_VERSION == "20"
+    assert facts.validator_version_for("2") == "20"
+    assert facts.validator_version_for("3") == "20"
+    assert facts.validator_version_for("4") == "21"
+    record = b.assemble(make_s3_emit(), S3_MD, document_hash=S3_DOC_HASH,
+                        observed_model="gpt-5.6-luna", at=AT)
+    assert record["extraction"]["validator_version"] == "20"
+    assert b.verify(record, S3_MD).validator_version == "20"
+
+
 def test_v2_assemble_speaks_the_runners_failure_vocabulary() -> None:
     """The runner catches ONE AssembleError to decide `attribution_failed`; the
     v2 adapter re-raises v2's as that one, errors intact."""

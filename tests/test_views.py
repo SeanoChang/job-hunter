@@ -52,17 +52,40 @@ def _as_json(data: Any) -> Any:
 def test_postings_view_is_what_q_postings_emits(
     corpus: Path, pg: psycopg.Connection[dict[str, Any]]
 ) -> None:
-    page = views.postings_view(pg)
+    settings = Settings.load()
+    page = views.postings_view(pg, settings)
     assert _as_json(page.data) == _data(["q", "postings"])["data"]
     assert page.truncated is False and page.next_cursor is None
-    first = views.postings_view(pg, limit=2)
+    first = views.postings_view(pg, settings, limit=2)
     body = _data(["q", "postings", "--limit", "2"])
     assert _as_json(first.data) == body["data"]
     assert first.truncated is True and first.next_cursor == body["meta"]["next_cursor"]
     # the filters reach the query, not only the shaping
-    assert [r["uid"] for r in views.postings_view(pg, status="closed").rows()] == ["ab:ramp:y"]
-    assert views.postings_view(pg, source="ashby", board="ramp").rows() != []
-    assert views.postings_view(pg, search="rUsT").rows()[0]["uid"] == "ab:ramp:x"
+    closed = views.postings_view(pg, settings, status="closed").rows()
+    assert [r["uid"] for r in closed] == ["ab:ramp:y"]
+    assert views.postings_view(pg, settings, source="ashby", board="ramp").rows() != []
+    assert views.postings_view(pg, settings, search="rUsT").rows()[0]["uid"] == "ab:ramp:x"
+
+
+def test_postings_view_filters_on_the_authorization_reading(
+    corpus: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One implementation behind both faces: the view takes the two filters
+    and the CLI flags are only their spelling."""
+    from tests.l2.v2.v4_serving import v4_record
+
+    dh = str(_data(["q", "posting", "ab:ramp:x"])["data"]["document_hash"])
+    _seed_v3_profile(pg, dh, monkeypatch, status="validated",
+                     record=v4_record("visa", lifecycle="validated"))
+    settings = Settings.load()
+    rows = views.postings_view(pg, settings, sponsorship="no").rows()
+    assert [r["uid"] for r in rows] == ["ab:ramp:x"]
+    assert _as_json(rows) == _data(["q", "postings", "--sponsorship", "no"])["data"]
+    assert [r["uid"] for r in views.postings_view(
+        pg, settings, citizenship_required=False).rows()] == ["ab:ramp:x"]
+    assert views.postings_view(pg, settings, sponsorship="undeclared").rows() == []
+    with pytest.raises(ValueError):
+        views.postings_view(pg, settings, sponsorship="maybe")
 
 
 def test_posting_view_matches_and_reports_a_miss_as_none(

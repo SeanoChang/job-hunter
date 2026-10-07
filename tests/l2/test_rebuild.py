@@ -98,6 +98,22 @@ def test_rebuild_repopulates_profile_mentions(
     assert [(r["mention"], r["area_kind"], r["importance"]) for r in rows] == expected
 
 
+def test_rebuild_empties_profile_authorization_with_the_rows_it_derives_from(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """profile_authorization is derived from extractions.profile by the same
+    upsert as profile_mentions, so replay truncates it with them and the upserts
+    refill it; a row no archived attempt backs does not survive."""
+    pg.execute(
+        "INSERT INTO profile_authorization (document_hash, model, prompt_version,"
+        " schema_version, validator_version, sponsorship, citizenship_required)"
+        " VALUES ('orphan', 'm', 'p', '4', 'v', 'no', false)"
+    )
+    rebuild_extractions(pg, store, ("z-ai/*",))
+    pg.commit()
+    assert pg.execute("SELECT count(*) AS n FROM profile_authorization").fetchone() == {"n": 0}
+
+
 def test_rebuild_rejudges_raw_responses_under_current_validators(
     pg: Conn, store: ArchiveStore  # noqa: F811
 ) -> None:

@@ -152,11 +152,14 @@ def extraction_status(
 def postings_page(
     conn: Conn,
     *,
+    engine: dict[str, str],
     source: str | None = None,
     board: str | None = None,
     status: str | None = None,
     since: datetime | None = None,
     search: str | None = None,
+    sponsorship: str | None = None,
+    citizenship_required: bool | None = None,
     limit: int = 50,
     after: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -164,8 +167,21 @@ def postings_page(
 
     Returns up to limit+1 rows on purpose: the caller emits `limit` of them,
     marks `truncated`, and builds the next cursor from the last row it emitted
-    — never from a row the reader never saw."""
-    params: dict[str, Any] = {"limit": limit + 1}
+    — never from a row the reader never saw.
+
+    Each row also carries the authorization reading of the posting's CURRENT
+    document under the engine tuple in force (`engine`: `model_regex`,
+    `prompt_version`, `schema_version`, `validator_version`, and the
+    `normalizer_version` the document is keyed by), from the derived
+    `profile_authorization` (parsing contract v4 §5). A document with no row
+    under that tuple reads null in both columns — not extracted, never
+    `undeclared` — and so matches no `sponsorship` or `citizenship_required`
+    value. Two models under one tuple are one reading: the first by name."""
+    params: dict[str, Any] = {
+        "limit": limit + 1, "model_regex": engine["model_regex"],
+        "pv": engine["prompt_version"], "sv": engine["schema_version"],
+        "vv": engine["validator_version"], "nv": engine["normalizer_version"],
+    }
     where: list[str] = []
     if source is not None:
         where.append("p.source = %(source)s")
@@ -182,16 +198,32 @@ def postings_page(
     if search:
         where.append("(v.title ILIKE %(q)s OR v.company ILIKE %(q)s)")
         params["q"] = f"%{search}%"
+    if sponsorship is not None:
+        where.append("auth.sponsorship = %(sponsorship)s")
+        params["sponsorship"] = sponsorship
+    if citizenship_required is not None:
+        where.append("auth.citizenship_required = %(citizenship)s")
+        params["citizenship"] = citizenship_required
     if after is not None:
         params["cur_at"], params["cur_uid"] = _split_cursor(after)
         where.append("(p.first_seen_at, p.uid) < (%(cur_at)s::timestamptz, %(cur_uid)s::text)")
     return conn.execute(
         "SELECT p.uid, p.source, p.board, p.status, p.version_count, p.reopen_count, "
         "p.first_seen_at, p.last_seen_at, p.closed_lower_at, p.closed_upper_at, "
-        "v.title, v.company, v.url "
+        "v.title, v.company, v.url, auth.sponsorship, auth.citizenship_required "
         "FROM postings p "
         "LEFT JOIN posting_versions v ON v.uid = p.uid "
         "AND v.version_hash = p.current_version_hash "
+        "LEFT JOIN LATERAL ("
+        "  SELECT a.sponsorship, a.citizenship_required "
+        "  FROM documents d "
+        "  JOIN profile_authorization a ON a.document_hash = d.document_hash "
+        "  WHERE d.version_hash = p.current_version_hash "
+        "    AND d.normalizer_version = %(nv)s "
+        "    AND a.prompt_version = %(pv)s AND a.schema_version = %(sv)s "
+        "    AND a.validator_version = %(vv)s AND a.model ~ %(model_regex)s "
+        "  ORDER BY a.model LIMIT 1"
+        ") auth ON TRUE "
         f"WHERE {' AND '.join(where) if where else 'TRUE'} "
         "ORDER BY p.first_seen_at DESC, p.uid DESC LIMIT %(limit)s",
         params,
