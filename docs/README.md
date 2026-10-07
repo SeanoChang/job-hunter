@@ -41,6 +41,13 @@ dispositions of the 2026-08-17 external review:
 
 ## Design documents
 
+- `superpowers/specs/2026-10-07-parsing-contract-v4-design.md` — **draft
+  2026-10-07, amends v3**: a derived `authorization` object (sponsorship
+  yes/no/undeclared, `citizenship_required`) from three new presence
+  families; typed mentions; mentions from responsibility lines; `tracks` for
+  postings that place a candidate on one kind of work; the negation gate
+  extends to the new polarities; a derived filter table. Bundle `v3`
+  (prompt v12, schema 4, validator 21); re-extracts.
 - `superpowers/specs/2026-09-22-parsing-contract-v3-design.md` — **approved
   2026-09-22, amends v2**: the parser stops issuing verdicts — importance
   and proficiency labels leave the contract in favour of a code-derived
