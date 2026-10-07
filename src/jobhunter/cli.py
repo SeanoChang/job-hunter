@@ -479,6 +479,14 @@ def _pulse_since(value: str, output: str | None) -> str:
              output=output, hint="e.g. 2026-09-01T00:00:00Z, or 24h")
 
 
+def _area_label(area: dict[str, Any]) -> str:
+    """One digest area for the pulse table. A schema-3 area carries `modality`
+    (the posting's own quote, or None) instead of `importance`; it prints the
+    quote when there is one and no bracket otherwise, never a verdict."""
+    label = area.get("modality") if "modality" in area else area.get("importance")
+    return f"{area['name']} [{label}]" if label else str(area["name"])
+
+
 def _pulse_human(payload: dict[str, Any], truncated: bool) -> str:
     events = payload["events"]
     kinds = ("opened", "changed", "closed", "reopened")
@@ -496,10 +504,12 @@ def _pulse_human(payload: dict[str, Any], truncated: bool) -> str:
         lines.append(line)
         summary = e.get("profile")
         if summary:
-            areas = ", ".join(f"{a['name']} [{a['importance']}]" for a in summary["areas"][:3])
+            areas = ", ".join(_area_label(a) for a in summary["areas"][:3])
             lines.append(f"      {areas}" if areas else "      (no areas)")
             if summary["mentions"]:
-                lines.append(f"      mentions: {', '.join(summary['mentions'])}")
+                omitted = summary.get("mentions_omitted") or 0
+                more = f" (+{omitted} more)" if omitted else ""
+                lines.append(f"      mentions: {', '.join(summary['mentions'])}{more}")
     if truncated:
         lines.append("  ... truncated: call again to continue")
     attention = payload["attention"]

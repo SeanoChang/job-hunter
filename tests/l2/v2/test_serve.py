@@ -383,14 +383,108 @@ def test_mention_rows_for_a_schema_3_record_carry_the_sentinel(
     ]
 
 
-def test_summary_of_a_schema_3_record_groups_under_the_sentinel(
-    v3_record: dict[str, Any],
-) -> None:
-    """`summary` already read both verdicts defensively; this pins that a
-    schema-3 blob summarizes rather than raising or inventing a level."""
+def _s3_statement(sid: str, kind: str, topic: str, modal: str | None = None) -> dict[str, Any]:
+    """A schema-3 statement as the stored blob carries it: no verdict fields."""
+    refs = [{"block_id": "b000001", "text": modal, "occurrence": 0}] if modal else None
+    return {"id": sid, "kind": kind, "topic": topic, "modality_evidence": refs}
+
+
+def _s3_blob(statements: list[dict[str, Any]],
+             mentions: tuple[tuple[str, list[str]], ...] | list[tuple[str, list[str]]] = (),
+             ) -> dict[str, Any]:
+    return {
+        "schema": "3",
+        "statements": statements,
+        "mentions": [{"surface": s, "statement_ids": ids} for s, ids in mentions],
+        "facts": {"entries": []},
+    }
+
+
+def test_summary_of_a_schema_3_record_issues_no_verdict(v3_record: dict[str, Any]) -> None:
+    """Schema 3 removed `importance` (parsing contract v3 §2.1). The digest used
+    to fill the gap with `NO_IMPORTANCE`, so every area of every v11 profile
+    read "contextual" — a verdict the record never issued. A schema-3 area
+    carries the posting's own modal quote instead, and no importance key."""
     out = serve.summary(serve.profile_of(v3_record))
-    assert out["areas"] == [{"name": "Sales experience", "kind": "qualification",
-                             "importance": serve.NO_IMPORTANCE, "level": None}]
+    assert all("importance" not in area for area in out["areas"])
+    assert [a["kind"] for a in out["areas"]] == ["qualification"]
+
+
+def test_schema_3_areas_group_by_kind_and_the_quoted_modal_phrase() -> None:
+    blob = _s3_blob([
+        _s3_statement("s1", "qualification", "Python", "Required"),
+        _s3_statement("s2", "qualification", "Data structures", "required:"),
+        _s3_statement("s3", "qualification", "Kubernetes", "a plus"),
+        _s3_statement("s4", "qualification", "Bachelor's degree"),
+        _s3_statement("s5", "responsibility", "Build services"),
+    ])
+    assert serve.summary(blob)["areas"] == [
+        {"name": "Python, Data structures", "kind": "qualification",
+         "modality": "required", "level": None},
+        {"name": "Kubernetes", "kind": "qualification", "modality": "plus", "level": None},
+        {"name": "Bachelor's degree", "kind": "qualification", "modality": None, "level": None},
+        {"name": "Build services", "kind": "responsibility", "modality": None, "level": None},
+    ]
+
+
+@pytest.mark.parametrize(("quote", "label"), [
+    ("**Preferred skills and experience:**", "preferred"),
+    ("Applicant must be", "must"),
+    ("(Required)", "required"),
+    ("What we require", "require"),
+    ("Nice to have", "nice to have"),
+    ("Ideally you have", "ideally"),
+])
+def test_a_schema_3_area_is_labelled_by_the_modal_term_its_quote_carries(
+    quote: str, label: str,
+) -> None:
+    """The live quotes carry headings, bold markers and the words around the
+    modal term ("**Preferred skills and experience:**", "Applicant must be"),
+    so grouping on the raw quote splits one strength into many labels. The
+    label is the code-owned lexicon term the quote contains (spec §7)."""
+    blob = _s3_blob([_s3_statement("s", "qualification", "x", quote)])
+    assert serve.summary(blob)["areas"][0]["modality"] == label
+
+
+def test_a_quote_with_no_lexicon_term_keeps_its_cleaned_text() -> None:
+    blob = _s3_blob([_s3_statement("s", "qualification", "x", "**Essential:**")])
+    assert serve.summary(blob)["areas"][0]["modality"] == "essential"
+
+
+def test_schema_3_skills_come_only_from_qualifications_and_responsibilities() -> None:
+    """Mentions are every name the model linked, with no type, so the digest
+    listed Toronto (a location in an availability line) and Lyft (the employer)
+    as skills. Until v12 types them, a schema-3 digest lists only mentions
+    linked to a qualification or a responsibility statement."""
+    blob = _s3_blob(
+        [
+            _s3_statement("q", "qualification", "Python"),
+            _s3_statement("r", "responsibility", "Deploy Kafka"),
+            _s3_statement("loc", "employment_constraint", "Toronto availability"),
+            _s3_statement("pay", "compensation_statement", "Toronto pay range"),
+            _s3_statement("emp", "employer_context", "About Lyft"),
+        ],
+        [("Python", ["q"]), ("Toronto", ["loc"]), ("Kafka", ["r"]),
+         ("Toronto", ["pay"]), ("Lyft", ["emp"]), ("Docker", ["loc", "r"])],
+    )
+    assert serve.summary(blob)["mentions"] == ["Python", "Kafka", "Docker"]
+
+
+def test_schema_3_digest_says_how_many_skills_it_left_out() -> None:
+    """The bound stays (pulse inlines the digest per event), but a schema-3
+    digest no longer drops skills in silence: REST and Groovy fell off the
+    Visa digest with no sign they existed."""
+    surfaces = [f"skill{i}" for i in range(serve.MAX_MENTIONS + 3)]
+    blob = _s3_blob([_s3_statement("q", "qualification", "skills")],
+                    [(s, ["q"]) for s in surfaces])
+    out = serve.summary(blob)
+    assert out["mentions"] == surfaces[: serve.MAX_MENTIONS]
+    assert out["mentions_omitted"] == 3
+
+
+def test_a_schema_3_digest_within_the_bound_omits_nothing() -> None:
+    blob = _s3_blob([_s3_statement("q", "qualification", "Python")], [("Python", ["q"])])
+    assert serve.summary(blob)["mentions_omitted"] == 0
 
 
 # --- the marker's readers ----------------------------------------------------

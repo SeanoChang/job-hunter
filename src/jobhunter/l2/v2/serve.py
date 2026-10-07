@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from jobhunter.l2.v2.migrate import MODAL_LEXICON
 from jobhunter.l2.v2.project import mention_rows as _project_rows
 from jobhunter.l2.v2.quality import assess
 from jobhunter.l2.v2.types import NO_IMPORTANCE, PROFICIENCY
@@ -603,12 +604,88 @@ def summary(profile: dict[str, Any]) -> dict[str, Any]:
 
     Reads defensively for the same reason its v1 twin does — a stored blob is
     only guaranteed to match the schema of the day it was written.
+
+    A schema-3 blob summarizes without a verdict: its areas carry the posting's
+    own modal quote (`modality`) in place of `importance`, which the contract
+    removed, so the digest never prints the `NO_IMPORTANCE` sentinel as if the
+    posting had said it. Its skills are the mentions linked to a qualification
+    or responsibility statement, and `mentions_omitted` counts what the bound
+    cut. Schema-2 output is unchanged.
     """
+    statements = profile.get("statements") or []
+    if profile.get("schema") == "3":
+        return {
+            "areas": _areas_s3(statements),
+            **_skills_s3(profile.get("mentions") or [], statements),
+            "facts": _facts(profile.get("facts") or {}),
+        }
     return {
-        "areas": _areas(profile.get("statements") or []),
+        "areas": _areas(statements),
         "mentions": _mentions(profile.get("mentions") or []),
         "facts": _facts(profile.get("facts") or {}),
     }
+
+
+#: The statement kinds a schema-3 mention must link to for the digest to list
+#: it as a skill. Mentions carry no entity type until the v12 contract, so a
+#: location in an availability line or the employer's own name would otherwise
+#: read as a skill.
+SKILL_STATEMENT_KINDS = frozenset({"qualification", "responsibility"})
+
+
+def _modal_label(quote: str | None) -> str | None:
+    """The label a schema-3 area groups under: the code-owned lexicon term the
+    quote contains (earliest in the quote, the longer on a tie, so "required"
+    beats "require"), or the quote with its markup and edge punctuation
+    stripped when it carries none. Live quotes include headings and the words
+    around the term ("**Preferred skills and experience:**"), and grouping on
+    them raw splits one strength into many labels."""
+    if not quote:
+        return None
+    folded = quote.casefold()
+    hits = [(folded.find(term), -len(term), term) for term in MODAL_LEXICON if term in folded]
+    if hits:
+        return min(hits)[2]
+    cleaned = quote.replace("*", "").strip(" \t()[]:.;,").casefold()
+    return cleaned or None
+
+
+def _areas_s3(statements: list[Any]) -> list[dict[str, Any]]:
+    """Schema-3 areas: statements grouped by kind and the modal term the
+    posting's own quote carries, in document order. A group with no quoted
+    phrase says `None`, never a verdict."""
+    groups: dict[tuple[Any, str | None], dict[str, None]] = {}
+    for statement in statements:
+        if not isinstance(statement, dict):
+            continue
+        key = (statement.get("kind"), _modal_label(_modality_of(statement)))
+        topics = groups.setdefault(key, {})
+        topic = statement.get("topic")
+        if isinstance(topic, str) and topic:
+            topics.setdefault(topic, None)
+    return [
+        {"name": ", ".join(topics), "kind": kind, "modality": modal, "level": None}
+        for (kind, modal), topics in groups.items()
+    ]
+
+
+def _skills_s3(mentions: list[Any], statements: list[Any]) -> dict[str, Any]:
+    """The digest's skills for a schema-3 blob, and how many the bound cut."""
+    skill_ids = {
+        s.get("id") for s in statements
+        if isinstance(s, dict) and s.get("kind") in SKILL_STATEMENT_KINDS
+    }
+    seen: dict[str, None] = {}
+    for mention in mentions:
+        if not isinstance(mention, dict):
+            continue
+        surface = mention.get("surface")
+        linked = mention.get("statement_ids") or []
+        if isinstance(surface, str) and surface and skill_ids.intersection(linked):
+            seen.setdefault(surface, None)
+    surfaces = list(seen)
+    return {"mentions": surfaces[:MAX_MENTIONS],
+            "mentions_omitted": max(0, len(surfaces) - MAX_MENTIONS)}
 
 
 def _areas(statements: list[Any]) -> list[dict[str, Any]]:

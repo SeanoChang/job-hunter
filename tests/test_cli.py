@@ -869,3 +869,31 @@ def test_skill_piped_writes_an_installable_file() -> None:
 def test_skill_json_wraps_the_markdown() -> None:
     body = json.loads(runner.invoke(cli.app, ["skill", "-o", "json"]).stdout)
     assert body["ok"] is True and body["data"]["markdown"].startswith("---")
+
+
+def test_pulse_human_prints_a_schema_3_digest_without_a_verdict() -> None:
+    """The pulse table printed `[importance]` per area. A schema-3 area has no
+    importance, so it prints the posting's own modal quote when one exists and
+    no bracket when none does; skills cut by the bound say how many."""
+    payload = {
+        "window": {"from": "a", "to": "b"}, "first_run": False,
+        "attention": {"unhealthy_boards": [], "extraction": None},
+        "events": [{
+            "kind": "opened", "company": "Visa", "title": "SWE Intern",
+            "closed_between": None,
+            "profile": {
+                "areas": [
+                    {"name": "Java, Python", "kind": "qualification",
+                     "modality": "required", "level": None},
+                    {"name": "Build tools", "kind": "responsibility",
+                     "modality": None, "level": None},
+                ],
+                "mentions": ["Java", "Python"], "mentions_omitted": 3,
+                "facts": {"compensation": [], "experience_months": None, "deadline": None},
+            },
+        }],
+    }
+    out = cli._pulse_human(payload, truncated=False)
+    assert "Java, Python [required], Build tools" in out
+    assert "None" not in out
+    assert "mentions: Java, Python (+3 more)" in out
