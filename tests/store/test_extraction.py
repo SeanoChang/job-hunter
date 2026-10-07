@@ -428,3 +428,102 @@ def test_the_runners_serving_predicate_is_extractions_own() -> None:
         f"runner.py carries no `.status in {sorted(extraction.SERVING_STATUSES)}` literal; "
         f"the status tuples it does test against are {[sorted(f) for f in found]}"
     )
+
+
+# --- profile_authorization: the sponsorship filter's table (contract v4 §5) --
+
+
+def _authorization_rows(pg: Conn) -> list[tuple[str, str, str, bool]]:
+    rows = pg.execute(
+        "SELECT document_hash, model, sponsorship, citizenship_required"
+        " FROM profile_authorization ORDER BY document_hash, model"
+    ).fetchall()
+    return [(r["document_hash"], r["model"], r["sponsorship"], r["citizenship_required"])
+            for r in rows]
+
+
+def _v4_blob(case: str = "visa") -> tuple[dict[str, Any], list[tuple[str, str, str]]]:
+    """A settled §7 case as the runner hands it to the store: visa (no),
+    may_sponsor (yes), anduril (undeclared, citizenship required)."""
+    from jobhunter.l2.v2 import serve
+    from tests.l2.v2.v4_serving import v4_record
+
+    record = v4_record(case)
+    return serve.profile_of(record), serve.mention_rows(record)
+
+
+def test_profile_authorization_is_written_beside_the_mentions(pg: Conn) -> None:
+    """One row per (document, engine tuple), from the same write that refills
+    profile_mentions, and only for a schema-4 blob that carries the derived
+    authorization."""
+    dh = "d" * 63 + "1"
+    key: dict[str, Any] = {"document_hash": dh, "model": "z-ai/glm-5.2:free", **V3_CONFIG}
+    att = _chosen(pg, dh)
+    profile, mentions = _v4_blob("anduril")
+    extraction.upsert_state(
+        pg, **key, state=DerivedState("needs_review", att), profile=profile,
+        mentions=mentions, updated_at="2026-10-07T00:00:00Z",
+    )
+    assert _authorization_rows(pg) == [(dh, "z-ai/glm-5.2:free", "undeclared", True)]
+    row = pg.execute("SELECT * FROM profile_authorization").fetchone()
+    assert row is not None and row["schema_version"] == V3_CONFIG["schema_version"]
+    assert row["prompt_version"] == PROMPT_VERSION
+    assert row["validator_version"] == VALIDATOR_VERSION
+
+    # a re-extraction rewrites the row, never adds a second one
+    profile, mentions = _v4_blob("may_sponsor")
+    extraction.upsert_state(
+        pg, **key, state=DerivedState("validated", att), profile=profile,
+        mentions=mentions, updated_at="2026-10-07T01:00:00Z",
+    )
+    assert _authorization_rows(pg) == [(dh, "z-ai/glm-5.2:free", "yes", False)]
+
+
+def test_profile_authorization_follows_the_extraction_row(pg: Conn) -> None:
+    dh = "d" * 63 + "1"
+    att = _chosen(pg, dh)
+    profile, mentions = _v4_blob()
+    for model in ("z-ai/glm-5.2:free", "z-ai/glm-5.2"):
+        extraction.upsert_state(
+            pg, document_hash=dh, model=model, **V3_CONFIG,
+            state=DerivedState("validated", att), profile=profile, mentions=mentions,
+            updated_at="2026-10-07T00:00:00Z",
+        )
+    # the stale model spelling went with its extractions row
+    assert _authorization_rows(pg) == [(dh, "z-ai/glm-5.2", "no", False)]
+
+    other = dict(V3_CONFIG, prompt_version="demand-profile/vOTHER")
+    extraction.upsert_state(
+        pg, document_hash=dh, model="z-ai/glm-5.2", **other,
+        state=DerivedState("validated", att), profile=profile, mentions=mentions,
+        updated_at="2026-10-07T00:00:00Z",
+    )
+    assert len(_authorization_rows(pg)) == 2  # a second tuple is a second reading
+
+    extraction.upsert_state(  # a quarantined row asserts nothing, blob or not
+        pg, document_hash=dh, model="z-ai/glm-5.2", **other,
+        state=DerivedState("quarantined", None), profile=profile, mentions=mentions,
+        updated_at="2026-10-07T01:00:00Z",
+    )
+    assert len(_authorization_rows(pg)) == 1
+
+    extraction.upsert_state(  # back to pending: the config's row goes entirely
+        pg, document_hash=dh, model="z-ai/glm-5.2", **V3_CONFIG,
+        state=DerivedState(None, None), profile=None, updated_at="2026-10-07T02:00:00Z",
+    )
+    assert _authorization_rows(pg) == []
+
+
+def test_a_schema_3_blob_writes_no_authorization_row(pg: Conn) -> None:
+    """Schema 3 has no authorization reading. A missing row is what the filter
+    reads as "not extracted", which is the truth for that partition."""
+    dh = "d" * 63 + "1"
+    att = _chosen(pg, dh)
+    profile, mentions = _serving_blob()
+    extraction.upsert_state(
+        pg, document_hash=dh, model="z-ai/glm-5.2:free", **V3_CONFIG,
+        state=DerivedState("validated", att), profile=profile, mentions=mentions,
+        updated_at="2026-10-07T00:00:00Z",
+    )
+    assert len(_mentions(pg)) == 2
+    assert _authorization_rows(pg) == []

@@ -68,13 +68,17 @@ recorded). Cursors are client-side state in `JOB_HUNTER_STATE_DIR` (default
 
 | command | returns |
 | --- | --- |
-| `q postings [--board s:b] [--status open\|closed] [--since 7d] [--search TEXT]` | posting rows, newest first |
+| `q postings [--board s:b] [--status open\|closed] [--since 7d] [--search TEXT] [--sponsorship yes\|no\|undeclared] [--citizenship-required true\|false]` | posting rows, newest first, each with its `sponsorship` and `citizenship_required` reading |
 | `q posting <uid>` | one posting: lifecycle, close interval, versions, events, current document |
 | `q events [--since] [--kind opened,closed] [--board] [--uid]` | raw lifecycle events, oldest first |
 | `q document <hash-prefix> [--slice S:E]` | canonical markdown of one document |
 | `q profile --doc <hash-prefix> [--full]` | the demand profile of one document |
 | `q claims --mention Python [--importance required] [--board]` | who demands one mention, across the corpus |
 | `q boards [--unhealthy]` | per-board health and open counts |
+
+`--sponsorship` and `--citizenship-required` read what the posting states (schema-4
+extractions only); a posting not yet read reports `null` and matches neither. For an
+international student, rule out `--sponsorship no` and `--citizenship-required true`.
 
 Every id the CLI prints, it accepts back: a 12-hex document prefix from any
 listing is a valid `--doc`. `q` and `pulse` only read — they run on a read-only

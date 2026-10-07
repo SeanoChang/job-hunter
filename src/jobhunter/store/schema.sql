@@ -207,6 +207,22 @@ CREATE TABLE IF NOT EXISTS profile_mentions (
 );
 CREATE INDEX IF NOT EXISTS ix_mentions_mention ON profile_mentions (mention, importance);
 
+-- derived from extractions.profile["authorization"] by the same upsert as
+-- profile_mentions; rebuildable (parsing contract v4 §5, migration approved
+-- 2026-10-07). One row per (document, engine tuple) for a serving schema-4
+-- record; a document with no row was not read for authorization under that
+-- tuple, which is not the same as `undeclared`.
+CREATE TABLE IF NOT EXISTS profile_authorization (
+  document_hash        TEXT NOT NULL,
+  model                TEXT NOT NULL,
+  prompt_version       TEXT NOT NULL,
+  schema_version       TEXT NOT NULL,
+  validator_version    TEXT NOT NULL,
+  sponsorship          TEXT NOT NULL CHECK (sponsorship IN ('yes', 'no', 'undeclared')),
+  citizenship_required BOOLEAN NOT NULL,
+  PRIMARY KEY (document_hash, model, prompt_version, schema_version, validator_version)
+);
+
 -- server-side pulse watermarks for the MCP wrapper (spec 2026-09-02 §3);
 -- writer: store/mcp_state.py under the jobhunter_mcp role. The CLI keeps its
 -- own cursors on the client (cursors.py); only the hosted server writes here.

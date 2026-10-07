@@ -281,6 +281,31 @@ def test_a_needs_review_extraction_is_inlined_and_labelled(
     assert by_uid[("ab:ramp:y", "changed")]["extraction_status"] is None
 
 
+def test_a_schema_4_extraction_inlines_its_authorization(
+    penv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parsing contract v4 §5: `authorization` on pulse events, through the
+    same digest `q profile` serves, and only the skill-typed mentions."""
+    from tests.l2.v2.conftest import VISA_POLICY
+    from tests.l2.v2.v4_serving import v4_record
+    from tests.test_cli_q import _seed_v3_profile
+
+    row = pg.execute(
+        "SELECT d.document_hash FROM postings p"
+        " JOIN documents d ON d.version_hash = p.current_version_hash"
+        " WHERE p.uid = 'ab:ramp:x'"
+    ).fetchone()
+    assert row is not None
+    _seed_v3_profile(pg, str(row["document_hash"]), monkeypatch,
+                     record=v4_record("visa"))
+    payload, _ = _build(pg, wm=Watermark((DAY1 - timedelta(seconds=1)).isoformat(), ()))
+    by_uid = {(e["uid"], e["kind"]): e for e in payload["events"]}
+    digest = by_uid[("ab:ramp:x", "changed")]["profile"]
+    assert digest["authorization"]["sponsorship"] == "no"
+    assert digest["authorization"]["quotes"]["sponsorship"] == VISA_POLICY
+    assert digest["mentions"] == ["Kafka", "Docker", "Kubernetes"]
+
+
 def test_attention_reports_unhealthy_boards_and_the_extraction_block(
     penv: Path, pg: psycopg.Connection[dict[str, Any]]
 ) -> None:

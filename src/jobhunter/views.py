@@ -53,19 +53,41 @@ class Page:
 
 def postings_view(
     conn: Conn,
+    settings: Settings,
     *,
     source: str | None = None,
     board: str | None = None,
     status: str | None = None,
     since: datetime | None = None,
     search: str | None = None,
+    sponsorship: str | None = None,
+    citizenship_required: bool | None = None,
     limit: int = 50,
     after: str | None = None,
 ) -> Page:
     """Postings newest first. The cursor is built from the last row actually
-    emitted — never from a row the reader never saw."""
+    emitted — never from a row the reader never saw.
+
+    `sponsorship` and `citizenship_required` filter on the derived
+    authorization reading (parsing contract v4 §5) under the engine tuple in
+    force, and every row reports that reading — null when the posting's current
+    document has none under the tuple, which no filter value matches. ValueError
+    for a sponsorship value outside the vocabulary."""
+    from jobhunter.l2.state import globs_to_regex
+    from jobhunter.markdown import NORMALIZER_VERSION
+    from jobhunter.store.extraction import SPONSORSHIP
+
+    if sponsorship is not None and sponsorship not in SPONSORSHIP:
+        raise ValueError(f"sponsorship must be one of {', '.join(SPONSORSHIP)}: {sponsorship!r}")
+    prompt_version, schema_version, validator_version = active_tuple(settings)
+    engine = {
+        "model_regex": globs_to_regex(settings.l2_models), "prompt_version": prompt_version,
+        "schema_version": schema_version, "validator_version": validator_version,
+        "normalizer_version": NORMALIZER_VERSION,
+    }
     rows = queries.postings_page(
-        conn, source=source, board=board, status=status, since=since, search=search,
+        conn, engine=engine, source=source, board=board, status=status, since=since,
+        search=search, sponsorship=sponsorship, citizenship_required=citizenship_required,
         limit=limit, after=after)
     truncated = len(rows) > limit
     rows = rows[:limit]
@@ -74,7 +96,8 @@ def postings_view(
          "title": r["title"], "company": r["company"], "url": r["url"],
          "first_seen_at": iso(r["first_seen_at"]), "last_seen_at": iso(r["last_seen_at"]),
          "version_count": r["version_count"], "reopen_count": r["reopen_count"],
-         "closed_between": closed_between(r)}
+         "closed_between": closed_between(r),
+         "sponsorship": r["sponsorship"], "citizenship_required": r["citizenship_required"]}
         for r in rows
     ]
     cursor = (f"{rows[-1]['first_seen_at'].isoformat()}|{rows[-1]['uid']}"

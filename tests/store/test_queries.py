@@ -26,6 +26,10 @@ from tests.store.helpers import ab_record, board_payload, make_manifest, write_r
 DAY0 = datetime(2026, 8, 18, 6, tzinfo=UTC)
 DAY1 = DAY0 + timedelta(days=1)
 DAY2 = DAY0 + timedelta(days=2)
+# the engine tuple `views.postings_view` scopes the authorization columns to;
+# nothing here is extracted, so every row reads null in both
+ENGINE = {"model_regex": ".*", "prompt_version": "p", "schema_version": "4",
+          "validator_version": "v", "normalizer_version": "md/1"}
 
 
 def test_queries(tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]) -> None:
@@ -116,7 +120,7 @@ def test_postings_page_keyset_pagination(
     tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]
 ) -> None:
     _corpus(pg, tmp_path)
-    page1 = postings_page(pg, limit=2)
+    page1 = postings_page(pg, engine=ENGINE, limit=2)
     assert len(page1) == 3  # limit + 1: the caller learns it truncated
     emitted = page1[:2]
     assert [r["uid"] for r in emitted] == ["ab:ramp:w", "ab:ramp:z"]
@@ -126,31 +130,32 @@ def test_postings_page_keyset_pagination(
     assert emitted[0]["version_count"] == 1 and emitted[0]["reopen_count"] == 0
     assert emitted[0]["first_seen_at"] == DAY1 and emitted[0]["last_seen_at"] == DAY2
     cursor = f"{emitted[-1]['first_seen_at'].isoformat()}|{emitted[-1]['uid']}"
-    page2 = postings_page(pg, limit=2, after=cursor)
+    page2 = postings_page(pg, engine=ENGINE, limit=2, after=cursor)
     assert [r["uid"] for r in page2] == ["ab:ramp:y", "ab:ramp:x"]  # no overlap, page exhausted
 
 
 def test_postings_page_filters(tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]) -> None:
     _corpus(pg, tmp_path)
-    closed = postings_page(pg, status="closed")
+    closed = postings_page(pg, engine=ENGINE, status="closed")
     assert [r["uid"] for r in closed] == ["ab:ramp:y"]
     assert closed[0]["closed_lower_at"] == DAY1 and closed[0]["closed_upper_at"] == DAY2
-    assert {r["uid"] for r in postings_page(pg, status="open")} == {
+    assert {r["uid"] for r in postings_page(pg, engine=ENGINE, status="open")} == {
         "ab:ramp:x", "ab:ramp:z", "ab:ramp:w",
     }
-    assert [r["uid"] for r in postings_page(pg, since=DAY1)] == ["ab:ramp:w"]
-    assert postings_page(pg, source="greenhouse") == []
-    assert postings_page(pg, board="palantir") == []
-    assert len(postings_page(pg, source="ashby", board="ramp")) == 4
+    assert [r["uid"] for r in postings_page(pg, engine=ENGINE, since=DAY1)] == ["ab:ramp:w"]
+    assert postings_page(pg, engine=ENGINE, source="greenhouse") == []
+    assert postings_page(pg, engine=ENGINE, board="palantir") == []
+    assert len(postings_page(pg, engine=ENGINE, source="ashby", board="ramp")) == 4
 
 
 def test_postings_page_search_is_case_insensitive_over_title_and_company(
     tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]
 ) -> None:
     _corpus(pg, tmp_path)
-    assert [r["uid"] for r in postings_page(pg, search="rust")] == ["ab:ramp:x"]
-    assert len(postings_page(pg, search="rAmP")) == 4  # company matches every posting
-    assert postings_page(pg, search="kubernetes") == []
+    assert [r["uid"] for r in postings_page(pg, engine=ENGINE, search="rust")] == ["ab:ramp:x"]
+    # the company matches every posting
+    assert len(postings_page(pg, engine=ENGINE, search="rAmP")) == 4
+    assert postings_page(pg, engine=ENGINE, search="kubernetes") == []
 
 
 def test_posting_detail(tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]) -> None:

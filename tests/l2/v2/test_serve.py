@@ -503,7 +503,7 @@ def test_the_stamp_readers_recognise_every_shape_this_module_serves(
     assert serve.reads_as_v2(serve.profile_of(v3_record))
     assert serve.reads_as_v2(serve.profile_of(v2_record))
     assert not serve.reads_as_v2({"demand_profile": {"areas": []}})  # a v1 blob
-    assert sorted(serve.V2_SHAPES) == ["2", "3"]
+    assert sorted(serve.V2_SHAPES) == ["2", "3", "4"]
 
 
 def test_pulse_summarises_a_schema_3_blob_through_the_v2_projection(
