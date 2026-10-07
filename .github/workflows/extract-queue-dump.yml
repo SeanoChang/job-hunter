@@ -11,6 +11,9 @@ on:
       pool:
         description: "queue = never-extracted; quarantined = retry pool (open postings whose current-tuple row is quarantined)"
         default: "queue"
+      bundle:
+        description: "Engine tuple the queue is computed under (l2/bundles.py); the drain must use the same"
+        default: "v1"
 permissions:
   contents: read
 jobs:
@@ -30,17 +33,21 @@ jobs:
           JOB_HUNTER_L2_MODELS: ${{ vars.JOB_HUNTER_L2_MODELS }}
           COUNT: ${{ github.event.inputs.count }}
           POOL: ${{ github.event.inputs.pool }}
+          BUNDLE: ${{ github.event.inputs.bundle }}
         run: |
           uv run python - <<'EOF'
           import json, os
 
-          from jobhunter.l2.prompt import PROMPT_VERSION
-          from jobhunter.l2.runner import SCHEMA_VERSION
+          from jobhunter.l2.bundles import get_bundle
           from jobhunter.l2.state import globs_to_regex
-          from jobhunter.l2.transforms import VALIDATOR_VERSION
           from jobhunter.markdown import NORMALIZER_VERSION
           from jobhunter.store import db, extraction
 
+          # the tuple the drain will extract under: the queue is keyed by it
+          bundle = get_bundle(os.environ.get("BUNDLE") or "v1")
+          PROMPT_VERSION = bundle.prompt_version
+          SCHEMA_VERSION = bundle.schema_version
+          VALIDATOR_VERSION = bundle.validator_version
           conn = db.connect(os.environ["JOB_HUNTER_DATABASE_URL"])
           globs = tuple(os.environ["JOB_HUNTER_L2_MODELS"].split(","))
           if os.environ.get("POOL") == "quarantined":
@@ -78,7 +85,8 @@ jobs:
                   row = {"document_hash": dh, "markdown": md,
                          "next_attempt_no": extraction.next_attempt_no(conn, dh)}
                   fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-          print(f"dumped {len(docs)} queued documents")
+          print(f"dumped {len(docs)} queued documents under bundle {bundle.name} "
+                f"({PROMPT_VERSION}, {SCHEMA_VERSION}, {VALIDATOR_VERSION})")
           EOF
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

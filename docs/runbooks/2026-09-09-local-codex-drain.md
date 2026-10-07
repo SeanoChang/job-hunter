@@ -14,11 +14,11 @@ records and settles them.
 
 ```bash
 # 1. dump the queue (hash + markdown + next_attempt_no) as an artifact
-gh workflow run extract-queue-dump.yml -f count=120
+gh workflow run extract-queue-dump.yml -f count=120 -f bundle=v1
 gh run download <run-id> --dir queue-dl
 
 # 2. drain locally through codex-cli (model gpt-5.6-luna, runner-identical loop)
-uv run python scripts/local_codex_drain.py queue-dl/queue-<run-id>/queue.jsonl outbox/ --max-docs 120
+uv run python scripts/local_codex_drain.py queue-dl/queue-<run-id>/queue.jsonl outbox/ --max-docs 120 --bundle v1
 
 # 3. upload: encrypt the outbox, attach to a draft release, ingest
 COPYFILE_DISABLE=1 tar czf outbox.tgz outbox
@@ -40,17 +40,48 @@ startup rather than at the first document:
 
 ```bash
 JOB_HUNTER_L2_BUNDLE=v1   # default — demand-profile/v5, schema 1, transforms.VALIDATOR_VERSION
-JOB_HUNTER_L2_BUNDLE=v2   # demand-profile/v6, schema 2, validator/10 (l2/v2)
+JOB_HUNTER_L2_BUNDLE=v2   # the l2/v2 tuple registered in l2/bundles.py (today demand-profile/v11, schema 3, validator/20)
 ```
 
 The tuple keys the queue, so a flip is a full re-extraction, never a resume:
 every document re-queues under the new tuple and pays a fresh model call.
 
 The setting governs `job-hunter extract run`, and therefore
-`scripts/local_drain_loop.py`, which shells out to it. It does NOT reach
-`scripts/local_codex_drain.py`: the outbox producer in the loop above still
-imports the v1 prompt and `transforms.VALIDATOR_VERSION` directly, so the
-CI-mediated pipeline stays on v1 until that script takes a bundle too.
+`scripts/local_drain_loop.py`, which shells out to it. The outbox path follows
+the bundle too:
+
+- `scripts/local_codex_drain.py --bundle NAME` extracts under that bundle's
+  whole tuple — prompt, version and sha, emit schema, assembly, verification,
+  retry wording — and stamps every attempt object with it. Without `--bundle`
+  it reads `JOB_HUNTER_L2_BUNDLE` (process env, `./.env`, then
+  `~/.config/job-hunter/env`), else v1. It does not need the rest of the
+  settings, so no archive URL is required on the drain machine.
+- `extract-queue-dump.yml` takes a `bundle` input (default `v1`) and computes
+  the queue — and the quarantined retry pool — under that bundle's tuple.
+- `scripts/codex_drain_cycle.py --bundle NAME` (same default) passes one name to
+  both the dump and the drain. Run the manual loop the same way: **the dump
+  and the drain must name the same bundle**, because the queue is keyed by the
+  tuple. A drain under a different tuple than its dump wastes calls on
+  documents that tuple may already have.
+- The "already drained" skip reads the tuple out of each outbox attempt, so an
+  outbox that still holds another tuple's attempts does not make a flipped
+  drain skip a document.
+
+**The audit phase is deferred on the outbox path.** For a bundle with a
+semantic audit (v2), the runner audits the chosen candidate after the samples
+and before settlement, then may run a repair round. The outbox path cannot do
+either: choosing the candidate needs the document's attempt history from the
+database, and `outbox-ingest.yml` only accepts attempt keys, never audit or
+repair artifacts. So the script runs the extraction ladder and the samples
+only, and says `"audit": "deferred"` in its summary line. The ingest's
+catch-up then settles each document with its audit `not_checked`, which is
+the runner's own "auditor unreachable" outcome. Such a row is never
+search-eligible until audited. The next `job-hunter extract run` with a
+document budget above 0 audits `validated` rows in its re-audit pass (one call
+each, from `--max-docs`) and the repair pass follows. A `needs_review` row
+from a sampled cohort is not re-audited automatically; its exit is a human
+`retry`. The ingest's own `--max-docs 0` run makes no engine calls, so it
+does not audit.
 
 A flip has **two** read-path prerequisites, not one. Both were verified in code
 on 2026-09-10, and together they are why cutover is not a pure `.env` edit.
@@ -169,9 +200,12 @@ wrote; both tuples coexist in `extractions` by design.
   `extract-backfill.yml`, dispatch with `mode=rebuild`, disable again) so
   codex only sees documents that genuinely need a model.
 - **Outcome parity is load-bearing.** `scripts/local_codex_drain.py` mirrors
-  `runner._extract_doc` — outcome vocabulary, content retries, transport
-  retries, the 5%/reprompt k-sampling. If the runner's loop changes, change
-  the script in the same commit.
+  `runner._extract_doc` — outcome vocabulary, content retries (including the
+  retry-edits-the-candidate contract and the deletion check), transport
+  retries, the 5% hash-slot k-sampling with its per-slot retries. If the
+  runner's loop changes, change the script in the same commit.
+  `tests/test_local_codex_drain.py` drives both with the same responses under
+  each bundle and fails when their attempts differ.
 - **Only real attempt keys reach the archive.** macOS tar emits AppleDouble
   (`._*`) entries; `COPYFILE_DISABLE=1` suppresses them and the ingest
   additionally drops any key `parse_x_attempt_key` rejects. (The first ingest,
