@@ -661,3 +661,37 @@ def test_tar_ships_exactly_the_listed_members(tmp_path: Path) -> None:
     with tarfile.open(tgz) as tf:
         packed = sorted(m.name for m in tf.getmembers() if m.isfile())
     assert packed == sorted("outbox/" + k for k in keys)
+
+
+def test_the_bundle_reaches_both_the_dump_and_the_drain(tmp_path: Path) -> None:
+    """The queue is keyed by the tuple, so the dump and the drain must agree on
+    it: one `--bundle` goes to both."""
+    fake = FakeRun(docs=[5], drain_codes=[0], blobs_per_drain=1)
+    code = driver.main(
+        _fixture(tmp_path) + ["--pool", "queue", "--cycles", "1", "--bundle", "v2"],
+        run=fake, sleep=lambda _s: None,
+    )
+    assert code == 0
+    assert "bundle=v2" in fake.of_kind("dispatch:extract-queue-dump.yml")[0].argv
+    drain = fake.of_kind("drain")[0].argv
+    assert drain[drain.index("--bundle") + 1] == "v2"
+
+
+def test_the_default_bundle_follows_the_setting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("JOB_HUNTER_L2_BUNDLE", "v2")
+    fake = FakeRun(docs=[5], drain_codes=[0], blobs_per_drain=1)
+    driver.main(_fixture(tmp_path) + ["--pool", "queue", "--cycles", "1"],
+                run=fake, sleep=lambda _s: None)
+    assert "bundle=v2" in fake.of_kind("dispatch:extract-queue-dump.yml")[0].argv
+    drain = fake.of_kind("drain")[0].argv
+    assert drain[drain.index("--bundle") + 1] == "v2"
+
+
+def test_an_unregistered_bundle_fails_before_any_ci_run(tmp_path: Path) -> None:
+    fake = FakeRun(docs=[5])
+    code = driver.main(_fixture(tmp_path) + ["--bundle", "v9"],
+                       run=fake, sleep=lambda _s: None)
+    assert code == 1
+    assert fake.calls == []
