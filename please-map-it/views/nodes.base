@@ -1,8 +1,0 @@
-# Bases syntax is young: open this view in Obsidian and verify it after upgrades.
-# pmi:generated
-filters:
-  and:
-    - file.inFolder("please-map-it")
-views:
-  - type: table
-    name: Nodes

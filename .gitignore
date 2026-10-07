@@ -37,3 +37,6 @@ outbox/
 queue-*.jsonl
 queue.jsonl
 outbox.tgz*
+
+# please-map-it planning state stays local
+please-map-it/
