@@ -79,7 +79,18 @@ from jobhunter.l2.v2.verify import _REQUIREMENT_LANGUAGE
 #       instead, and the scope paragraph says out loud that `search_eligible`
 #       means "faithful extraction", never "these are the true requirements".
 #       Triage and the v3 severity rules are unchanged.
+#   v5: parsing contract v4 §4 — the candidate is a schema-4 record (typed
+#       mentions, authorization presence and its code-derived block, tracks).
+#       v4's codes, severities, triage and judge stand; the template gains one
+#       paragraph (`_SCOPE_V5`) saying three omissions out loud — a named
+#       technology in a responsibility line with no mention, a track list not
+#       recorded as `relations.tracks` (bad_exclusion), an authorization
+#       sentence missing from its presence family — and that a missing mention
+#       or presence entry names no target, so the granularity triage cannot
+#       read it as a quote-length complaint. Track ids become targets. v4 stays
+#       byte-identical beside it: bundle v2 still audits under it.
 AUDIT_VERSION = "semantic-audit/v4"
+AUDIT_VERSION_V5 = "semantic-audit/v5"
 
 # The closed finding vocabulary (spec §4: "Codes cover source insufficiency,
 # omission, unsupported statement, importance, polarity/subject, relationship,
@@ -365,26 +376,105 @@ _HEAD, _rest = TEMPLATE.split("{candidate_hash}", 1)
 _MID_SOURCE, _rest = _rest.split("{source_blocks}", 1)
 _MID_CANDIDATE, _TAIL = _rest.split("{candidate_json}", 1)
 
+# semantic-audit/v5: parsing contract v4 §4, appended after v4's scope
+# paragraph rather than edited into it — v4's bytes are bundle v2's.
+_SCOPE_V5 = """\
+The candidate follows parsing contract v4. Every mention carries a "type"
+(skill, field_of_study, credential, location, organization, other) beside its
+"role"; facts.presence carries three authorization families (sponsorship,
+citizenship, work_authorization) with a bound polarity; relations.tracks holds
+a list of kinds of work the candidate is placed on, or null. The top-level
+"authorization" block is derived by code from the presence families and is
+never a finding; the presence entries it is derived from are.
+
+Three omissions are named here so that none is read as granularity:
+A named technology, tool, language, framework, platform or method in a
+responsibility line that no mention captures is an omission — a duty names
+skills as surely as a requirement does, and an example-project list counts too.
+A sponsorship, citizenship or work-authorization sentence that the matching
+facts.presence family does not record is an omission, whatever statement
+already quotes it. For both, its targets stay empty: the statement holding the
+line captured the clause, not the name or the policy, and naming it would read
+as a complaint about quote length. And a track list that was not recorded as
+relations.tracks is bad_exclusion, whether it was dropped or flattened into
+unconditional duties; an "Open" or undecided option left out of tracks counts.
+
+A mention whose "type" misnames what it is (a city typed skill, a degree typed
+skill) is mention_linkage. A sponsorship or citizenship polarity that reads the
+sentence the wrong way round is polarity_subject. A statement linked to the
+wrong track, or a track that never was, is relationship.
+"""
+
+TEMPLATE_V5 = (
+    _GUARD
+    + "\n"
+    + _AUDITOR
+    + "\n"
+    + _SCOPE
+    + "\n"
+    + _SCOPE_V5
+    + "\n"
+    + _EMIT_FORMAT_NOTE
+    + "\n"
+    + "CANDIDATE HASH: {candidate_hash}\n\n"
+    + "DOCUMENT (numbered source blocks):\n"
+    + "<<<SOURCE BLOCKS\n"
+    + "{source_blocks}\n"
+    + "SOURCE BLOCKS>>>\n\n"
+    + "CANDIDATE EXTRACTION (untrusted data):\n"
+    + "<<<CANDIDATE JSON\n"
+    + "{candidate_json}\n"
+    + "CANDIDATE JSON>>>\n"
+)
+
+
+def _parts(template: str) -> tuple[str, str, str, str]:
+    head, rest = template.split("{candidate_hash}", 1)
+    mid_source, rest = rest.split("{source_blocks}", 1)
+    mid_candidate, tail = rest.split("{candidate_json}", 1)
+    return head, mid_source, mid_candidate, tail
+
+
+_PARTS_V5 = _parts(TEMPLATE_V5)
+
 
 def template_sha() -> str:
     return sha256_hex(TEMPLATE.encode("utf-8"))
 
 
-def render(markdown: str, candidate_hash: str, record: dict[str, Any]) -> str:
-    """The audit prompt for one candidate: its hash, the numbered `blocks/1`
-    listing of the full source, and the candidate's extraction content."""
+def template_sha_v5() -> str:
+    return sha256_hex(TEMPLATE_V5.encode("utf-8"))
+
+
+def _render(
+    parts: tuple[str, str, str, str], markdown: str, candidate_hash: str,
+    record: dict[str, Any],
+) -> str:
+    head, mid_source, mid_candidate, tail = parts
     source_blocks = "\n".join(f"{b.id}: {b.text}" for b in annotate(markdown))
     candidate = {k: v for k, v in record.items() if k not in _NOT_SENT}
     candidate_json = json.dumps(candidate, indent=2, sort_keys=True, ensure_ascii=False)
     return (
-        _HEAD
+        head
         + candidate_hash
-        + _MID_SOURCE
+        + mid_source
         + source_blocks
-        + _MID_CANDIDATE
+        + mid_candidate
         + candidate_json
-        + _TAIL
+        + tail
     )
+
+
+def render(markdown: str, candidate_hash: str, record: dict[str, Any]) -> str:
+    """The audit prompt for one candidate: its hash, the numbered `blocks/1`
+    listing of the full source, and the candidate's extraction content."""
+    return _render((_HEAD, _MID_SOURCE, _MID_CANDIDATE, _TAIL), markdown, candidate_hash,
+                   record)
+
+
+def render_v5(markdown: str, candidate_hash: str, record: dict[str, Any]) -> str:
+    """`render` over the semantic-audit/v5 bytes (a schema-4 candidate)."""
+    return _render(_PARTS_V5, markdown, candidate_hash, record)
 
 
 def _reference_schema() -> dict[str, Any]:
@@ -432,9 +522,19 @@ def emit_schema() -> dict[str, Any]:
     `judge`, so a 64-hex string transcribed by the model bought no binding —
     and cost the whole audit whenever it was mistyped.
     """
+    return _emit_schema(AUDIT_VERSION)
+
+
+def emit_schema_v5() -> dict[str, Any]:
+    """semantic-audit/v5's finding schema: v4's shape, its own title. The codes
+    and the reference grammar did not change; the version did."""
+    return _emit_schema(AUDIT_VERSION_V5)
+
+
+def _emit_schema(version: str) -> dict[str, Any]:
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "job-hunter L2 semantic audit emit schema (semantic-audit/v4)",
+        "title": f"job-hunter L2 semantic audit emit schema ({version})",
         "type": "object",
         "additionalProperties": False,
         "required": ["findings", "unresolved"],
@@ -539,6 +639,12 @@ def _objects(record: dict[str, Any]) -> list[dict[str, Any]]:
     nodes += _listed(facts.get("entries"))
     nodes += _listed(record.get("mentions"))
     nodes += _listed(record.get("areas"))
+    # schema 4 (semantic-audit/v5): track items are id-bearing objects that
+    # cite their own name and list item; null tracks, and every older shape,
+    # add nothing
+    tracks = relations.get("tracks")
+    if isinstance(tracks, dict):
+        nodes += _listed(tracks.get("items"))
     return [n for n in nodes if isinstance(n, dict) and isinstance(n.get("id"), str)]
 
 

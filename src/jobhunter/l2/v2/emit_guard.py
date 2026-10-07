@@ -13,7 +13,10 @@ schema, so anything this guard admits remains contract-valid.
 Schema 3 (parsing contract v3 §2.1) deletes both fields that union
 discriminates on, so the statement passes through untightened there; the
 fact-entry and accounting-row tightenings are statements about shapes schema 3
-kept, and apply to both. `engine_emit_schema` takes the version rather than
+kept, and apply to both. Schema 4 (parsing contract v4 §2.1) keeps schema 3's
+statement and adds the authorization presence families, whose state↔evidence
+and state↔polarity rules are conditionals again — so under "4" alone those two
+definitions become unions too. `engine_emit_schema` takes the version rather than
 assuming one, because the bundle — not this module — decides which contract a
 run emits under.
 """
@@ -116,6 +119,42 @@ def _accounting_variants(entry: dict[str, Any]) -> list[dict[str, Any]]:
     return variants
 
 
+def _authorization_variants(entry: dict[str, Any], *, polarized: bool) -> list[dict[str, Any]]:
+    """Schema 4's authorization presence rules (contract v4 §2.1; verify's
+    `_check_authorization`): stated/unresolved ⇒ evidence present; none_found ⇒
+    evidence, polarity and polarity_evidence all null; and, for sponsorship and
+    citizenship, a stated entry says which way it reads (a stated entry with no
+    polarity can only ever derive `undeclared`, which is the reading the
+    model would have written as none_found or ambiguous)."""
+    null = {"type": "null"}
+    evidence_present = {"$ref": "#/$defs/evidence"}
+    props = entry["properties"]
+    readings = [p for p in props["polarity"].get("enum", []) if p is not None]
+    shapes: list[dict[str, Any]] = [
+        {"state": {"type": "string", "enum": ["none_found"]}, "evidence": null,
+         "polarity": null, "polarity_evidence": null},
+    ]
+    if polarized:
+        shapes += [
+            {"state": {"type": "string", "enum": ["stated"]}, "evidence": evidence_present,
+             "polarity": {"type": "string", "enum": readings}},
+            {"state": {"type": "string", "enum": ["unresolved"]},
+             "evidence": evidence_present,
+             "polarity": {"type": ["string", "null"], "enum": [*readings, None]}},
+        ]
+    else:
+        shapes.append(
+            {"state": {"type": "string", "enum": ["stated", "unresolved"]},
+             "evidence": evidence_present},
+        )
+    variants = []
+    for shape in shapes:
+        v = copy.deepcopy(entry)
+        v["properties"].update(copy.deepcopy(shape))
+        variants.append(v)
+    return variants
+
+
 def engine_emit_schema(schema_version: str = "2") -> dict[str, Any]:
     """The emit schema an engine is handed for `schema_version`.
 
@@ -137,4 +176,13 @@ def engine_emit_schema(schema_version: str = "2") -> dict[str, Any]:
     schema["$defs"]["accounting_entry"] = {
         "anyOf": _accounting_variants(schema["$defs"]["accounting_entry"])
     }
+    if schema_version == "4":
+        defs = schema["$defs"]
+        defs["authorization_presence"] = {
+            "anyOf": _authorization_variants(defs["authorization_presence"], polarized=True)
+        }
+        defs["work_authorization_presence"] = {
+            "anyOf": _authorization_variants(
+                defs["work_authorization_presence"], polarized=False)
+        }
     return schema

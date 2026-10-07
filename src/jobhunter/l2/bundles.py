@@ -44,15 +44,19 @@ from jobhunter.l2.prompt import prompt_sha as _v1_prompt_sha
 from jobhunter.l2.prompt import render as _v1_render
 from jobhunter.l2.report import Finding, Report
 from jobhunter.l2.transforms import VALIDATOR_VERSION as _V1_VALIDATOR_VERSION
+from jobhunter.l2.v2 import prompt_v12 as _v12
 from jobhunter.l2.v2 import serve as _v2_serve
 from jobhunter.l2.v2.assemble import AssembleError as _V2AssembleError
 from jobhunter.l2.v2.assemble import assemble as _assemble_v2
 from jobhunter.l2.v2.audit import AUDIT_VERSION as _V2_AUDIT_VERSION
+from jobhunter.l2.v2.audit import AUDIT_VERSION_V5 as _V3_AUDIT_VERSION
 from jobhunter.l2.v2.audit import emit_schema as _v2_audit_emit_schema
+from jobhunter.l2.v2.audit import emit_schema_v5 as _v3_audit_emit_schema
 from jobhunter.l2.v2.audit import judge as _v2_audit_judge
 from jobhunter.l2.v2.audit import render as _v2_audit_render
+from jobhunter.l2.v2.audit import render_v5 as _v3_audit_render
 from jobhunter.l2.v2.emit_guard import engine_emit_schema as _v2_engine_emit_schema
-from jobhunter.l2.v2.facts import VALIDATOR_VERSION as _V2_VALIDATOR_VERSION
+from jobhunter.l2.v2.facts import validator_version_for
 from jobhunter.l2.v2.prompt import PROMPT_VERSION as _V2_PROMPT_VERSION
 from jobhunter.l2.v2.prompt import PROMPT_VERSION_V10 as _V2_PROMPT_VERSION_V10
 from jobhunter.l2.v2.prompt import TEMPLATE as _V2_TEMPLATE
@@ -68,7 +72,7 @@ from jobhunter.store.extraction import split_mention
 DEFAULT_BUNDLE = "v1"
 #: names the CLI/env will accept; a name here that is not registered yet is a
 #: teaching error, not a crash (see `config.Settings.load`).
-BUNDLE_NAMES = ("v1", "v2")
+BUNDLE_NAMES = ("v1", "v2", "v3")
 
 
 @dataclass(frozen=True)
@@ -79,7 +83,7 @@ class Bundle:
     the wrapped function itself — no descriptor binding, no `self`.
     """
 
-    name: str  # "v1" | "v2"
+    name: str  # "v1" | "v2" | "v3"
     prompt_version: str
     schema_version: str
     validator_version: str
@@ -269,18 +273,29 @@ def _v2_bundle(
     render: Callable[[str, list[str], str | None], str],
     schema_version: str,
     migrated_from: tuple[tuple[str, str], ...] = (),
+    name: str = "v2",
+    compat_validators: tuple[str, ...] = ("17", "18", "19"),
+    audit_version: str = _V2_AUDIT_VERSION,
+    audit_render: Callable[[str, str, dict[str, Any]], str] = _v2_audit_render,
+    audit_emit_schema: Callable[[], dict[str, Any]] = _v2_audit_emit_schema,
 ) -> Bundle:
     """One v2-family registration: same six functions, one prompt and one
     record shape. Only the prompt and the schema differ between the active
     tuple and the frozen one, so they are built from the same call — a
     hand-copied second `Bundle(...)` is how a replay tuple silently acquires a
     different judge from the one that wrote it.
+
+    Bundle v3 (parsing contract v4) is the same family one contract later: its
+    validator is whatever `facts.validator_version_for` seals its schema with
+    ("21" for schema 4, "20" for 2 and 3 — so v2's registrations are
+    unchanged), and it names its own audit contract and compat set. The keyword
+    defaults are bundle v2's, so v2's two calls below read exactly as before.
     """
     return Bundle(
-        name="v2",
+        name=name,
         prompt_version=prompt_version,
         schema_version=schema_version,
-        validator_version=_V2_VALIDATOR_VERSION,
+        validator_version=validator_version_for(schema_version),
         template=template,
         prompt_sha=prompt_sha,
         render=render,
@@ -290,7 +305,7 @@ def _v2_bundle(
         mention_rows=_v2_serve.mention_rows,
         engine_emit_schema=partial(_v2_engine_emit_schema, schema_version),
         render_finding=_v2_render_finding,
-        audit_version=_V2_AUDIT_VERSION,
+        audit_version=audit_version,
         # 17 -> 18 changed settlement (dispute-set adjudication) only; assembly,
         # binding and the emit contract are byte-identical, so 17 attempts fold.
         # 18 -> 19 DOES change derivation and the check table. Only rebuild.py
@@ -304,11 +319,11 @@ def _v2_bundle(
         # 19 -> 20 is the same settlement shape, and the whole live corpus sits
         # at 19: leaving it out is not a smaller change than adding it — it
         # silently no-ops every live settle of every already-extracted document.
-        compat_validators=("17", "18", "19"),
+        compat_validators=compat_validators,
         migrated_from=migrated_from,
         adopt=_v2_adopt if migrated_from else None,
-        audit_render=_v2_audit_render,
-        audit_emit_schema=_v2_audit_emit_schema,
+        audit_render=audit_render,
+        audit_emit_schema=audit_emit_schema,
         audit_judge=_v2_audit_judge,
         # stays at the field default 0.80: the 2026-09-11 analysis showed the
         # borderline-F1 review cases include real polarity conflicts, and
@@ -345,7 +360,28 @@ _V2_SCHEMA2 = _v2_bundle(
     schema_version="2",
 )
 
-_REGISTRY: dict[str, Bundle] = {_V1.name: _V1, _V2.name: _V2}
+#: parsing contract v4: the tuple a v3 run extracts under. Schema 4 adds the
+#: authorization presence families (and the code-derived `authorization`
+#: block), typed mentions and `relations.tracks`, judged by validator 21, and
+#: audited under semantic-audit/v5 (its repair round, semantic-repair/v3, is
+#: wired by schema version in `runner._REPAIR_CONTRACTS`). Nothing migrates
+#: into it — schema 3 cannot derive what the model must newly anchor (contract
+#: v4 §6) — so it adopts no retired tuple and carries no compat validators:
+#: validator 21 has no predecessor at schema 4.
+_V3 = _v2_bundle(
+    prompt_version=_v12.PROMPT_VERSION,
+    template=_v12.TEMPLATE,
+    prompt_sha=_v12.prompt_sha,
+    render=_v12.render,
+    schema_version="4",
+    name="v3",
+    compat_validators=(),
+    audit_version=_V3_AUDIT_VERSION,
+    audit_render=_v3_audit_render,
+    audit_emit_schema=_v3_audit_emit_schema,
+)
+
+_REGISTRY: dict[str, Bundle] = {_V1.name: _V1, _V2.name: _V2, _V3.name: _V3}
 #: registrations replay may resolve but nothing may select (see `_V2_SCHEMA2`)
 _FROZEN: tuple[Bundle, ...] = (_V2_SCHEMA2,)
 
