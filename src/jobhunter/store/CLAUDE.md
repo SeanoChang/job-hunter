@@ -23,7 +23,8 @@ board membership over time. Spec §5 of `docs/2026-08-18-ingestion-layer-spec.md
   `mcp_cursors`): the **only** writer of that table, and the one piece of
   store state a rebuild cannot re-derive from the archive, so it is carried
   across the swap (`carry_cursors`) instead.
-- `schema.sql` — DDL, applied by `db init` / `rebuild`. `SCHEMA_VERSION = "4"`;
+- `schema.sql` — DDL, applied by `db init` / `rebuild`. `SCHEMA_VERSION = "5"`
+  (v5 adds `profile_authorization`, the derived sponsorship/citizenship rows);
   purely additive version pairs upgrade in place (`db._ADDITIVE_UPGRADES`),
   anything else demands a `rebuild`.
 

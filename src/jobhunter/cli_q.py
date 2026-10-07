@@ -26,7 +26,7 @@ from jobhunter import views
 from jobhunter.cli_output import Exit, emit, fail, output_option
 from jobhunter.l2.v2.types import NO_IMPORTANCE
 from jobhunter.pulse import profile_summary
-from jobhunter.store.extraction import SERVING_STATUSES
+from jobhunter.store.extraction import SERVING_STATUSES, SPONSORSHIP
 from jobhunter.timeutil import parse_iso
 
 if TYPE_CHECKING:
@@ -46,6 +46,8 @@ EVENT_KINDS = ("opened", "changed", "closed", "reopened")
 #: The filter therefore selects the schema-2 (and v1) partition only, and the
 #: sentinel is refused with an explanation rather than silently widened.
 IMPORTANCES = ("required", "preferred")  # record.schema.json v1, minus NO_IMPORTANCE
+#: What `--citizenship-required` accepts, spelled as the payload prints it.
+BOOLEANS = {"true": True, "false": False}
 
 
 def _clamp(limit: int) -> int:
@@ -116,25 +118,43 @@ def q_postings(
     status: str | None = typer.Option(None, "--status", help="open|closed"),
     since: str | None = typer.Option(None, "--since", help="Nm, Nh or Nd (first seen)"),
     search: str | None = typer.Option(None, "--search", help="ILIKE over title+company"),
+    sponsorship: str | None = typer.Option(
+        None, "--sponsorship",
+        help=f"{'|'.join(SPONSORSHIP)}: the posting's visa-sponsorship policy"
+             " (unextracted postings match none)"),
+    citizenship_required: str | None = typer.Option(
+        None, "--citizenship-required", help="true|false: citizenship/U.S.-person restriction"),
     fields: str | None = typer.Option(None, "--fields", help="Comma list of keys to keep"),
     limit: int = typer.Option(50, "--limit", help=f"1-{MAX_LIMIT}"),
     after: str | None = typer.Option(None, "--after", help="Opaque cursor from meta.next_cursor"),
     output: str | None = output_option(),
 ) -> None:
-    """List postings, newest first. Bounded; meta.truncated + meta.next_cursor page on."""
+    """List postings, newest first. Bounded; meta.truncated + meta.next_cursor page on.
+
+    `--sponsorship` and `--citizenship-required` filter on the authorization the
+    engine in force read off the current text (parsing contract v4 §5); each row
+    reports it, null when the posting has not been read under that engine.
+    """
     from jobhunter.cli import _split_board
 
     if status not in (None, "open", "closed"):
         fail("usage", f"--status must be open or closed: {status!r}",
              valid=["open", "closed"], code=Exit.USAGE, output=output)
+    if sponsorship is not None and sponsorship not in SPONSORSHIP:
+        fail("usage", f"--sponsorship must be one of: {', '.join(SPONSORSHIP)}",
+             valid=list(SPONSORSHIP), code=Exit.USAGE, output=output)
+    if citizenship_required is not None and citizenship_required not in BOOLEANS:
+        fail("usage", f"--citizenship-required must be true or false: {citizenship_required!r}",
+             valid=list(BOOLEANS), code=Exit.USAGE, output=output)
+    citizenship = None if citizenship_required is None else BOOLEANS[citizenship_required]
     src, brd = _split_board(board, output)
     _check_after(after, output)
     limit = _clamp(limit)
     window = _since(since, output)
-    _, conn = _open(output)
+    settings, conn = _open(output)
     page = _query(conn, output, lambda: views.postings_view(
-        conn, source=src, board=brd, status=status, since=window, search=search,
-        limit=limit, after=after))
+        conn, settings, source=src, board=brd, status=status, since=window, search=search,
+        sponsorship=sponsorship, citizenship_required=citizenship, limit=limit, after=after))
     data = page.rows()
     human = "\n".join(
         f"{r['status']:6} {r['uid']:32} {(r['company'] or '-'):18} {r['title'] or '-'}"
@@ -361,11 +381,24 @@ def q_profile(
         f"deadline      {facts['deadline'] or 'not stated'}",
         f"mentions      {', '.join(summary['mentions']) or '-'}",
     ]
+    if "authorization" in summary:  # schema 4 (parsing contract v4 §5)
+        lines.append(f"sponsorship   {authorization_label(summary['authorization'])}")
     lines += _sample_notes_lines(data["quality"])
     lines += _statement_lines(row["profile"], summary)
     emit(data, human="\n".join(lines), output=output,
          hint=f"q document {resolved[:12]} for the text" if full
          else f"q profile --doc {resolved[:12]} --full for claims, quotes and spans")
+
+
+def authorization_label(authorization: Any) -> str:
+    """A schema-4 digest's authorization as one short phrase: the sponsorship
+    value, plus "citizenship required" when it is. Shared with the pulse table."""
+    if not isinstance(authorization, dict):
+        return "not stated"
+    label = str(authorization.get("sponsorship") or "-")
+    if authorization.get("citizenship_required") is True:
+        label += ", citizenship required"
+    return label
 
 
 def _claim_row(r: dict[str, Any]) -> str:

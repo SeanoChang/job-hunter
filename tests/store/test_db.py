@@ -9,7 +9,7 @@ EXPECTED_TABLES = {
     "fetch_attempts", "posting_versions", "documents", "presence", "runs", "panel",
     "postings", "posting_events", "schema_meta",
     "extraction_attempts", "extraction_reviews", "extractions", "profile_mentions",
-    "mcp_cursors",
+    "mcp_cursors", "profile_authorization",
 }
 
 
@@ -197,6 +197,33 @@ def test_additive_upgrade_from_v3_stamps_version(pg: psycopg.Connection[dict[str
     pg.commit()
     assert db.stored_schema_version(pg) == db.SCHEMA_VERSION
     assert "mcp_cursors" in _tables(pg, schema)
+
+
+def test_additive_upgrade_from_v4_stamps_version(pg: psycopg.Connection[dict[str, Any]]) -> None:
+    """v4 -> v5 adds profile_authorization and nothing else (parsing contract v4
+    §5, migration approved 2026-10-07), so schema.sql IS the migration."""
+    schema = _schema_of(pg)
+    db.set_meta(pg, "schema_version", "4")
+    pg.execute("DROP TABLE profile_authorization")
+    pg.commit()
+    db.init(pg, schema)
+    pg.commit()
+    assert db.stored_schema_version(pg) == db.SCHEMA_VERSION == "5"
+    assert "profile_authorization" in _tables(pg, schema)
+
+
+def test_profile_authorization_refuses_a_value_outside_the_vocabulary(
+    pg: psycopg.Connection[dict[str, Any]],
+) -> None:
+    import pytest
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        pg.execute(
+            "INSERT INTO profile_authorization (document_hash, model, prompt_version,"
+            " schema_version, validator_version, sponsorship, citizenship_required)"
+            " VALUES ('d', 'm', 'p', '4', 'v', 'maybe', false)"
+        )
+    pg.rollback()
 
 
 def test_non_additive_mismatch_still_raises(pg: psycopg.Connection[dict[str, Any]]) -> None:

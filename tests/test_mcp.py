@@ -147,19 +147,38 @@ def test_postings_tool_is_the_postings_view(
     client: TestClient, pg: psycopg.Connection[dict[str, Any]]
 ) -> None:
     page = _call(client, "postings")
-    assert page["data"] == _as_json(views.postings_view(pg).data)
+    assert page["data"] == _as_json(views.postings_view(pg, Settings.load()).data)
     assert page["truncated"] is False and page["next_cursor"] is None
     first = _call(client, "postings", limit=2)
-    view = views.postings_view(pg, limit=2)
+    view = views.postings_view(pg, Settings.load(), limit=2)
     assert first["data"] == _as_json(view.data)
     assert first["truncated"] is True and first["next_cursor"] == view.next_cursor
     second = _call(client, "postings", limit=2, after=first["next_cursor"])
     assert second["data"] == _as_json(
-        views.postings_view(pg, limit=2, after=view.next_cursor).data)
+        views.postings_view(pg, Settings.load(), limit=2, after=view.next_cursor).data)
     # the filters reach the query the way the payload prints them back
     assert [r["uid"] for r in _call(client, "postings", status="closed")["data"]] == ["ab:ramp:y"]
     assert _call(client, "postings", board="ashby:ramp")["data"] != []
     assert _call(client, "postings", search="rUsT")["data"][0]["uid"] == "ab:ramp:x"
+
+
+def test_postings_tool_filters_on_the_authorization_reading(
+    client: TestClient, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.l2.v2.v4_serving import v4_record
+    from tests.test_cli_q import _seed_v3_profile
+
+    dh = _call(client, "posting", uid="ab:ramp:x")["data"]["document_hash"]
+    _seed_v3_profile(pg, dh, monkeypatch, status="validated",
+                     record=v4_record("visa", lifecycle="validated"))
+    page = _call(client, "postings", sponsorship="no")
+    assert [r["uid"] for r in page["data"]] == ["ab:ramp:x"]
+    assert page["data"] == _as_json(
+        views.postings_view(pg, Settings.load(), sponsorship="no").data)
+    assert [r["uid"] for r in _call(
+        client, "postings", citizenship_required=False)["data"]] == ["ab:ramp:x"]
+    assert _call(client, "postings", sponsorship="undeclared")["data"] == []
+    assert "sponsorship" in _tool_error(client, "postings", sponsorship="maybe")
 
 
 def test_limit_is_clamped_to_the_hard_cap(

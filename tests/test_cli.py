@@ -871,6 +871,41 @@ def test_skill_json_wraps_the_markdown() -> None:
     assert body["ok"] is True and body["data"]["markdown"].startswith("---")
 
 
+def _digest_payload(profile: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "window": {"from": "a", "to": "b"}, "first_run": False,
+        "attention": {"unhealthy_boards": [], "extraction": None},
+        "events": [{"kind": "opened", "company": "Visa", "title": "SWE Intern",
+                    "closed_between": None, "profile": profile}],
+    }
+
+
+_FACTS = {"compensation": [], "experience_months": None, "deadline": None}
+
+
+@pytest.mark.parametrize(("sponsorship", "citizenship", "line"), [
+    ("no", False, "      sponsorship: no\n"),
+    ("undeclared", True, "      sponsorship: undeclared, citizenship required\n"),
+])
+def test_pulse_human_prints_a_schema_4_sponsorship_line(
+    sponsorship: str, citizenship: bool, line: str
+) -> None:
+    profile = {
+        "areas": [], "mentions": ["Kafka"], "mentions_omitted": 0, "facts": _FACTS,
+        "education": {"field_of_study": [], "credential": []}, "tracks": None,
+        "authorization": {"sponsorship": sponsorship, "citizenship_required": citizenship,
+                          "quotes": {"sponsorship": None, "citizenship": None,
+                                     "work_authorization": None}},
+    }
+    out = cli._pulse_human(_digest_payload(profile), truncated=False) + "\n"
+    assert line in out
+
+
+def test_pulse_human_prints_no_sponsorship_line_for_an_older_digest() -> None:
+    profile = {"areas": [], "mentions": ["Kafka"], "mentions_omitted": 0, "facts": _FACTS}
+    assert "sponsorship" not in cli._pulse_human(_digest_payload(profile), truncated=False)
+
+
 def test_pulse_human_prints_a_schema_3_digest_without_a_verdict() -> None:
     """The pulse table printed `[importance]` per area. A schema-3 area has no
     importance, so it prints the posting's own modal quote when one exists and

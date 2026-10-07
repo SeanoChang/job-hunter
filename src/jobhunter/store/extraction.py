@@ -110,6 +110,37 @@ def split_mention(raw: str) -> list[str]:
 SERVING_STATUSES = frozenset({"validated", "needs_review"})
 
 
+#: The tables derived from `extractions.profile` by `upsert_state`: each follows
+#: the extractions row through every delete, and each is refilled only for a
+#: serving row. Literal names, never input, so they are pasted into the SQL.
+_DERIVED = ("profile_mentions", "profile_authorization")
+
+#: `profile_authorization.sponsorship`'s CHECK vocabulary (parsing contract v4
+#: §2.2; `l2.v2.types.SPONSORSHIP` spells the same three words).
+SPONSORSHIP = ("yes", "no", "undeclared")
+
+
+def authorization_row(profile: dict[str, Any]) -> tuple[str, bool] | None:
+    """`(sponsorship, citizenship_required)` off a stored blob's derived
+    `authorization` block (parsing contract v4 §2.2), or None.
+
+    Only a schema-4 blob carries the block, so only a schema-4 record writes a
+    row: an older blob was never read for authorization, and a missing row is
+    what the filter reports as "not extracted" rather than `undeclared`.
+    Nothing is re-derived — assembly owns the values — and a block whose values
+    fall outside the column's vocabulary writes nothing rather than failing
+    the whole settle on the CHECK.
+    """
+    block = profile.get("authorization")
+    if not isinstance(block, dict):
+        return None
+    sponsorship = block.get("sponsorship")
+    citizenship = block.get("citizenship_required")
+    if sponsorship not in SPONSORSHIP or not isinstance(citizenship, bool):
+        return None
+    return str(sponsorship), citizenship
+
+
 def upsert_state(
     conn: Conn,
     *,
@@ -132,7 +163,8 @@ def upsert_state(
     rows under a different model spelling are removed on every write — a human
     retry must clear the row regardless of which spelling keyed it.
     status None (pending) removes the config's row entirely.
-    profile_mentions is derived from the same write: it follows the extractions
+    profile_mentions (and, for a schema-4 blob, profile_authorization — parsing
+    contract v4 §5) is derived from the same write: it follows the extractions
     row through every one of these deletes, and is refilled for any
     SERVING_STATUSES row that carries a chosen candidate — the blob is not None
     exactly when the fold chose one (parsing contract v3 §4, amending the
@@ -149,11 +181,12 @@ def upsert_state(
             " AND prompt_version=%s AND schema_version=%s AND validator_version=%s",
             config,
         )
-        conn.execute(
-            "DELETE FROM profile_mentions WHERE document_hash=%s"
-            " AND prompt_version=%s AND schema_version=%s AND validator_version=%s",
-            config,
-        )
+        for table in _DERIVED:
+            conn.execute(
+                f"DELETE FROM {table} WHERE document_hash=%s"
+                " AND prompt_version=%s AND schema_version=%s AND validator_version=%s",
+                config,
+            )
         return
     key = (document_hash, model, prompt_version, schema_version, validator_version)
     conn.execute(
@@ -162,12 +195,13 @@ def upsert_state(
         " AND model <> %s",
         (*config, model),
     )
-    conn.execute(
-        "DELETE FROM profile_mentions WHERE document_hash=%s"
-        " AND prompt_version=%s AND schema_version=%s AND validator_version=%s"
-        " AND model <> %s",
-        (*config, model),
-    )
+    for table in _DERIVED:
+        conn.execute(
+            f"DELETE FROM {table} WHERE document_hash=%s"
+            " AND prompt_version=%s AND schema_version=%s AND validator_version=%s"
+            " AND model <> %s",
+            (*config, model),
+        )
     conn.execute(
         """
         INSERT INTO extractions (
@@ -195,13 +229,22 @@ def upsert_state(
     # drop its mentions with it, a status that no longer serves leaves the key
     # empty, and a needs_review -> validated flip re-derives the same rows
     # instead of doubling them.
-    conn.execute(
-        "DELETE FROM profile_mentions WHERE document_hash=%s AND model=%s"
-        " AND prompt_version=%s AND schema_version=%s AND validator_version=%s",
-        key,
-    )
+    for table in _DERIVED:
+        conn.execute(
+            f"DELETE FROM {table} WHERE document_hash=%s AND model=%s"
+            " AND prompt_version=%s AND schema_version=%s AND validator_version=%s",
+            key,
+        )
     if profile is None or state.status not in SERVING_STATUSES:
         return
+    authorization = authorization_row(profile)
+    if authorization is not None:
+        conn.execute(
+            "INSERT INTO profile_authorization (document_hash, model, prompt_version,"
+            " schema_version, validator_version, sponsorship, citizenship_required)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (*key, *authorization),
+        )
     projected: list[tuple[str, str, str]] = []
     if mentions is None:
         for area in (profile.get("demand_profile") or {}).get("areas") or []:
