@@ -23,7 +23,7 @@ from jobhunter.l2.runner import run
 from jobhunter.l2.schemas import strict_schema
 from jobhunter.l2.v2.audit import AUDIT_VERSION_V5
 from jobhunter.l2.v2.emit_guard import engine_emit_schema
-from jobhunter.l2.v2.prompt_v12 import PROMPT_VERSION
+from jobhunter.l2.v2.prompt_v13 import PROMPT_VERSION
 from tests.l2.test_runner import _seed_doc, _settings, store  # noqa: F401
 from tests.l2.test_runner_v2 import (
     AuditingEngine,
@@ -36,7 +36,7 @@ from tests.l2.v2.conftest import VISA_MD, make_visa_emit
 
 Conn = psycopg.Connection[dict[str, Any]]
 
-V3_TUPLE = ("demand-profile/v12", "4", "21")
+V3_TUPLE = ("demand-profile/v13", "4", "21")
 
 
 class SchemaRecordingEngine(AuditingEngine):

@@ -45,6 +45,7 @@ from jobhunter.l2.prompt import render as _v1_render
 from jobhunter.l2.report import Finding, Report
 from jobhunter.l2.transforms import VALIDATOR_VERSION as _V1_VALIDATOR_VERSION
 from jobhunter.l2.v2 import prompt_v12 as _v12
+from jobhunter.l2.v2 import prompt_v13 as _v13
 from jobhunter.l2.v2 import serve as _v2_serve
 from jobhunter.l2.v2.assemble import AssembleError as _V2AssembleError
 from jobhunter.l2.v2.assemble import assemble as _assemble_v2
@@ -369,6 +370,22 @@ _V2_SCHEMA2 = _v2_bundle(
 #: v4 §6) — so it adopts no retired tuple and carries no compat validators:
 #: validator 21 has no predecessor at schema 4.
 _V3 = _v2_bundle(
+    prompt_version=_v13.PROMPT_VERSION,
+    template=_v13.TEMPLATE,
+    prompt_sha=_v13.prompt_sha,
+    render=_v13.render,
+    schema_version="4",
+    name="v3",
+    compat_validators=(),
+    audit_version=_V3_AUDIT_VERSION,
+    audit_render=_v3_audit_render,
+    audit_emit_schema=_v3_audit_emit_schema,
+)
+
+#: v3 as it first shipped (demand-profile/v12): replaced by v13 on 2026-10-07
+#: after the live run typed generic nouns as skills. Frozen like `_V2_SCHEMA2`:
+#: its archived attempts replay under their own prompt; nothing may select it.
+_V3_V12 = _v2_bundle(
     prompt_version=_v12.PROMPT_VERSION,
     template=_v12.TEMPLATE,
     prompt_sha=_v12.prompt_sha,
@@ -383,7 +400,7 @@ _V3 = _v2_bundle(
 
 _REGISTRY: dict[str, Bundle] = {_V1.name: _V1, _V2.name: _V2, _V3.name: _V3}
 #: registrations replay may resolve but nothing may select (see `_V2_SCHEMA2`)
-_FROZEN: tuple[Bundle, ...] = (_V2_SCHEMA2,)
+_FROZEN: tuple[Bundle, ...] = (_V2_SCHEMA2, _V3_V12)
 
 
 def registered() -> tuple[str, ...]:
