@@ -19,7 +19,7 @@ from jobhunter.store.queries import (
     panel_rows,
     posting_detail,
     postings_page,
-    validated_profiles,
+    served_profiles,
 )
 from tests.store.helpers import ab_record, board_payload, make_manifest, write_registry
 
@@ -232,9 +232,12 @@ def test_docs_for_events(tmp_path: Path, pg: psycopg.Connection[dict[str, Any]])
     assert docs_for_events(pg, [], "md/1") == {}
 
 
-def test_validated_profiles_filters_status_and_model(
+def test_served_profiles_carry_review_rows_and_say_which_they_are(
     pg: psycopg.Connection[dict[str, Any]]
 ) -> None:
+    """Parsing contract v3 §4: a `needs_review` row serves like a validated one.
+    The status travels with the blob so a reader can see which it got; a
+    quarantined row and another engine's row still do not come back at all."""
     from jobhunter.l2.prompt import PROMPT_VERSION
     from jobhunter.l2.state import DerivedState, globs_to_regex
     from jobhunter.l2.transforms import VALIDATOR_VERSION
@@ -244,12 +247,13 @@ def test_validated_profiles_filters_status_and_model(
         "prompt_version": PROMPT_VERSION, "schema_version": "1",
         "validator_version": VALIDATOR_VERSION,
     }
-    hashes = ["d" * 63 + n for n in "123"]
+    hashes = ["d" * 63 + n for n in "1234"]
     profile = {"demand_profile": {"areas": [{"name": "Rust", "kind": "skill"}]}}
     for dh, model, status in (
         (hashes[0], "z-ai/glm-5.2:free", "validated"),
         (hashes[1], "openai/gpt-5.6-sol", "validated"),    # outside the engine glob
-        (hashes[2], "z-ai/glm-5.2:free", "needs_review"),  # right engine, wrong status
+        (hashes[2], "z-ai/glm-5.2:free", "needs_review"),
+        (hashes[3], "z-ai/glm-5.2:free", "quarantined"),
     ):
         extraction.upsert_state(
             pg, document_hash=dh, model=model, **config,
@@ -258,9 +262,105 @@ def test_validated_profiles_filters_status_and_model(
         )
     pg.commit()
     rx = globs_to_regex(("z-ai/*",))
-    got = validated_profiles(pg, hashes, model_regex=rx, **config)
-    assert set(got) == {hashes[0]}
-    assert got[hashes[0]]["demand_profile"]["areas"][0]["name"] == "Rust"
-    assert validated_profiles(pg, [], model_regex=rx, **config) == {}
+    got = served_profiles(pg, hashes, model_regex=rx, **config)
+    assert set(got) == {hashes[0], hashes[2]}
+    assert got[hashes[0]]["status"] == "validated"
+    assert got[hashes[2]]["status"] == "needs_review"
+    assert got[hashes[0]]["profile"]["demand_profile"]["areas"][0]["name"] == "Rust"
+    assert served_profiles(pg, [], model_regex=rx, **config) == {}
     other = dict(config, prompt_version="demand-profile/vOTHER")
-    assert validated_profiles(pg, hashes, model_regex=rx, **other) == {}
+    assert served_profiles(pg, hashes, model_regex=rx, **other) == {}
+
+
+def test_claims_by_mention_returns_a_review_rows_skills(
+    tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    """The aggregate is what `q claims` reads, so once the store refills a
+    review row's mentions the read path returns them with no filter of its own
+    standing in the way."""
+    from jobhunter.l2.prompt import PROMPT_VERSION
+    from jobhunter.l2.state import DerivedState, globs_to_regex
+    from jobhunter.l2.transforms import VALIDATOR_VERSION
+    from jobhunter.l2.v2 import serve
+    from jobhunter.store import extraction
+    from jobhunter.store.queries import claims_by_mention
+    from tests.l2.v2.conftest import make_serving_record
+
+    _corpus(pg, tmp_path)
+    row = pg.execute(
+        "SELECT d.document_hash FROM documents d JOIN postings p"
+        " ON p.current_version_hash = d.version_hash WHERE p.uid = 'ab:ramp:x'"
+    ).fetchone()
+    assert row is not None
+    config: dict[str, Any] = {
+        "prompt_version": PROMPT_VERSION, "schema_version": "3",
+        "validator_version": VALIDATOR_VERSION,
+    }
+    record = make_serving_record()
+    extraction.upsert_state(
+        pg, document_hash=str(row["document_hash"]), model="z-ai/glm-5.2:free", **config,
+        state=DerivedState("needs_review", None), profile=serve.profile_of(record),
+        mentions=serve.mention_rows(record), updated_at="2026-09-22T00:00:00Z",
+    )
+    pg.commit()
+    engine = {**config, "model_regex": globs_to_regex(("z-ai/*",))}
+    rows = claims_by_mention(pg, mention="cpa", **engine)
+    assert [(r["uid"], r["mention"]) for r in rows] == [("ab:ramp:x", "CPA")]
+    # the schema the row was written under rides along: two nulls mean one thing
+    # on a schema-3 row and another on a legacy one, and only this tells them apart
+    assert [r["schema_version"] for r in rows] == ["3"]
+
+
+def test_mention_contexts_narrows_the_blob_to_one_surface_and_its_statements(
+    tmp_path: Path, pg: psycopg.Connection[dict[str, Any]]
+) -> None:
+    """`q claims` needs two strings per row off each document's blob, and stored
+    blobs run tens of kilobytes. This fetches the mention entries for the surface
+    asked about plus the statements they link, and nothing else — the served
+    status still rides along, because a row that stopped serving must not be
+    labelled with a tier it no longer holds.
+    """
+    from jobhunter.l2.prompt import PROMPT_VERSION
+    from jobhunter.l2.state import DerivedState, globs_to_regex
+    from jobhunter.l2.transforms import VALIDATOR_VERSION
+    from jobhunter.l2.v2 import serve
+    from jobhunter.store import extraction
+    from jobhunter.store.queries import mention_contexts
+    from tests.l2.v2.conftest import make_serving_record
+
+    _corpus(pg, tmp_path)
+    row = pg.execute(
+        "SELECT d.document_hash FROM documents d JOIN postings p"
+        " ON p.current_version_hash = d.version_hash WHERE p.uid = 'ab:ramp:x'"
+    ).fetchone()
+    assert row is not None
+    dh = str(row["document_hash"])
+    config: dict[str, Any] = {
+        "prompt_version": PROMPT_VERSION, "schema_version": "3",
+        "validator_version": VALIDATOR_VERSION,
+    }
+    record = make_serving_record()
+    profile = serve.profile_of(record)
+    extraction.upsert_state(
+        pg, document_hash=dh, model="z-ai/glm-5.2:free", **config,
+        state=DerivedState("needs_review", None), profile=profile,
+        mentions=serve.mention_rows(record), updated_at="2026-09-22T00:00:00Z",
+    )
+    pg.commit()
+    engine = {**config, "model_regex": globs_to_regex(("z-ai/*",))}
+    got = mention_contexts(pg, [dh], mention="cpa", **engine)
+    assert set(got) == {dh}
+    assert got[dh]["status"] == "needs_review"
+    narrowed = got[dh]["profile"]
+    assert set(narrowed) == {"mentions", "statements"}
+    assert [m["surface"] for m in narrowed["mentions"]] == ["CPA"]
+    assert [s["id"] for s in narrowed["statements"]] == ["s_cert"]
+    # what comes back is the blob's own entries, verbatim and in record order
+    assert narrowed["mentions"] == [m for m in profile["mentions"] if m["surface"] == "CPA"]
+    assert narrowed["statements"] == [s for s in profile["statements"] if s["id"] == "s_cert"]
+    # a surface the record never names narrows to nothing, not to everything
+    empty = mention_contexts(pg, [dh], mention="rust", **engine)
+    assert empty[dh]["profile"] == {"mentions": [], "statements": []}
+    assert mention_contexts(pg, [], mention="cpa", **engine) == {}
+    other = dict(engine, prompt_version="demand-profile/vOTHER")
+    assert mention_contexts(pg, [dh], mention="cpa", **other) == {}

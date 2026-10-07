@@ -5,6 +5,8 @@ from jobhunter.l2.v2.source import (
     RefBindError,
     annotate,
     blocks_by_id,
+    heading_of,
+    is_heading,
     resolve,
 )
 
@@ -154,3 +156,135 @@ def test_single_occurrence_slip_is_owned_by_code() -> None:
     assert bound["occurrence"] == 0
     with pytest.raises(RefBindError):
         resolve({"block_id": "b000003", "text": "Go", "occurrence": 5}, blocks)
+
+
+# --- the heading predicate (parsing contract v3 §2.1) -----------------------
+# `section_heading` is code-owned: a heading is block structure the document
+# already carries, so the model never emits one and nothing has to verify a
+# model's copy of it. The predicate below is the whole definition.
+
+HEADING_MD = (
+    "# Senior Engineer\n"          # b000001 ATX
+    "About the team\n"             # b000002 plain paragraph
+    "## Requirements\n"            # b000003 ATX
+    "- 5 years of Go\n"            # b000004 bullet
+    "**Nice to have:**\n"          # b000005 bold-only line
+    "- Rust\n"                     # b000006 bullet
+    "We look for **strong** writers.\n"  # b000007 bold phrase inside a sentence
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("# Senior Engineer", True),
+        ("###### Deep", True),
+        ("## Requirements", True),
+        ("**Nice to have:**", True),
+        ("**Requirements**", True),
+        ("**Requirements**:", True),
+        ("## **Requirements**", True),         # ATX whose text is bold
+        ("**:**", True),                       # degenerate: a label of pure punctuation
+        ("## :", True),
+        ("- 5 years of Go", False),            # a bullet is not a heading
+        ("- **Bonus:** Rust", False),          # nor a bullet that starts bold
+        ("About the team", False),             # nor a plain paragraph
+        ("We look for **strong** writers.", False),  # nor bold inside a sentence
+        ("#NoSpace", False),                   # ATX needs a space
+        ("####### Seven", False),              # seven hashes is not ATX
+        ("#", False),                          # no content
+        ("**" + "x" * 81 + "**", False),       # past the bold-line bound
+        ("", False),
+    ],
+)
+def test_is_heading_predicate(text: str, expected: bool) -> None:
+    assert is_heading(text) is expected
+
+
+def test_heading_of_takes_the_nearest_preceding_heading() -> None:
+    blocks = annotate(HEADING_MD)
+    # the bullet under "## Requirements" — marks stripped, nearest wins over
+    # the document title above it
+    assert heading_of(blocks, "b000004") == "Requirements"
+    # a plain paragraph under the title
+    assert heading_of(blocks, "b000002") == "Senior Engineer"
+    # a bold-only line is a heading, and its trailing colon is punctuation
+    assert heading_of(blocks, "b000006") == "Nice to have"
+    # the sentence with bold inside it is not itself a heading, so it still
+    # belongs to the bold-only heading above it
+    assert heading_of(blocks, "b000007") == "Nice to have"
+
+
+def test_heading_of_is_null_when_none_precedes() -> None:
+    blocks = annotate("About the team\nWe build things.\n## Requirements\n")
+    assert heading_of(blocks, "b000001") is None
+    assert heading_of(blocks, "b000002") is None
+    assert heading_of(blocks, "b000099") is None  # unknown block: null, never a guess
+
+
+def test_heading_of_a_heading_block_is_its_own_heading() -> None:
+    # a heading opens the section it names: for the degenerate case where the
+    # cited block IS a heading, its own text is the only true answer — the
+    # heading above it belongs to the section this one ends
+    blocks = annotate("## About us\n## Requirements\n- 5 years of Go\n")
+    assert heading_of(blocks, "b000002") == "Requirements"
+    assert heading_of(blocks, "b000003") == "Requirements"
+
+
+def test_heading_of_strips_only_heading_syntax() -> None:
+    blocks = annotate("## Learn C#\n- ship it\n### Basic Qualifications: ###\n- own it\n")
+    assert heading_of(blocks, "b000002") == "Learn C#"  # a trailing C# survives
+    assert heading_of(blocks, "b000004") == "Basic Qualifications"  # closing ATX run
+
+
+@pytest.mark.parametrize(
+    ("heading", "expected"),
+    [
+        ("**Requirements:**", "Requirements"),   # colon inside the bold run
+        ("**Requirements**:", "Requirements"),   # colon after it
+        ("**Requirements**", "Requirements"),
+        ("**  Nice to have  **", "Nice to have"),
+        # An ATX line whose text is bold is the dominant heading spelling in
+        # the recorded corpus (9 of 9 ATX headings in
+        # tests/fixtures/md/greenhouse_anthropic.md, 7 of 10 in ashby_ramp.md).
+        # It names the same section as the bold-only spelling, so it must
+        # derive the same label: the markup is not part of the name.
+        ("## **Requirements:**", "Requirements"),
+        ("## **Requirements**", "Requirements"),
+        ("## **Requirements**:", "Requirements"),
+        ("# **About Ramp**", "About Ramp"),
+        ("### **Required Qualifications:**", "Required Qualifications"),
+        ("## *Requirements*", "Requirements"),      # one italic run, same rule
+        ("## __Requirements__", "Requirements"),
+        # a run that does not wrap the WHOLE label is content, not syntax
+        ("## **Required** or **Preferred**", "**Required** or **Preferred**"),
+        ("## Learn C#", "Learn C#"),
+    ],
+)
+def test_heading_of_reads_every_heading_spelling(heading: str, expected: str) -> None:
+    blocks = annotate(f"{heading}\n- Rust\n")
+    assert heading_of(blocks, "b000002") == expected
+
+
+@pytest.mark.parametrize("heading", ["**:**", "**  **", "## :", "#  :", "### **:**"])
+def test_heading_of_is_null_for_a_heading_whose_label_is_only_punctuation(
+    heading: str,
+) -> None:
+    """A heading that names nothing answers null, never "".
+
+    The record schema rejects an empty `section_heading` (`minLength: 1`), so
+    without this guard a degenerate heading would turn an otherwise clean
+    record into `schema:invalid`. Null over an empty string.
+    """
+    blocks = annotate(f"{heading}\n- Rust\n")
+    assert heading_of(blocks, "b000001") is None
+    assert heading_of(blocks, "b000002") is None
+
+
+def test_a_heading_naming_nothing_ends_the_section_above_it() -> None:
+    # it is still a heading under the predicate, so it closes "Requirements";
+    # the section it opens has no name, and null over guess means the bullet
+    # under it is not filed under a section it no longer sits in
+    blocks = annotate("## Requirements\n- 5 years of Go\n**  **\n- Rust\n")
+    assert heading_of(blocks, "b000002") == "Requirements"
+    assert heading_of(blocks, "b000004") is None

@@ -15,9 +15,32 @@ from typing import Any
 #: no blocking findings: a full-source semantic audit of the chosen candidate
 #: outranks sampling variance, and symmetrically, variance alone is not a
 #: semantic defect (spec §6: "Sampling is not a substitute for semantic
-#: audit"). `incomplete` and `disagreement` still block — an incomplete cohort
-#: never certifies, and a disagreement with no clean audit stays for review.
-_SAMPLING_OK = ("not_requested", "complete", "adjudicated")
+#: audit"). `disagreement` still blocks — a disagreement with no clean audit
+#: stays for review. `incomplete` stopped blocking with parsing contract v3
+#: (§3, §5): a cohort short of samples is monitoring information recorded in
+#: `sample_notes`, and the candidate it did verify is judged by the audit
+#: exactly like an unsampled document's — the sampler running out of budget is
+#: not evidence against the record.
+_SAMPLING_OK = ("not_requested", "complete", "adjudicated", "incomplete")
+
+#: `completeness` when the VERIFIER found the gap rather than the auditor
+#: (validator/20, T-Q3S9). A ladder that ran out with a candidate whose only
+#: failing findings are block bookkeeping — coverage claims its named objects
+#: never quote, blocks no row accounts for — settles on that candidate instead
+#: of quarantining (`state.derive_state`): everything it extracted bound and
+#: verified, so it is a faithful extraction with a completeness gap, not an
+#: unfaithful one. Its own value rather than `findings`, because `findings` is
+#: the auditor's claim to have READ the record against the source and found an
+#: omission, and no audit ran here. It fails the `no_findings` test below like
+#: every other value, so such a record is never `search_eligible`; the gaps
+#: themselves travel beside it as `quality.accounting_gaps`
+#: (`serve.quality_of`). Restated in `state.ACCOUNTING_GAPS` — the shared fold
+#: imports no v2 module — and pinned to it by a test.
+ACCOUNTING_GAPS = "accounting_gaps"
+
+#: every value the completeness dimension can take: the audit phase's four
+#: (spec §6) and the verifier's one
+COMPLETENESS = ("no_findings", "findings", "not_checked", "error", ACCOUNTING_GAPS)
 
 #: human dispositions that leave a candidate publishable. A whitelist, not a
 #: `!= "rejected"` check: a disposition this policy does not recognise must

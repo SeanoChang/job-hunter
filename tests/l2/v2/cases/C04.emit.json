@@ -30,18 +30,9 @@
             "occurrence": null
           }
         ],
-        "importance": "preferred",
-        "importance_evidence": [
-          {
-            "block_id": "b000001",
-            "text": null,
-            "occurrence": null
-          }
-        ],
+        "modality_evidence": null,
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [],
         "unresolved": []
@@ -58,8 +49,7 @@
             "occurrence": null
           }
         ],
-        "importance": "preferred",
-        "importance_evidence": [
+        "modality_evidence": [
           {
             "block_id": "b000003",
             "text": "preferred",
@@ -68,8 +58,6 @@
         ],
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [],
         "unresolved": []
@@ -86,8 +74,7 @@
             "occurrence": null
           }
         ],
-        "importance": "required",
-        "importance_evidence": [
+        "modality_evidence": [
           {
             "block_id": "b000004",
             "text": null,
@@ -96,8 +83,6 @@
         ],
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [
           "f_asc606_experience"

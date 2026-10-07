@@ -27,12 +27,9 @@
             "occurrence": null
           }
         ],
-        "importance": null,
-        "importance_evidence": null,
+        "modality_evidence": null,
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [],
         "unresolved": []
@@ -49,12 +46,9 @@
             "occurrence": null
           }
         ],
-        "importance": null,
-        "importance_evidence": null,
+        "modality_evidence": null,
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [
           "f_pay"

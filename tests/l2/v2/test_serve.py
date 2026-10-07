@@ -32,7 +32,21 @@ MODEL = "fixture-hand-authored"
 
 
 def case_emit(case: str) -> dict[str, Any]:
-    loaded: dict[str, Any] = json.loads((CASES / f"{case}.emit.json").read_text(encoding="utf-8"))
+    """The FROZEN schema-2 emit of a case (`<case>.emit2.json`).
+
+    The case corpus carries both shapes since the v20 bump: `<case>.emit.json`
+    is the schema-3 derivation the active bundle runs on, and `.emit2.json` is
+    the hand-authored schema-2 original it was derived from. Every case-driven
+    test in this file is a pin on the SCHEMA-2 projection — the byte-identity
+    guards, the demoted `importance` metric, the legacy `profile_mentions`
+    columns — and schema 2 is a shipped corpus partition `rebuild` still
+    replays, so those pins stay on the frozen emit. The schema-3 projection is
+    covered from the `v3_record` fixtures (conftest) instead, which is where a
+    record carrying no verdict at all comes from.
+    """
+    loaded: dict[str, Any] = json.loads(
+        (CASES / f"{case}.emit2.json").read_text(encoding="utf-8")
+    )
     body: dict[str, Any] = loaded["emit"]
     return body
 
@@ -42,6 +56,7 @@ def case_record(case: str, emit: dict[str, Any] | None = None) -> dict[str, Any]
     return assemble(
         case_emit(case) if emit is None else emit, markdown,
         document_hash=sha256_hex(markdown.encode("utf-8")), observed_model=MODEL, at=AT,
+        schema_version="2",
     )
 
 
@@ -99,10 +114,13 @@ def test_profile_of_is_idempotent_over_its_own_output(v2_record: dict[str, Any])
 #
 # `runner.settle` hands `bundle.profile_of(record)` to `agreement.cohort_hook`,
 # and `agreement._claims` reads exactly one place: `demand_profile.areas[].
-# claims[]`. A served slice without that key made every k-sample cohort score a
-# perfect 1.0 (empty claim sets, `denom == 0`, `f1 = 1.0`) and certify itself,
-# so the audit slot and every reprompted document validated no matter how badly
-# their samples disagreed. These tests are the gate's teeth.
+# claims[]`. A served slice without that key gives the gate nothing to align,
+# so no aligned pair can split and every k-sample cohort certifies itself — the
+# audit slot validating no matter how far apart its samples were. Under
+# validator/20 the split that parks a document is a polarity flip or a numeric
+# conflict on an aligned pair, and both are read out of this index; so are the
+# medoid, the dispute set, and the metrics `quality.sample_notes` publishes.
+# These tests are the gate's teeth.
 
 
 def _c01_variant(**changes: Any) -> dict[str, Any]:
@@ -118,40 +136,90 @@ OTHER_SPAN = [{"block_id": "b000002", "occurrence": 0,
                "text": "a proven track record of exceeding sales targets"}]
 
 
-def test_two_unrelated_documents_never_agree() -> None:
-    """The floor the missing index removed: samples of two different documents
-    must not certify each other."""
+def test_two_unrelated_documents_score_zero_f1() -> None:
+    """The floor the missing index removed: without the claim index every
+    cohort scored a perfect 1.0 on empty claim sets. The index is what makes
+    the number mean something — under validator/20 it is a reported metric
+    rather than a gate, and a metric that reads 1.0 for two different
+    documents would still be a broken measurement."""
     result = agree([serve.profile_of(case_record("C01")),
                     serve.profile_of(case_record("C04"))])
-    assert result.passed is False
-    assert result.report["mean_f1"] == 0.0 and "f1" in result.report["failures"]
+    assert result.report["mean_f1"] == 0.0
+    assert result.report["metrics"]["f1"] == 0.0
+    assert result.report["failures"] == []  # F1 no longer parks a document
 
 
-def test_a_sample_citing_different_text_fails_the_f1_gate() -> None:
+def test_a_sample_citing_different_text_is_an_f1_metric() -> None:
     """The realistic disagreement: two samples of ONE document that do not agree
-    on which text carries the requirement."""
+    on which text carries the requirement. Thoroughness variance, reported."""
     result = agree([serve.profile_of(case_record("C01")), _c01_variant(evidence=OTHER_SPAN)])
-    assert result.passed is False
-    assert result.report["mean_f1"] < 0.8 and "f1" in result.report["failures"]
+    assert result.report["mean_f1"] < 0.8
+    assert result.report["failures"] == [] and result.passed is True
 
 
-def test_a_flipped_importance_reaches_the_importance_gate() -> None:
-    """Same spans, different demand: `required` in one sample and `preferred` in
-    the other is the disagreement the F1 count cannot see."""
+def test_a_flipped_importance_no_longer_gates() -> None:
+    """Same spans, different demand. Under 19 this parked the document; the
+    2026-09-22 analysis found importance labels disagreeing across runs of one
+    model and more across models, and schema 3 removed the field rather than
+    calibrating it."""
     result = agree([serve.profile_of(case_record("C01")), _c01_variant(importance="preferred")])
     assert result.report["mean_f1"] == 1.0  # the claims align ...
     assert result.report["required_importance_agreement"] == 0.0  # ... and still disagree
-    assert result.report["failures"] == ["importance"] and result.passed is False
+    assert result.report["failures"] == [] and result.passed is True
 
 
 def test_a_flipped_polarity_escalates() -> None:
-    """Polarity is the attribution gate's documented blind spot, so any split
-    escalates unconditionally (`agreement` module docstring). C01's statement
-    and the experience fact hanging off it both carry that polarity, so the flip
-    shows up on both aligned pairs."""
+    """Polarity is the attribution gate's documented blind spot, so a negation
+    read one way and not the other escalates on a statement kind a reader acts
+    on (`agreement` module docstring) — C01's is a qualification. C01's
+    statement and the experience fact hanging off it both carry that polarity,
+    so the flip shows up on both aligned pairs."""
     result = agree([serve.profile_of(case_record("C01")), _c01_variant(polarity="negative")])
     assert result.report["negation_disagreements"] == 2
     assert "negation" in result.report["failures"] and result.passed is False
+
+
+def _variant(case: str, index: int, **changes: Any) -> dict[str, Any]:
+    """A second sample of a case document: its schema-2 emit with statement
+    `index` moved."""
+    emit = copy.deepcopy(case_emit(case))
+    emit["statements"][index].update(changes)
+    return serve.profile_of(case_record(case, emit))
+
+
+def test_a_hedged_polarity_is_a_metric_not_a_negation() -> None:
+    """The 2026-09-28 amendment on the real projection: a hedge is not a
+    denial. The stored claim still says `negated: true` for an `ambiguous`
+    statement — that bit is v1's shape and stays — so the gate has to read
+    polarity itself, and a positive-vs-ambiguous split lands in the polarity
+    metric on both of C01's aligned pairs instead of parking the document."""
+    result = agree([serve.profile_of(case_record("C01")), _c01_variant(polarity="ambiguous")])
+    assert result.report["negation_disagreements"] == 0
+    assert result.report["metrics"]["splits"]["polarity"] == 2
+    assert result.report["failures"] == [] and result.passed is True
+
+
+def test_a_negation_in_a_hiring_policy_is_a_polarity_split_not_a_gate() -> None:
+    """C02's English-language requirement is a hiring policy: one sample
+    reading it as a restriction on who is considered is a framing split in
+    boilerplate, which the gate reports and does not park on."""
+    hiring = serve.profile_of(case_record("C02"))
+    assert hiring["statements"][1]["kind"] == "hiring_policy"
+    result = agree([hiring, _variant("C02", 1, polarity="negative")])
+    assert result.report["negation_disagreements"] == 0
+    assert result.report["metrics"]["splits"]["polarity"] == 1
+    assert result.report["failures"] == [] and result.passed is True
+
+
+def test_the_gate_leaves_a_hedged_schema_2_claim_byte_identical() -> None:
+    """The stored blob is not where the amendment lives: an ambiguous
+    statement's claim keeps v1's collapsed bit and the polarity target it has
+    carried since validator/19, key for key."""
+    blob = _variant("C01", 0, polarity="ambiguous")
+    claim = blob["demand_profile"]["areas"][0]["claims"][0]
+    assert set(claim) == V2_CLAIM_KEYS
+    assert claim["negated"] is True
+    assert claim["polarity_target"] == "ambiguous:candidate"
 
 
 def test_the_claim_index_covers_every_statement_mention_and_fact() -> None:
@@ -188,6 +256,268 @@ def test_claims_carry_the_fields_a_v1_renderer_prints() -> None:
             assert isinstance(claim["quote"]["text"], str)
             assert isinstance(claim["quote"]["span"][0], int)
             assert "importance" in claim and "negated" in claim
+
+
+#: Every key a schema-2 claim has carried since validator/19. Schema 2 is a
+#: shipped corpus partition: adding a key here changes stored blob bytes for
+#: every archived record, so the schema-3 fields are carried only by schema-3
+#: claims and this is the pin that keeps it that way.
+V2_CLAIM_KEYS = {"quote", "importance", "level", "negated", "kind",
+                 "polarity_target", "values", "alternatives", "entity_links"}
+V2_AREA_KEYS = {"id", "name", "kind", "importance", "level", "claims"}
+
+
+def test_a_schema_2_claim_projects_byte_identically(v2_record: dict[str, Any]) -> None:
+    """The regression guard on the schema-3 projection work."""
+    for record in (case_record("C01"), case_record("C04"), v2_record):
+        for area in serve.claim_index(record)["areas"]:
+            assert set(area) == V2_AREA_KEYS
+            for claim in area["claims"]:
+                assert set(claim) == V2_CLAIM_KEYS
+
+
+def test_the_c01_schema_2_claim_is_exactly_what_it_was() -> None:
+    """The same guard spelled out once, value by value, so a silent change to a
+    projected field is as visible as a changed key."""
+    area = serve.claim_index(case_record("C01"))["areas"][0]
+    assert area == {
+        "id": "s_sales_experience",
+        "name": "Cloud/software B2B sales or solution engineering experience",
+        "kind": "qualification",
+        "importance": "required",
+        "level": None,
+        "claims": [
+            {
+                "quote": {
+                    "text": "- Experience in cloud/software B2B sales or solution "
+                            "engineering, with a minimum of 8 years of experience and a "
+                            "proven track record of exceeding sales targets.",
+                    "span": [31, 190],
+                },
+                "importance": "required", "level": None, "negated": False,
+                "kind": "qualification", "polarity_target": None,
+                "values": ["experience|domain|||parsed|q|duration|gte|96|None|True|None|month"],
+                "alternatives": [], "entity_links": [],
+            },
+            {
+                "quote": {"text": "8 years", "span": [115, 122]},
+                "importance": "required", "level": None, "negated": False,
+                "kind": "qualification", "polarity_target": None,
+                "values": ["experience|domain|||parsed|q|duration|gte|96|None|True|None|month"],
+                "alternatives": [], "entity_links": [],
+            },
+        ],
+    }
+
+
+# --- schema 3: headings and quoted modality, no verdicts --------------------
+
+
+def test_a_schema_3_record_projects_without_touching_a_verdict(
+    v3_record: dict[str, Any],
+) -> None:
+    """The KeyError this fixes: `claim_index` indexed `statement["importance"]`
+    and `statement["proficiency"]`, neither of which schema 3 has."""
+    statements = v3_record["statements"]
+    assert all("importance" not in s and "proficiency" not in s for s in statements)
+    area = serve.claim_index(v3_record)["areas"][0]
+    assert set(area) == V2_AREA_KEYS
+    assert area["importance"] == serve.NO_IMPORTANCE and area["level"] is None
+    statement_claim = area["claims"][0]
+    assert set(statement_claim) == V2_CLAIM_KEYS | {"section_heading", "modality"}
+    assert statement_claim["section_heading"] == "Requirements"
+    assert statement_claim["modality"] == "A minimum of"
+    assert statement_claim["importance"] == serve.NO_IMPORTANCE
+    assert statement_claim["level"] is None
+
+
+def test_a_schema_3_statement_with_no_modal_phrase_projects_null(
+    v3_record_with_mentions: dict[str, Any],
+) -> None:
+    """The posting quotes "required" for the degree and nothing for the
+    certification; `modality` is the bound quote's text or null, never an
+    inference from the heading (parsing contract v3 §2.1)."""
+    areas = {a["id"]: a for a in serve.claim_index(v3_record_with_mentions)["areas"]}
+    degree = areas["s_degree"]["claims"][0]
+    cert = areas["s_cert"]["claims"][0]
+    assert degree["modality"] == "required" and cert["modality"] is None
+    assert degree["section_heading"] == cert["section_heading"] == "Requirements"
+    assert degree["importance"] == cert["importance"] == serve.NO_IMPORTANCE
+
+
+def test_profile_of_serves_a_schema_3_record(v3_record: dict[str, Any]) -> None:
+    profile = serve.profile_of(v3_record)
+    assert profile["statements"] == v3_record["statements"]
+    assert profile["demand_profile"] == serve.claim_index(v3_record)
+    assert serve.profile_of(profile) == profile  # still idempotent over its own output
+
+
+def test_the_blob_stamps_the_records_own_schema_version(
+    v2_record: dict[str, Any], v3_record: dict[str, Any]
+) -> None:
+    """The marker is the contract the two shape-aware readers dispatch on, and
+    `agreement._gates` reads it to pick a settlement policy — so it has to be
+    the record's OWN shape, not the module's default. A v11 record stamped "2"
+    would send schema-3 statements to every schema-2 reader there is.
+    """
+    assert serve.profile_of(v3_record)["schema"] == "3"
+    assert serve.profile_of(v2_record)["schema"] == "2"  # the frozen replay path
+
+
+def test_the_schema_stamp_survives_a_reprojection_of_the_stored_blob(
+    v3_record: dict[str, Any],
+) -> None:
+    """A stored blob carries no `extraction` envelope (it stays in the archive),
+    so re-projecting one has to read the marker it already declares — otherwise
+    every re-projection of a schema-3 blob would relabel it."""
+    blob = serve.profile_of(v3_record)
+    assert "extraction" not in blob
+    assert serve.profile_of(blob)["schema"] == "3"
+
+
+def test_mention_rows_for_a_schema_3_record_carry_the_sentinel(
+    v3_record_with_mentions: dict[str, Any],
+) -> None:
+    assert serve.mention_rows(v3_record_with_mentions) == [
+        ("CPA", "qualification", serve.NO_IMPORTANCE)
+    ]
+
+
+def test_summary_of_a_schema_3_record_groups_under_the_sentinel(
+    v3_record: dict[str, Any],
+) -> None:
+    """`summary` already read both verdicts defensively; this pins that a
+    schema-3 blob summarizes rather than raising or inventing a level."""
+    out = serve.summary(serve.profile_of(v3_record))
+    assert out["areas"] == [{"name": "Sales experience", "kind": "qualification",
+                             "importance": serve.NO_IMPORTANCE, "level": None}]
+
+
+# --- the marker's readers ----------------------------------------------------
+
+
+def test_the_stamp_readers_recognise_every_shape_this_module_serves(
+    v2_record: dict[str, Any], v3_record: dict[str, Any]
+) -> None:
+    """The stamp is only worth writing if the readers recognise it.
+
+    `profile_of` stamps the record's own version, so a reader testing the
+    marker for equality with one version stops recognising the live shape the
+    moment the contract bumps. Both shapes this module projects have to read as
+    v2-family; a blob from before the marker existed still must not.
+    """
+    assert serve.reads_as_v2(serve.profile_of(v3_record))
+    assert serve.reads_as_v2(serve.profile_of(v2_record))
+    assert not serve.reads_as_v2({"demand_profile": {"areas": []}})  # a v1 blob
+    assert sorted(serve.V2_SHAPES) == ["2", "3"]
+
+
+def test_pulse_summarises_a_schema_3_blob_through_the_v2_projection(
+    v3_record_with_mentions: dict[str, Any],
+) -> None:
+    """`pulse.profile_summary` dispatches on the stamp, so it has to follow it.
+
+    Falling through to the v1 `demand_profile` walk is not a degraded answer,
+    it is a wrong one: the walk drops `mentions` entirely and reports each
+    statement as its own area carrying `NO_IMPORTANCE` as if that were a
+    verdict the posting made — the exact fabrication parsing contract v3 exists
+    to remove. Lives here rather than in `tests/test_pulse.py` because what is
+    pinned is the stamp's contract with its reader.
+    """
+    from jobhunter.pulse import profile_summary
+
+    blob = serve.profile_of(v3_record_with_mentions)
+    assert blob["schema"] == "3"
+    assert profile_summary(blob) == serve.summary(blob)
+    assert profile_summary(blob)["mentions"] == ["CPA"]
+
+
+# --- quality.sample_notes: what the cohort split on (spec §4) ----------------
+
+
+def _settled(record: dict[str, Any], agreement: dict[str, Any] | None) -> dict[str, Any]:
+    """The record as `runner._settled` hands it to the projections."""
+    settlement: dict[str, Any] = {
+        "lifecycle": "validated", "sampling": "complete", "semantics": "no_findings",
+        "completeness": "no_findings", "blocking": 0, "human_review": "none",
+    }
+    if agreement is not None:
+        settlement["agreement"] = agreement
+    return {**record, serve.SETTLEMENT: settlement}
+
+
+def test_sample_notes_name_the_dimensions_the_samples_split_on() -> None:
+    """Spec §4: the blob's quality block gains `sample_notes` — which metric
+    dimensions split and over how many aligned pairs — so a reading agent sees
+    what the cohort disagreed on without re-deriving the gate."""
+    report = agree([serve.profile_of(case_record("C01")),
+                    _c01_variant(kind="responsibility")]).report
+    profile = serve.profile_of(_settled(case_record("C01"), report))
+    notes = profile["quality"]["sample_notes"]
+    assert notes["k"] == 2
+    assert notes["splits"] == {"kind": report["metrics"]["splits"]["kind"]}
+    assert notes["aligned_pairs"] == report["metrics"]["aligned_pairs"]
+    assert notes["f1"] == report["mean_f1"]
+
+
+def test_sample_notes_name_a_polarity_split_the_gate_let_through() -> None:
+    """What the negation gate stops parking on, the reader still hears about:
+    a hedge against an assertion is published as a `polarity` split."""
+    report = agree([serve.profile_of(case_record("C01")),
+                    _c01_variant(polarity="ambiguous")]).report
+    notes = serve.profile_of(_settled(case_record("C01"), report))["quality"]["sample_notes"]
+    # a positive statement has no target, so only the polarity itself split
+    assert notes["splits"] == {"polarity": 2}
+
+
+def test_sample_notes_are_absent_when_no_cohort_ran() -> None:
+    """An unsampled document (k=1) has no cohort and no notes; the blob keeps
+    exactly the seven quality dimensions it had."""
+    profile = serve.profile_of(_settled(case_record("C01"), None))
+    assert "sample_notes" not in profile["quality"]
+
+
+def test_sample_notes_are_empty_when_the_cohort_agreed() -> None:
+    """A cohort that split on nothing says so: the key is present with no
+    splits, which is a different statement from "never sampled"."""
+    same = serve.profile_of(case_record("C01"))
+    report = agree([same, same]).report
+    profile = serve.profile_of(_settled(case_record("C01"), report))
+    assert profile["quality"]["sample_notes"]["splits"] == {}
+
+
+def test_sample_notes_count_the_samples_an_incomplete_cohort_lost() -> None:
+    """Parsing contract v3 §5: an exhausted sample budget is monitoring
+    information, so the cohort that could not be measured says how far it got.
+    `requested` is the slots the sampler opened, `arrived` the records the gate
+    actually had to compare."""
+    report = agree([serve.profile_of(case_record("C01")),
+                    _c01_variant(kind="responsibility")]).report
+    report["k"], report["arrived"] = 3, 2  # what `cohort_hook` stamps
+    notes = serve.profile_of(_settled(case_record("C01"), report))["quality"]["sample_notes"]
+    assert (notes["requested"], notes["arrived"]) == (3, 2)
+    assert notes["k"] == 3
+    assert notes["splits"] == {"kind": report["metrics"]["splits"]["kind"]}
+
+
+def test_sample_notes_of_a_complete_cohort_count_nothing() -> None:
+    """A cohort that got everything it asked for has nothing out of the
+    ordinary to report: `k` is already its arrived count, and the notes keep
+    exactly the four keys every reader of them was written against."""
+    same = serve.profile_of(case_record("C01"))
+    report = agree([same, same]).report
+    report["arrived"] = 2
+    notes = serve.profile_of(_settled(case_record("C01"), report))["quality"]["sample_notes"]
+    assert sorted(notes) == ["aligned_pairs", "f1", "k", "splits"]
+
+
+def test_sample_notes_survive_a_re_projection_of_the_stored_blob() -> None:
+    """`profile_of` is idempotent over its own output and the settlement key is
+    consumed, so a caller holding only the blob keeps the notes."""
+    report = agree([serve.profile_of(case_record("C01")),
+                    _c01_variant(kind="responsibility")]).report
+    once = serve.profile_of(_settled(case_record("C01"), report))
+    assert serve.profile_of(once) == once
 
 
 # --- mention_rows: the C04 fix at the write path ----------------------------

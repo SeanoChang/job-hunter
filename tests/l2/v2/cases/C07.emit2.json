@@ -1,0 +1,106 @@
+{
+  "case": "C07",
+  "company": "Unity",
+  "source_url": "https://unitytech.wd1.myworkdayjobs.com/Unity/job/Bellevue-WA-USA/Sr-Recruiter---ML---AI--6-month-Contract_JOBREQ-2616471",
+  "original_document_hash": "0a7ffb6f37186b81294d41552ea406ad071b1e1daea2026d5dacc127190f50cd",
+  "excerpt_lines": [
+    0,
+    20
+  ],
+  "note": "Audit defect 7: an internal placeholder job description was validated and the English obligation excluded. Usability is placeholder and the English statement stays visible.",
+  "emit": {
+    "source_assessment": {
+      "usability": "placeholder",
+      "evidence": [
+        {
+          "block_id": "b000001",
+          "text": null,
+          "occurrence": null
+        }
+      ],
+      "note": "The job description block is an internal authoring placeholder, not a description."
+    },
+    "statements": [
+      {
+        "id": "s_english",
+        "kind": "hiring_policy",
+        "subject": "candidate",
+        "topic": "Sufficient knowledge of English for professional exchanges",
+        "evidence": [
+          {
+            "block_id": "b000002",
+            "text": null,
+            "occurrence": null
+          }
+        ],
+        "importance": "required",
+        "importance_evidence": [
+          {
+            "block_id": "b000002",
+            "text": "requires",
+            "occurrence": 0
+          }
+        ],
+        "polarity": "positive",
+        "polarity_evidence": null,
+        "proficiency": null,
+        "proficiency_evidence": null,
+        "condition_ids": [],
+        "fact_ids": [],
+        "unresolved": []
+      }
+    ],
+    "relations": {
+      "groups": [],
+      "conditions": [],
+      "example_sets": []
+    },
+    "facts": {
+      "presence": {
+        "experience": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "compensation": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "quantities": {
+          "state": "none_found",
+          "evidence": null
+        },
+        "dates": {
+          "state": "none_found",
+          "evidence": null
+        }
+      },
+      "entries": []
+    },
+    "mentions": [],
+    "areas": [],
+    "block_accounting": [
+      {
+        "block_id": "b000001",
+        "disposition": "unresolved",
+        "ref_ids": [],
+        "exclusion_reason": null,
+        "evidence": [
+          {
+            "block_id": "b000001",
+            "text": null,
+            "occurrence": null
+          }
+        ]
+      },
+      {
+        "block_id": "b000002",
+        "disposition": "statements",
+        "ref_ids": [
+          "s_english"
+        ],
+        "exclusion_reason": null,
+        "evidence": null
+      }
+    ]
+  }
+}

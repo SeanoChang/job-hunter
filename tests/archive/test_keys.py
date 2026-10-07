@@ -127,6 +127,33 @@ def test_x_audit_key_carries_the_audit_version_that_wrote_it() -> None:
             keys.x_audit_key(attempt, unspellable)
 
 
+def test_the_v4_audit_key_composes_beside_the_v3_artifact() -> None:
+    """`semantic-audit/v4` needs no change here, and that is the assertion.
+
+    The v20 bump (parsing contract v3 §6) is the first one the version-keyed
+    layout has had to carry: the segment spells `.a4`, the `.a3` artifact keeps
+    its own key untouched under a write-once archive, and the live audit
+    version is the one a reader derives — so a v3-audited candidate reads as
+    "audit owed" and is re-audited rather than published on a verdict the
+    retired contract reached.
+    """
+    from jobhunter.archive import keys
+    from jobhunter.l2.v2.audit import AUDIT_VERSION
+
+    at = datetime(2026, 8, 27, 6, 12, 4, tzinfo=UTC)
+    attempt = keys.x_attempt_key(at, "9f3ab" + "0" * 59, 1, 2)
+    v3, v4 = (keys.x_audit_key(attempt, v) for v in ("semantic-audit/v3", AUDIT_VERSION))
+    assert AUDIT_VERSION == "semantic-audit/v4"
+    assert v4 == "extractions/audits/2026/08/27T061204Z-9f3ab0000000-s1a2.a4.json.gz"
+    assert v4 != v3 and v4 != keys.x_audit_key(attempt, None)
+    # injective over the whole family: no two versions share a write-once key
+    versions = [None, keys.LEGACY_AUDIT_VERSION, *(f"semantic-audit/v{n}" for n in range(3, 25))]
+    written = [keys.x_audit_key(attempt, version) for version in versions]
+    assert len(set(written)) == len(versions) - 1  # None and v2 are the same bare key
+    assert keys.parse_x_attempt_key(v4) is None
+    assert v4.startswith(keys.X_AUDITS_PREFIX)
+
+
 def test_x_audit_key_refuses_a_version_its_segment_cannot_spell_apart() -> None:
     """The guard is two-sided or it is not a guard.
 

@@ -57,6 +57,7 @@ from jobhunter.l2.runner import (
 from jobhunter.l2.state import globs_to_regex
 from jobhunter.l2.v2.assemble import assemble
 from jobhunter.l2.v2.audit import AUDIT_VERSION
+from jobhunter.l2.v2.types import NO_IMPORTANCE
 from jobhunter.store import extraction
 from jobhunter.timeutil import iso, utcnow_precise
 from tests.l2.test_attempts import _attempt
@@ -67,10 +68,28 @@ Conn = psycopg.Connection[dict[str, Any]]
 CASES = pathlib.Path(__file__).parent / "v2" / "cases"
 GLOBS = ("z-ai/*",)
 MODEL = "z-ai/glm-5.2:free"
-V2_TUPLE = ("demand-profile/v10", "2", "19")
-# C04's three certifications, as `profile_mentions` rows once an audit clears
-# the record: the importance is the linked STATEMENT's, not the area's.
+#: the tuple a v2 run extracts under today (parsing contract v3)
+V2_TUPLE = ("demand-profile/v11", "3", "20")
+#: the frozen, replay-only tuple the archived v2 corpus was written under;
+#: `get_bundle_for_tuple` still resolves it, and `test_rebuild` drives it
+V2_SCHEMA2_TUPLE = ("demand-profile/v10", "2", "20")
+# C04's three certifications, as `profile_mentions` rows. The column is NOT NULL
+# and a schema-3 statement carries no verdict at all (parsing contract v3 §2.1),
+# so every row takes `types.NO_IMPORTANCE` — the defect this expectation guarded
+# (a `preferred` claim reading `required` because its AREA said so) can no
+# longer be spelled. Since contract v3 §4 these are the rows a PARKED document
+# serves too — the store refills the aggregate for any row with a chosen
+# candidate, and `search_eligible` (not the skill listing) stays gated on the
+# audit.
 C04_ROWS = [
+    ("ACA", "qualification", NO_IMPORTANCE),
+    ("ACCA", "qualification", NO_IMPORTANCE),
+    ("CPA", "qualification", NO_IMPORTANCE),
+]
+#: the same rows off a SCHEMA-2 record, where the statement still carries a
+#: verdict — what the frozen replay partition projects, and the original C04
+#: contract: the importance is the linked STATEMENT's, never the area's
+C04_ROWS_V2 = [
     ("ACA", "qualification", "preferred"),
     ("ACCA", "qualification", "preferred"),
     ("CPA", "qualification", "preferred"),
@@ -82,7 +101,21 @@ def source(case: str) -> str:
 
 
 def emit_of(case: str) -> dict[str, Any]:
+    """The case's SCHEMA-3 emit — what the active bundle is driven with.
+
+    Derived from `<case>.emit2.json` by `scripts/migrate_cases_v3.py`, never
+    hand-written; `tests/l2/v2/test_cases.py` re-runs the derivation.
+    """
     loaded: dict[str, Any] = json.loads((CASES / f"{case}.emit.json").read_text(encoding="utf-8"))
+    body: dict[str, Any] = loaded["emit"]
+    return body
+
+
+def emit2_of(case: str) -> dict[str, Any]:
+    """The case's FROZEN schema-2 emit — what the replay path is driven with."""
+    loaded: dict[str, Any] = json.loads(
+        (CASES / f"{case}.emit2.json").read_text(encoding="utf-8")
+    )
     body: dict[str, Any] = loaded["emit"]
     return body
 
@@ -243,13 +276,19 @@ def clean_audit(prompt: str) -> str:
 
 
 def blocking_audit(prompt: str) -> str:
-    """One `importance` finding against the candidate's first statement."""
+    """One blocking semantics finding against the candidate's first statement.
+
+    `unsupported_statement` since semantic-audit/v4: the `importance` code this
+    fixture used left the vocabulary with the field (parsing contract v3 §6),
+    and a finding carrying it is now an audit error rather than a verdict —
+    which is a different test (`test_an_audit_the_judge_refuses_is_an_error`).
+    """
     statement = candidate_in(prompt)["statements"][0]["id"]
     return json.dumps({
         "candidate_hash": candidate_hash_in(prompt),
         "findings": [{
-            "code": "importance", "targets": [statement], "evidence": None,
-            "explanation": "the posting words this as preferred, not required",
+            "code": "unsupported_statement", "targets": [statement], "evidence": None,
+            "explanation": "the cited block does not say what this statement claims",
         }],
         "unresolved": [],
     })
@@ -299,9 +338,16 @@ def _polarity_op(prompt: str) -> dict[str, Any]:
     statement, read as a prohibition, put back the way the source words it.
 
     Everything it needs is printed in the prompt — the object to replace and the
-    `object_hash` an operation must echo to be allowed to touch it."""
+    `object_hash` an operation must echo to be allowed to touch it.
+
+    `section_heading` comes off with the hash: the prompt prints it (it is part
+    of the candidate) and the repair contract REFUSES an object that sends one
+    back, because it is code's derivation from the block structure rather than
+    a field a repair may claim (parsing contract v3 §2.1; `repair._RECORD_ONLY`
+    and the operation schema's own instruction).
+    """
     shown = candidate_in(prompt)["statements"][1]
-    fixed = {k: v for k, v in shown.items() if k != "object_hash"}
+    fixed = {k: v for k, v in shown.items() if k not in ("object_hash", "section_heading")}
     fixed["polarity"] = "positive"
     fixed["polarity_evidence"] = None
     return {
@@ -339,8 +385,8 @@ def refused_audit(prompt: str) -> str:
     """
     return json.dumps({
         "findings": [{
-            "code": "importance", "targets": ["s_no_such_id"], "evidence": None,
-            "explanation": "the posting words this as preferred, not required",
+            "code": "unsupported_statement", "targets": ["s_no_such_id"], "evidence": None,
+            "explanation": "the cited block does not say what this statement claims",
         }],
         "unresolved": [],
     })
@@ -388,12 +434,24 @@ class AuditingEngine(FakeEngine):
 
 
 def divergent_c01() -> dict[str, Any]:
-    """A C01 emit citing a different span for the same requirement."""
+    """A C01 emit citing a different span for the same requirement, and reading
+    that requirement as negated.
+
+    Two disagreements, answering two different needs. The span moves so the
+    statement claims do not align and the cohort's F1 separates the samples —
+    which is what puts the MEDOID off slot 1. The polarity flips because under
+    validator/20 an F1 split is a metric and polarity is one of the two things
+    that still parks a document; the experience fact hanging off the statement
+    cites the same "8 years" in both samples, so those claims do align and the
+    split is visible where it has to be.
+    """
     emit = copy.deepcopy(emit_of("C01"))
     emit["statements"][0]["evidence"] = [
         {"block_id": "b000002", "occurrence": 0,
          "text": "a proven track record of exceeding sales targets"}
     ]
+    emit["statements"][0]["polarity"] = "negative"
+    emit["statements"][0]["polarity_evidence"] = None
     return emit
 
 
@@ -411,24 +469,48 @@ def polarity_split_c04() -> dict[str, Any]:
     return emit
 
 
+def polarity_split_c04_v2() -> dict[str, Any]:
+    """`polarity_split_c04` over the FROZEN schema-2 emit.
+
+    Replay judges an archived attempt under the tuple that wrote it, so a test
+    about the schema-2 partition needs a schema-2 response to re-judge — the
+    same divergence, in the shape the archive actually holds.
+    """
+    emit = copy.deepcopy(emit2_of("C04"))
+    emit["statements"][1]["polarity"] = "negative"
+    emit["statements"][1]["polarity_evidence"] = [
+        {"block_id": "b000003", "text": "not required", "occurrence": 0}
+    ]
+    return emit
+
+
 def divergent_c09() -> dict[str, Any]:
-    """A C09 emit citing the tail of the alternative route, not the whole clause."""
+    """A C09 emit citing the tail of the alternative route, not the whole
+    clause — and reading the degree requirement as negated.
+
+    Same shape as `divergent_c01` and for the same reason: the span move is the
+    F1 separation, the polarity flip on the OTHER statement (whose span both
+    samples cite identically) is what validator/20 still gates on.
+    """
     emit = copy.deepcopy(emit_of("C09"))
     emit["statements"][1]["evidence"] = [
         {"block_id": "b000002", "occurrence": 0,
          "text": "incident management or operational resilience"}
     ]
+    emit["statements"][0]["polarity"] = "negative"
+    emit["statements"][0]["polarity_evidence"] = None
     return emit
 
 
 # --- the tuple, the prompt, the archive ------------------------------------
 
 
-def test_a_v2_document_settles_validated_with_a_schema_2_blob(
+def test_a_v2_document_settles_validated_with_a_schema_3_blob(
     pg: Conn, store: ArchiveStore  # noqa: F811
 ) -> None:
-    """C01 end to end: the v2 prompt in, schema-2 emit back, v2 record assembled and
-    verified, the served slice stored under the v9/2/16 configuration."""
+    """C01 end to end: the active prompt in, schema-3 emit back, v2 record
+    assembled and verified, the served slice stored under `V2_TUPLE` with a
+    blob stamped with the record's own shape."""
     dh = seed_case(pg, "C01")
     engine = AuditingEngine([result(emit_of("C01"))], clean_audit)
     summary = run(v2_settings(), pg, store, engine=engine, max_docs=10, max_usd=5.0)
@@ -440,7 +522,7 @@ def test_a_v2_document_settles_validated_with_a_schema_2_blob(
     assert (row["prompt_version"], row["schema_version"], row["validator_version"]) == V2_TUPLE
 
     profile = row["profile"]
-    assert profile["schema"] == "2"
+    assert profile["schema"] == "3"  # the blob stamps the record's own shape
     assert [s["id"] for s in profile["statements"]] == ["s_sales_experience"]
     # the C01 contract survives the round trip: a floor, not a bounded range
     assert profile["facts"]["entries"][0]["derived"]["quantity"] == {
@@ -458,12 +540,12 @@ def test_the_v2_prompt_and_schema_are_archived_write_once(
     run(v2_settings(), pg, store, engine=AuditingEngine([result(emit_of("C01"))], clean_audit),
         max_docs=10, max_usd=5.0)
     assert store.exists(keys.x_prompt_key(V2_TUPLE[0]))
-    assert store.exists(keys.x_schema_key("2"))
+    assert store.exists(keys.x_schema_key("3"))
     attempt = attempts_in(store)[0]
     assert attempt.outcome == "ok"
     assert (attempt.prompt_version, attempt.schema_version, attempt.validator_version) == V2_TUPLE
     assert attempt.record is not None
-    assert attempt.record["extraction"]["schema_version"] == "2"
+    assert attempt.record["extraction"]["schema_version"] == "3"
     assert attempt.record["block_accounting"]  # the archive keeps what the blob drops
 
 
@@ -485,7 +567,8 @@ def test_an_unaudited_record_stores_its_profile_but_indexes_no_mentions(
     markdown = source("C04")
     dh = seed_case(pg, "C04")
     record = assemble(emit_of("C04"), markdown, document_hash=dh,
-                      observed_model=MODEL, at="2026-09-10T00:00:00+00:00")
+                      observed_model=MODEL, at="2026-09-10T00:00:00+00:00",
+                      schema_version=V2_TUPLE[1])
     started = datetime(2026, 9, 10, 6, 12, 4, tzinfo=UTC)
     attempt = _attempt(
         attempt_key=keys.x_attempt_key(started, dh, 1, 1), document_hash=dh,
@@ -510,12 +593,18 @@ def test_an_unaudited_record_stores_its_profile_but_indexes_no_mentions(
     assert sorted({m for m, _, _ in mention_rows_in(pg)}) == ["ACA", "ACCA", "CPA"]
 
 
-def test_settle_writes_statement_derived_importance_into_the_aggregate(
+def test_settle_writes_statement_derived_mention_rows_into_the_aggregate(
     pg: Conn, store: ArchiveStore  # noqa: F811
 ) -> None:
-    """The C04 fix where it lands: an audited record's mentions carry the
-    importance of the statement each one supports, not of the `credential` area
-    they share with a required qualification.
+    """The C04 fix where it lands: an audited record's mention rows are built
+    from the STATEMENT each mention supports, not from the `credential` area it
+    shares with another qualification.
+
+    Through schema 2 the visible half of that was the row's `importance` — the
+    defect was a `preferred` certification reading `required` because its area
+    said so. Schema 3 removed the verdict entirely (parsing contract v3 §2.1),
+    so what the rows now show is the linkage itself: only the certifications
+    tied to `s_cpa` are indexed, each under the sentinel.
 
     The record is cleared the way settlement clears one — an archived audit
     artifact beside the candidate attempt, nothing written into the record.
@@ -523,7 +612,8 @@ def test_settle_writes_statement_derived_importance_into_the_aggregate(
     markdown = source("C04")
     dh = seed_case(pg, "C04")
     record = assemble(emit_of("C04"), markdown, document_hash=dh,
-                      observed_model=MODEL, at="2026-09-10T00:00:00+00:00")
+                      observed_model=MODEL, at="2026-09-10T00:00:00+00:00",
+                      schema_version=V2_TUPLE[1])
     started = datetime(2026, 9, 10, 6, 12, 4, tzinfo=UTC)
     attempt = _attempt(
         attempt_key=keys.x_attempt_key(started, dh, 1, 1), document_hash=dh,
@@ -618,7 +708,7 @@ def test_a_blocking_finding_leaves_an_agreeing_record_validated_but_ineligible(
     assert artifact["outcome"] == "ok" and artifact["blocking"] == 1
     finding = artifact["findings"][0]
     # severity and dimension are code-owned; the model emitted neither
-    assert finding["code"] == "importance" and finding["severity"] == "blocking"
+    assert finding["code"] == "unsupported_statement" and finding["severity"] == "blocking"
     assert finding["dimension"] == "semantics"
 
 
@@ -668,7 +758,7 @@ def test_an_accept_filed_before_the_audit_artifact_survives_it(
     dh = seed_case(pg, "C04")
     for slot, emit in enumerate((emit_of("C04"), polarity_split_c04()), start=1):
         record = assemble(emit, markdown, document_hash=dh, observed_model=MODEL,
-                          at="2026-09-10T00:00:00+00:00")
+                          at="2026-09-10T00:00:00+00:00", schema_version=V2_TUPLE[1])
         started = datetime(2026, 9, 10, 6, 12, 3 + slot, tzinfo=UTC)
         attempt = _attempt(
             attempt_key=keys.x_attempt_key(started, dh, slot, slot), document_hash=dh,
@@ -1115,7 +1205,7 @@ def test_a_parked_cohort_is_never_promoted_by_an_automated_re_audit(
     quality = still["profile"]["quality"]
     assert (quality["semantics"], quality["sampling"]) == ("error", "disagreement")
     assert quality["search_eligible"] is False
-    assert mention_rows_in(pg) == []
+    assert mention_rows_in(pg) == C04_ROWS  # parked, and serving what it extracted
 
 
 def test_a_throttled_audit_spends_no_pass_and_stops_the_run(
@@ -1390,7 +1480,7 @@ def test_a_version_bump_never_reopens_a_human_settled_row(
     still = row_of(pg)
     assert still["status"] == "needs_review" and still["reviewed_by"] == "human"
     assert still["chosen_attempt"] == candidate
-    assert mention_rows_in(pg) == []
+    assert mention_rows_in(pg) == C04_ROWS
 
 
 def test_replay_never_publishes_a_retired_versions_verdict(
@@ -1441,10 +1531,10 @@ def test_the_audit_version_segment_composes_with_the_pass_and_repair_marks() -> 
     at = datetime(2026, 8, 27, 6, 12, 4, tzinfo=UTC)
     attempt = keys.x_attempt_key(at, "9f3ab" + "0" * 59, 1, 2)
     stem = "extractions/audits/2026/08/27T061204Z-9f3ab0000000-s1a2"
-    assert AUDIT_VERSION == "semantic-audit/v3"  # the segment below is its tail
-    assert runner._audit_pass_key(attempt, AUDIT_VERSION, 1) == f"{stem}.a3.json.gz"
-    assert runner._audit_pass_key(attempt, AUDIT_VERSION, 2) == f"{stem}.a3-p2.json.gz"
-    assert runner._repair_audit_key(attempt, AUDIT_VERSION) == f"{stem}.a3-r1.json.gz"
+    assert AUDIT_VERSION == "semantic-audit/v4"  # the segment below is its tail
+    assert runner._audit_pass_key(attempt, AUDIT_VERSION, 1) == f"{stem}.a4.json.gz"
+    assert runner._audit_pass_key(attempt, AUDIT_VERSION, 2) == f"{stem}.a4-p2.json.gz"
+    assert runner._repair_audit_key(attempt, AUDIT_VERSION) == f"{stem}.a4-r1.json.gz"
 
     legacy = keys.LEGACY_AUDIT_VERSION
     assert runner._audit_pass_key(attempt, legacy, 1) == f"{stem}.json.gz"
@@ -1481,16 +1571,19 @@ def test_a_blocking_finding_on_the_dispute_parks_the_cohort_and_asks_for_repair(
     quality = row["profile"]["quality"]
     assert quality["sampling"] == "disagreement" and quality["search_eligible"] is False
     assert row["flags"] == flags("ok", repair="dispute")
-    assert mention_rows_in(pg) == []
+    assert mention_rows_in(pg) == C04_ROWS
 
 
 def test_a_blocking_finding_off_the_dispute_adjudicates_and_asks_for_repair(
     pg: Conn, store: ArchiveStore  # noqa: F811
 ) -> None:
-    """validator/18, the scoped half, over the same cohort: an `importance`
-    finding is not the `negation` gate's dimension and names no disputed id, so
-    the disagreement is adjudicated — and the finding goes on gating
-    eligibility, which is the other repair trigger."""
+    """validator/18, the scoped half, over the same cohort: an
+    `unsupported_statement` finding is not the `negation` gate's dimension —
+    that gate maps only `polarity_subject` — and it names no disputed id, so
+    the disagreement is adjudicated. Off-dispute is per gate, not per code:
+    `unsupported_statement` IS on `f1` and `kind`, and this cohort fails
+    neither. The finding goes on gating eligibility, which is the other repair
+    trigger."""
     seed_case(pg, "C04")
     split = polarity_split_c04()
     engine = AuditingEngine(
@@ -1653,7 +1746,7 @@ def test_a_failed_repair_settles_the_base_candidate(
     assert row["status"] == "needs_review"
     quality = row["profile"]["quality"]
     assert quality["sampling"] == "disagreement" and quality["search_eligible"] is False
-    assert mention_rows_in(pg) == []
+    assert mention_rows_in(pg) == C04_ROWS
     assert row["flags"] == flags("ok")  # the round is spent; stop queueing it
 
     artifact = next(iter(repairs_in(store).values()))
@@ -1838,7 +1931,7 @@ def test_a_parked_cohorts_unfinished_repair_audit_is_never_taken_automatically(
     assert summary.reaudited == 0 and summary.repaired == 0
     still = row_of(pg)
     assert still["status"] == "needs_review" and still["flags"] == parked["flags"]
-    assert mention_rows_in(pg) == []
+    assert mention_rows_in(pg) == C04_ROWS
 
 
 def test_a_repaired_document_folds_the_same_way_out_of_the_archive(
@@ -1932,7 +2025,7 @@ def test_a_parked_cohort_is_never_repaired_by_the_backlog_campaign(
     assert repairs_in(store) == {}
     still = row_of(pg)
     assert still["status"] == "needs_review" and still["flags"] == parked["flags"]
-    assert mention_rows_in(pg) == []
+    assert mention_rows_in(pg) == C04_ROWS
 
 
 def test_every_phase_artifact_is_archived_before_the_extractions_row(
@@ -1983,23 +2076,56 @@ def test_every_phase_artifact_is_archived_before_the_extractions_row(
 
 
 
+@pytest.mark.parametrize("archived", get_bundle("v2").compat_validators)
 def test_live_settle_folds_attempts_from_compat_validators(
-    pg: Conn, store: ArchiveStore  # noqa: F811
+    archived: str, pg: Conn, store: ArchiveStore  # noqa: F811
 ) -> None:
     """The rebuild replays archived validator-17 attempts under 18 but keeps
     the attempt rows at their archived identity; the live fold must read those
     compat attempts or every later settle of a replayed doc is a silent no-op
     (found live 2026-09-14: 2,001 docs stranded — repair artifacts archived,
     rows frozen at their pre-repair content, updated_at still the rebuild's).
+
+    Parametrised over the WHOLE field rather than one pinned version: a compat
+    entry the suite never exercises is the same stranding with a newer number
+    on it.
     """
     dh = seed_case(pg, "C01")
     run(v2_settings(), pg, store, engine=AuditingEngine([result(emit_of("C01"))], clean_audit),
         max_docs=10, max_usd=5.0)
-    # the replayed-corpus shape: attempts at the archived tuple, row at 18
-    pg.execute("UPDATE extraction_attempts SET validator_version='17' WHERE document_hash=%s",
-               (dh,))
+    # the replayed-corpus shape: attempts at the archived tuple, row at active
+    pg.execute("UPDATE extraction_attempts SET validator_version=%s WHERE document_hash=%s",
+               (archived, dh))
     pg.commit()
     state = settle(pg, store, dh, GLOBS, "2026-09-14T09:00:00Z", bundle=get_bundle("v2"))
+    assert state.status == "validated"
+
+
+def test_the_validator_below_the_active_one_folds_under_it(
+    pg: Conn, store: ArchiveStore  # noqa: F811
+) -> None:
+    """A document extracted under validator N-1 must still settle at N.
+
+    The bump itself is what strands a corpus: every attempt row already
+    archived carries the OLD validator, and the live fold reads only the
+    active version plus `compat_validators`. This is the test the 19 -> 20
+    bump needed and did not have — the field said ("17", "18") while the whole
+    live corpus sat at 19, so every live settle folded zero attempts and
+    no-oped, exactly the 2026-09-14 stranding shape one bump later.
+    """
+    active = get_bundle("v2")
+    previous = str(int(active.validator_version) - 1)
+    assert previous in active.compat_validators, (
+        f"validator {active.validator_version} does not fold {previous}: every "
+        "document extracted under the previous validator is stranded mid-ladder"
+    )
+    dh = seed_case(pg, "C01")
+    run(v2_settings(), pg, store, engine=AuditingEngine([result(emit_of("C01"))], clean_audit),
+        max_docs=10, max_usd=5.0)
+    pg.execute("UPDATE extraction_attempts SET validator_version=%s WHERE document_hash=%s",
+               (previous, dh))
+    pg.commit()
+    state = settle(pg, store, dh, GLOBS, "2026-09-22T09:00:00Z", bundle=active)
     assert state.status == "validated"
 
 
@@ -2024,13 +2150,20 @@ class RecordingEngine(AuditingEngine):
 
 
 def broken_c09() -> dict[str, Any]:
-    """A C09 emit whose importance evidence cites a block that does not exist.
+    """A C09 emit whose first statement's evidence cites a block that does not
+    exist.
 
     One binding error, on `statements[0]` — it names neither the group nor the
-    condition, which is what makes the collapse below unexplained.
+    condition, which is what makes the collapse below unexplained. Through
+    schema 2 this was the statement's `importance_evidence`; that field is gone
+    (parsing contract v3 §2.1) and C09's derived `modality_evidence` is null
+    (its archived quote was the "Qualifications" heading, which carries no
+    modal term), so the break moves to the reference family every statement
+    has. The class under test is unchanged: one unbound reference on the first
+    statement.
     """
     emit = copy.deepcopy(emit_of("C09"))
-    emit["statements"][0]["importance_evidence"][0]["block_id"] = "b000009"
+    emit["statements"][0]["evidence"][0]["block_id"] = "b000009"
     return emit
 
 

@@ -1,9 +1,17 @@
 """The twelve mandatory case contracts (spec §9) and the synthetic minimal pairs.
 
 Each case is the audit's evidence in executable form: a minimal excerpt of the
-real posting under `cases/<case>.source.md`, a hand-authored v2 emit under
-`cases/<case>.emit.json`, and the contract the pair must keep. A failing
-contract is a defect in `l2/v2/`, never a reason to soften the assertion.
+real posting under `cases/<case>.source.md`, a hand-authored emit, and the
+contract the pair must keep. A failing contract is a defect in `l2/v2/`, never
+a reason to soften the assertion.
+
+Two emits per case since the v20 bump (parsing contract v3 §7):
+`cases/<case>.emit2.json` is the frozen, hand-authored SCHEMA-2 emit — a
+shipped corpus partition `get_bundle_for_tuple("demand-profile/v10", "2")`
+still judges — and `cases/<case>.emit.json` is its schema-3 derivation,
+produced by `migrate.emit3_of` through `scripts/migrate_cases_v3.py` and never
+by hand. The active bundle's shape is schema 3, so that is what `build` below
+assembles; `build_v2` drives the frozen one.
 
 Provenance rule: an excerpt is a new document. Every fixture records the
 original posting's `document_hash` for traceability, and every test hashes the
@@ -15,8 +23,11 @@ string, not because a fixture borrowed an identity.)
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 import pathlib
+import shutil
+import sys
 from typing import Any
 
 import pytest
@@ -25,8 +36,10 @@ from jobhunter.hashing import sha256_hex
 from jobhunter.l2.schemas import validate_emit, validate_record
 from jobhunter.l2.v2.assemble import AssembleError, assemble
 from jobhunter.l2.v2.facts import derive_money, derive_quantity
+from jobhunter.l2.v2.migrate import emit3_of
 from jobhunter.l2.v2.project import mention_rows
 from jobhunter.l2.v2.source import RefBindError, annotate, blocks_by_id, resolve
+from jobhunter.l2.v2.types import NO_IMPORTANCE
 from jobhunter.l2.v2.verify import verify
 
 CASES = pathlib.Path(__file__).parent / "cases"
@@ -41,7 +54,13 @@ CASE_IDS = ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C09", "C11"
 
 
 def fixture(case: str) -> dict[str, Any]:
+    """The active (schema-3) fixture, derived from the frozen schema-2 one."""
     return dict(json.loads((CASES / f"{case}.emit.json").read_text(encoding="utf-8")))
+
+
+def fixture_v2(case: str) -> dict[str, Any]:
+    """The frozen, hand-authored schema-2 fixture the derivation reads."""
+    return dict(json.loads((CASES / f"{case}.emit2.json").read_text(encoding="utf-8")))
 
 
 def source(case: str) -> str:
@@ -53,15 +72,25 @@ def build(case: str, emit: dict[str, Any] | None = None) -> tuple[dict[str, Any]
     markdown = source(case)
     body = fixture(case)["emit"] if emit is None else emit
     record = assemble(body, markdown, document_hash=sha256_hex(markdown.encode("utf-8")),
-                      observed_model=MODEL, at=AT)
+                      observed_model=MODEL, at=AT, schema_version="3")
     return record, markdown
 
 
-def codes(record: dict[str, Any], markdown: str) -> set[str]:
-    return {f.code for f in verify(record, markdown).findings}
+def build_v2(case: str, emit: dict[str, Any] | None = None) -> tuple[dict[str, Any], str]:
+    """The same case under the FROZEN schema-2 shape, for the replay path."""
+    markdown = source(case)
+    body = fixture_v2(case)["emit"] if emit is None else emit
+    record = assemble(body, markdown, document_hash=sha256_hex(markdown.encode("utf-8")),
+                      observed_model=MODEL, at=AT, schema_version="2")
+    return record, markdown
 
 
-def clean(record: dict[str, Any], markdown: str, *, warns: tuple[str, ...] = ()) -> None:
+def codes(record: dict[str, Any], markdown: str, schema_version: str = "3") -> set[str]:
+    return {f.code for f in verify(record, markdown, schema_version=schema_version).findings}
+
+
+def clean(record: dict[str, Any], markdown: str, *, warns: tuple[str, ...] = (),
+          schema_version: str = "3") -> None:
     """The record describes its document exactly: schema, spans, and re-derivation.
 
     `warns` names the blocks validator/19's widened requirement-language
@@ -70,8 +99,8 @@ def clean(record: dict[str, Any], markdown: str, *, warns: tuple[str, ...] = ())
     record. Naming them keeps the assertion exact: an unexpected warning fails
     here exactly as an unexpected error does.
     """
-    assert validate_record(record, "2") == []
-    report = verify(record, markdown)
+    assert validate_record(record, schema_version) == []
+    report = verify(record, markdown, schema_version=schema_version)
     errors = [f for f in report.findings if f.severity == "error"]
     assert errors == [], [(f.code, f.path, f.detail) for f in errors]
     warnings = [f for f in report.findings if f.severity == "warning"]
@@ -124,7 +153,8 @@ def test_c02_annual_pay_keeps_its_period_and_english_stays_a_rule() -> None:
 
     english = by_id(record["statements"])["s_english"]
     assert english["kind"] == "hiring_policy"
-    assert english["importance"] == "required"
+    # schema 3 (§2.1): the obligation is the posting's own word, quoted
+    assert english["modality_evidence"][0]["text"] == "requires"
     assert "sufficient knowledge of English" in english["evidence"][0]["text"]
     excluded = [e for e in record["block_accounting"] if e["disposition"] == "excluded"]
     assert [e["block_id"] for e in excluded] == ["b000003"]  # only the EEO paragraph
@@ -142,7 +172,7 @@ def test_c02_excluding_the_english_footer_earns_the_tripwire_warning() -> None:
         for e in emit["block_accounting"]
     ]
     record, markdown = build("C02", emit)
-    report = verify(record, markdown)
+    report = verify(record, markdown, schema_version="3")
     warnings = [f for f in report.findings if f.severity == "warning"]
     assert report.status == "pass"  # a warning for the auditor, not a verdict
     assert [(f.code, f.detail["block_id"]) for f in warnings] == [
@@ -150,17 +180,25 @@ def test_c02_excluding_the_english_footer_earns_the_tripwire_warning() -> None:
     ]
 
 
-# --- C03 Zendesk ML: distinct importances, no invented alternative ---------
+# --- C03 Zendesk ML: two claims on one line, no invented alternative -------
 
 
 def test_c03_required_sql_and_preferred_snowflake_stay_distinct() -> None:
     """Audit defect 3: one line's two claims were merged, and a not-required
-    advanced degree became an invented alternative to the stated degree."""
+    advanced degree became an invented alternative to the stated degree.
+
+    Under schema 3 the two claims are told apart by what the line itself says:
+    the SQL half carries no modal phrase, the Snowflake half quotes
+    "Snowflake preferred" (§2.1). Both sit under the same derived heading,
+    which is exactly why a heading can never be the modality.
+    """
     record, markdown = build("C03")
     clean(record, markdown)
     statements = by_id(record["statements"])
-    assert statements["s_sql"]["importance"] == "required"
-    assert statements["s_snowflake"]["importance"] == "preferred"
+    assert statements["s_sql"]["modality_evidence"] is None
+    assert statements["s_snowflake"]["modality_evidence"][0]["text"] == "Snowflake preferred"
+    assert statements["s_sql"]["section_heading"] == "Technical Expertise"
+    assert statements["s_snowflake"]["section_heading"] == "Technical Expertise"
     assert statements["s_sql"]["subject"] == "candidate"
     # shared evidence is legal: both readings cite the same line
     assert statements["s_sql"]["evidence"][0]["span"] == \
@@ -172,7 +210,10 @@ def test_c03_required_sql_and_preferred_snowflake_stay_distinct() -> None:
 
     # the invented-alternative shape must be absent, not merely unasserted
     assert record["relations"]["groups"] == []
-    assert statements["s_advanced_degree"]["importance"] == "not_required"
+    # "welcome but not required" is the posting's own modal phrase; the reader
+    # decides what it means, the extractor only quotes it (§1)
+    assert (statements["s_advanced_degree"]["modality_evidence"][0]["text"]
+            == "welcome but not required")
 
     invented = copy.deepcopy(record)
     invented["relations"]["groups"] = [{
@@ -182,36 +223,55 @@ def test_c03_required_sql_and_preferred_snowflake_stay_distinct() -> None:
     assert "connective_evidence_missing" in codes(invented, markdown)
 
 
-# --- C04 Palantir: preferred never inherits an area's importance -----------
+# --- C04 Palantir: a claim never inherits its presentation area ------------
 
 
 def test_c04_preferred_certification_never_inherits_area_importance() -> None:
     """Audit defect 4: `profile_mentions` took importance from the presentation
-    area, so a preferred CPA next to a required qualification read as required."""
+    area, so a preferred CPA next to a required qualification read as required.
+
+    Schema 3 removed the field the defect was expressed in, so the contract is
+    now the one underneath it: the CPA claim's modal phrase is the one quoted
+    from its OWN line, and the mixed area it shares with a "What We Require"
+    claim cannot lend it anything.
+    """
     record, markdown = build("C04")
     # "### What We Require" is kept as `context`; validator/19 points the
-    # auditor at it without touching the record's verdict
+    # auditor at it without touching the record
     clean(record, markdown, warns=("b000004",))
     cpa = by_id(record["statements"])["s_cpa"]
-    assert cpa["importance"] == "preferred" and cpa["polarity"] == "positive"
+    assert cpa["modality_evidence"][0]["text"] == "preferred"
+    assert cpa["modality_evidence"][0]["block_id"] == cpa["evidence"][0]["block_id"]
+    assert cpa["polarity"] == "positive"
 
     area = by_id(record["areas"])["a_accounting"]
     assert set(area["statement_ids"]) == {"s_cpa", "s_asc606"}  # mixed on purpose
-    assert by_id(record["statements"])["s_asc606"]["importance"] == "required"
+    assert by_id(record["statements"])["s_asc606"]["section_heading"] == "What We Require"
 
     rows = mention_rows(record, include_ineligible=True)
     assert {row["normalized_key"] for row in rows} == {"cpa", "acca", "aca"}
-    assert {row["importance"] for row in rows} == {"preferred"}
+    # schema 3 carries no verdict, so every row takes the sentinel (§2.1)
+    assert {row["importance"] for row in rows} == {NO_IMPORTANCE}
     assert {row["statement_id"] for row in rows} == {"s_cpa"}
 
 
 def test_c04_schema_2_rejects_an_area_importance_key() -> None:
     """No authoritative importance exists at area level — the schema is where
-    that rule is unbreakable (re-asserted on this case's own fixture)."""
-    emit = fixture("C04")["emit"]
+    that rule is unbreakable (re-asserted on this case's own frozen fixture,
+    which is still the shape the replay path judges)."""
+    emit = fixture_v2("C04")["emit"]
     assert validate_emit(emit, "2") == []
     emit["areas"][0]["importance"] = "required"
     assert any("importance" in message for message in validate_emit(emit, "2"))
+
+
+def test_c04_schema_3_rejects_a_statement_importance_key() -> None:
+    """And the verdict itself is gone from the statement: schema 3 admits no
+    `importance`, which is what stops a schema-2 emit reaching a v11 bundle."""
+    emit = fixture("C04")["emit"]
+    assert validate_emit(emit, "3") == []
+    emit["statements"][0]["importance"] = "required"
+    assert any("importance" in message for message in validate_emit(emit, "3"))
 
 
 # --- C05 Adobe: claims without searchable mentions -------------------------
@@ -278,14 +338,16 @@ def test_c07_placeholder_source_keeps_the_english_obligation_visible() -> None:
     the auditor to settle, and surfacing it is the opposite of v1's silence.
     """
     record, markdown = build("C07")
-    assert validate_record(record, "2") == []
+    assert validate_record(record, "3") == []
     assessment = record["source_assessment"]
     assert assessment["usability"] == "placeholder"
     assert "Should add the Unity specific job profile" in assessment["evidence"][0]["text"]
     assert record["quality"]["search_eligible"] is False
 
     english = by_id(record["statements"])["s_english"]
-    assert english["importance"] == "required"
+    assert english["modality_evidence"][0]["text"] == "requires"
+    # the footer sits under no heading of its own: null over guess (§2.1)
+    assert english["section_heading"] is None
     assert "sufficient knowledge of English" in english["evidence"][0]["text"]
 
     assert codes(record, markdown) == {"empty_with_content"}
@@ -315,14 +377,12 @@ def test_c08_any_claim_over_the_empty_document_fails_verify() -> None:
         "id": "s_fabricated", "kind": "qualification", "subject": "candidate",
         "topic": "Python", "evidence": [{"block_id": "b000001", "text": "Python",
                                           "span": [0, 6], "occurrence": 0}],
-        "importance": "required",
-        "importance_evidence": [{"block_id": "b000001", "text": "Python",
-                                 "span": [0, 6], "occurrence": 0}],
+        # an empty document has no blocks, so it has no headings either
+        "section_heading": None, "modality_evidence": None,
         "polarity": "positive", "polarity_evidence": None,
-        "proficiency": None, "proficiency_evidence": None,
         "condition_ids": [], "fact_ids": [], "unresolved": [],
     }]
-    assert validate_record(fabricated, "2") == []  # structurally fine, semantically impossible
+    assert validate_record(fabricated, "3") == []  # structurally fine, semantically impossible
     assert "empty_with_content" in codes(fabricated, markdown)
 
     usable = copy.deepcopy(fabricated)
@@ -412,12 +472,14 @@ def test_c11_grammar_success_and_quote_failure_stay_separate() -> None:
     assert derive_money("$163,800 - $245,800", None, "USD", None) is not None
 
 
-# --- C12 NVIDIA: preferred examples keep their role and their parent -------
+# --- C12 NVIDIA: examples keep their role and their parent -----------------
 
 
 def test_c12_preferred_examples_keep_role_and_parent() -> None:
     """Audit defect 12: preferred framework examples inherited the required
-    importance of the area they were listed under."""
+    importance of the area they were listed under. Schema 3 removed the field;
+    what has to hold is that each example still names its own parent statement
+    and its own role, which is what stopped the inheritance."""
     record, markdown = build("C12")
     clean(record, markdown)
     example_set = by_id(record["relations"]["example_sets"])["e_frameworks"]
@@ -431,7 +493,7 @@ def test_c12_preferred_examples_keep_role_and_parent() -> None:
         assert mentions[mention_id]["role"] == "example"
 
     rows = mention_rows(record, include_ineligible=True)
-    assert {row["importance"] for row in rows} == {"preferred"}
+    assert {row["importance"] for row in rows} == {NO_IMPORTANCE}  # §2.1: no verdicts
     examples = [row for row in rows if row["mention_id"] in example_set["mention_ids"]]
     assert len(examples) == 5
     assert {row["role"] for row in examples} == {"example"}
@@ -451,11 +513,12 @@ def _ref(block_id: str, text: str, occurrence: int = 0) -> dict[str, Any]:
 
 def _statement(sid: str, kind: str, topic: str, evidence: list[dict[str, Any]],
                **overrides: Any) -> dict[str, Any]:
+    """One schema-3 emit statement: no verdicts, one optional quoted modality."""
     node: dict[str, Any] = {
         "id": sid, "kind": kind, "subject": "candidate", "topic": topic,
-        "evidence": evidence, "importance": None, "importance_evidence": None,
-        "polarity": "positive", "polarity_evidence": None, "proficiency": None,
-        "proficiency_evidence": None, "condition_ids": [], "fact_ids": [], "unresolved": [],
+        "evidence": evidence, "modality_evidence": None,
+        "polarity": "positive", "polarity_evidence": None,
+        "condition_ids": [], "fact_ids": [], "unresolved": [],
     }
     node.update(overrides)
     return node
@@ -485,7 +548,7 @@ def _account(block_id: str, disposition: str, ref_ids: list[str] | None = None) 
 
 def _synthetic(markdown: str, emit: dict[str, Any]) -> dict[str, Any]:
     return assemble(emit, markdown, document_hash=sha256_hex(markdown.encode("utf-8")),
-                    observed_model=MODEL, at=AT)
+                    observed_model=MODEL, at=AT, schema_version="3")
 
 
 @pytest.mark.parametrize(
@@ -539,18 +602,19 @@ NOT_REQUIRED_MD = (
 
 
 def test_minimal_pairs_not_required_versus_prohibited() -> None:
-    """"You do not need it" and "you may not do it" are different facts: the
-    first is importance `not_required` with positive polarity, the second a
-    `required` rule with negative polarity. Both are legal; neither is the other.
+    """"You do not need it" and "you may not do it" are different facts, and
+    under schema 3 the difference is entirely in the document's own words: both
+    quote a modal phrase, and only the prohibition is negated. The verdicts
+    that used to carry this (§2.1) are gone; polarity and the quote are not.
     """
     emit = _emit(
         [
             _statement("s_clearance", "qualification", "Security clearance",
-                       [_whole("b000002")], importance="not_required",
-                       importance_evidence=[_ref("b000002", "not required")]),
+                       [_whole("b000002")],
+                       modality_evidence=[_ref("b000002", "not required")]),
             _statement("s_directorship", "hiring_policy", "Competing directorship",
-                       [_whole("b000003")], importance="required",
-                       importance_evidence=[_ref("b000003", "must")],
+                       [_whole("b000003")],
+                       modality_evidence=[_ref("b000003", "must")],
                        polarity="negative",
                        polarity_evidence=[_ref("b000003", "must not")]),
         ],
@@ -558,12 +622,17 @@ def test_minimal_pairs_not_required_versus_prohibited() -> None:
          _account("b000002", "statements", ["s_clearance"]),
          _account("b000003", "statements", ["s_directorship"])],
     )
-    assert validate_emit(emit, "2") == []
+    assert validate_emit(emit, "3") == []
     record = _synthetic(NOT_REQUIRED_MD, emit)
     clean(record, NOT_REQUIRED_MD)
     clearance, directorship = record["statements"]
-    assert (clearance["importance"], clearance["polarity"]) == ("not_required", "positive")
-    assert (directorship["importance"], directorship["polarity"]) == ("required", "negative")
+    assert (clearance["modality_evidence"][0]["text"], clearance["polarity"]) == \
+        ("not required", "positive")
+    assert (directorship["modality_evidence"][0]["text"], directorship["polarity"]) == \
+        ("must", "negative")
+    # both sit under the same bold-only heading, and it decides neither
+    assert clearance["section_heading"] == directorship["section_heading"] == \
+        "Additional information"
 
 
 CJK_MD = "## 応募資格\n- Python の実務経験が3年以上あること。\n"
@@ -584,9 +653,10 @@ def test_minimal_pairs_cjk_source_lines_annotate_and_bind() -> None:
     assert CJK_MD[bound["span"][0]:bound["span"][1]] == "3年以上"
 
     emit = _emit(
+        # the Japanese modal phrase, quoted: the contract's vocabulary is open
+        # (§2.1) — binding is what the validator checks, never wording
         [_statement("s_python", "qualification", "Python 実務経験", [_whole("b000002")],
-                    importance="required",
-                    importance_evidence=[_ref("b000002", "あること")])],
+                    modality_evidence=[_ref("b000002", "あること")])],
         [_account("b000001", "context"), _account("b000002", "statements", ["s_python"])],
     )
     record = _synthetic(CJK_MD, emit)
@@ -610,8 +680,7 @@ def test_minimal_pairs_duplicate_occurrences_bind_by_index() -> None:
         resolve(_ref("b000002", "Python", 2), blocks)
 
     emit = _emit(
-        [_statement("s_python", "qualification", "Python", [_whole("b000002")],
-                    importance="unstated")],
+        [_statement("s_python", "qualification", "Python", [_whole("b000002")])],
         [_account("b000001", "context"), _account("b000002", "statements", ["s_python"])],
         mentions=[
             {"id": "m_python_services", "surface": "Python",
@@ -646,7 +715,10 @@ def test_minimal_pairs_prompt_injection_binds_like_any_other_text() -> None:
     clean(record, INJECTION_MD)
     note = record["statements"][0]
     assert note["evidence"][0]["text"] == INJECTION_MD.split("\n")[1]
-    assert note["importance"] is None  # employer context imposes no applicant rule
+    # the line claims authority and gets none: no modal phrase is quoted from
+    # it, and its heading is derived by code from the document's structure
+    assert note["modality_evidence"] is None
+    assert note["section_heading"] == "Notes"
 
 
 # --- provenance ------------------------------------------------------------
@@ -675,9 +747,113 @@ def test_provenance_every_test_hashes_its_own_excerpt(case: str) -> None:
 @pytest.mark.parametrize("case", CASE_IDS)
 def test_provenance_emits_carry_no_code_owned_fields(case: str) -> None:
     """The model's emit never contains spans, derived values, keys, or hashes —
-    code owns all of them (spec §3)."""
+    code owns all of them (spec §3), and since parsing contract v3 §2.1 the
+    section heading too."""
     emit = fixture(case)["emit"]
-    assert validate_emit(emit, "2") == []
+    assert validate_emit(emit, "3") == []
     flat = json.dumps(emit)
-    for owned in ('"span"', '"derived"', '"normalized_key"', '"candidate_hash"', '"quality"'):
+    for owned in ('"span"', '"derived"', '"normalized_key"', '"candidate_hash"',
+                  '"quality"', '"section_heading"'):
         assert owned not in flat
+
+
+@pytest.mark.parametrize("case", CASE_IDS)
+def test_provenance_the_active_emit_is_the_derivation_of_the_frozen_one(case: str) -> None:
+    """The fixture corpus is migrated, never hand-edited (§7).
+
+    `scripts/migrate_cases_v3.py` writes `<case>.emit.json` as
+    `migrate.emit3_of` of `<case>.emit2.json`, and this re-runs the derivation:
+    a hand-touched schema-3 fixture fails here rather than quietly teaching the
+    runner ladders a shape the migration would never produce.
+    """
+    assert fixture(case)["emit"] == emit3_of(fixture_v2(case)["emit"],
+                                             blocks=annotate(source(case)))
+
+
+def _regeneration_script() -> Any:
+    """Import `scripts/migrate_cases_v3.py` by path — `scripts/` is not a package."""
+    path = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "migrate_cases_v3.py"
+    spec = importlib.util.spec_from_file_location("migrate_cases_v3", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _corpus_copy(tmp_path: pathlib.Path) -> pathlib.Path:
+    shutil.copytree(CASES, tmp_path / "cases")
+    return tmp_path / "cases"
+
+
+def test_regeneration_refuses_to_freeze_the_derived_emit_as_the_schema_2_partition(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lost `.emit2.json` is reported, never re-seeded from the active shape.
+
+    The freeze branch exists to seed the frozen partition once, from the
+    hand-authored schema-2 emit `.emit.json` held before the bump. Now that
+    `.emit.json` IS the derivation, freezing it blindly would make schema 3 the
+    "schema-2" source, and the next derivation reads no `importance_evidence`
+    at all — every modality in that case becomes null, the result still
+    validates as schema 3, and the script's own `--check` is then satisfied
+    because it rewrote both sides. The frozen bytes are an invariant of this
+    bump, so the script has to stop instead.
+    """
+    script = _regeneration_script()
+    corpus = _corpus_copy(tmp_path)
+    monkeypatch.setattr(script, "CASES", corpus)
+    (corpus / "C01.emit2.json").unlink()
+    before = json.loads((corpus / "C01.emit.json").read_text(encoding="utf-8"))
+
+    assert script.main([]) == 1
+    assert not (corpus / "C01.emit2.json").exists()
+    assert json.loads((corpus / "C01.emit.json").read_text(encoding="utf-8")) == before
+
+
+def test_regeneration_refuses_to_derive_from_a_frozen_partition_that_is_not_schema_2(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--check` reports a damaged frozen partition instead of certifying it.
+
+    Derivation runs from `.emit2.json`, so a frozen file that is not a schema-2
+    emit would silently define a different corpus. Validating it on every run —
+    `--check` included — is what makes the damage detectable after the fact.
+    """
+    script = _regeneration_script()
+    corpus = _corpus_copy(tmp_path)
+    monkeypatch.setattr(script, "CASES", corpus)
+    (corpus / "C01.emit2.json").write_text(
+        (corpus / "C01.emit.json").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    assert script.main(["--check"]) == 1
+    assert script.main([]) == 1
+
+
+def test_regeneration_of_the_shipped_corpus_is_a_no_op(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The committed corpus is exactly what the script derives, and re-running
+    it changes nothing — the guards above reject damage, not the real thing."""
+    script = _regeneration_script()
+    corpus = _corpus_copy(tmp_path)
+    monkeypatch.setattr(script, "CASES", corpus)
+    before = {p.name: p.read_text(encoding="utf-8") for p in sorted(corpus.glob("*.json"))}
+
+    assert script.main(["--check"]) == 0
+    assert script.main([]) == 0
+    assert {p.name: p.read_text(encoding="utf-8") for p in sorted(corpus.glob("*.json"))} == before
+
+
+@pytest.mark.parametrize("case", CASE_IDS)
+def test_provenance_the_frozen_emit_is_still_a_valid_schema_2_corpus(case: str) -> None:
+    """The v10/2 partition is shipped: replay still has to judge it."""
+    record, markdown = build_v2(case)
+    assert validate_record(record, "2") == []
+    assert validate_emit(fixture_v2(case)["emit"], "2") == []
+    assert record["extraction"]["schema_version"] == "2"
+    errors = [f for f in verify(record, markdown, schema_version="2").findings
+              if f.severity == "error"]
+    # C07's placeholder-with-content conflict is the case's own contract
+    assert [f.code for f in errors] == (["empty_with_content"] if case == "C07" else [])

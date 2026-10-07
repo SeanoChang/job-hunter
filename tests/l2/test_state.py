@@ -1,18 +1,29 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import pytest
 
-from jobhunter.l2.agreement import Dispute, cohort_hook
+from jobhunter.l2.agreement import DIMENSIONS, GATES, Dispute, agree, cohort_hook
 from jobhunter.l2.state import (
+    ACCOUNTING_GAPS,
+    BOOKKEEPING_CODES,
     GATE_DIMENSION_CODES,
     DerivedState,
+    RecoveredCandidate,
     Review,
     audit_touches_dispute,
+    bookkeeping_gaps,
     derive_state,
 )
 from jobhunter.l2.v2.quality import assess
-from tests.l2.test_agreement import sample, statement
+from tests.l2.test_agreement import (
+    REVIEW_SPLITS,
+    claim,
+    sample,
+    statement,
+    statement3,
+    v1_profile,
+)
 from tests.l2.test_attempts import _attempt
 
 GLOBS = ["z-ai/glm-5.2*", "nvidia/*"]
@@ -622,20 +633,17 @@ DISPUTE = Dispute(frozenset({"s9"}), frozenset({"b9"}))
 
 
 def test_the_gate_dimension_map_is_the_policy_table() -> None:
+    """Validator/20: only two dimensions can fail a cohort, so only two can
+    have an audit finding restate them. The map is keyed by what `agree` puts
+    in `report["failures"]`, and a demoted dimension never appears there — an
+    entry for one would be a rule about a gate that cannot fire. The demoted
+    dimensions are still computed and still reported, in `report["metrics"]`,
+    which is where the audit's scoping reads them if it ever needs them."""
     assert GATE_DIMENSION_CODES == {
-        "importance": ("importance",),
         "negation": ("polarity_subject",),
-        "f1": ("omission", "unsupported_statement", "relationship"),
-        # the validator/19 comparator dimensions (2026-09-16): without these a
-        # cohort whose ONLY failure is a meaning split has an empty dispute
-        # set and adjudicates straight past a blocking finding of exactly
-        # that dimension
-        "kind": ("unsupported_statement",),
-        "polarity_target": ("polarity_subject",),
-        "scoped_values": ("numeric_scope_unit",),
-        "alternatives": ("relationship",),
-        "entity_links": ("mention_linkage",),
+        "numeric_conflict": ("numeric_scope_unit",),
     }
+    assert tuple(GATE_DIMENSION_CODES) == GATES
 
 
 @pytest.mark.parametrize("gate", sorted(GATE_DIMENSION_CODES))
@@ -647,12 +655,22 @@ def test_a_failed_gate_makes_its_own_dimension_touch_the_dispute(gate: str) -> N
         off_dispute = [finding(code, "s1")]
         assert audit_touches_dispute(off_dispute, DISPUTE, [gate]) is True
         assert audit_touches_dispute(off_dispute, DISPUTE, []) is False
-        # gates that share the code (f1 and alternatives both map
-        # relationship) legitimately touch on it; only gates whose dimension
-        # set excludes the code must stay silent
+        # only gates whose dimension set excludes the code must stay silent
         other = [g for g in GATE_DIMENSION_CODES
                  if code not in GATE_DIMENSION_CODES[g]]
         assert audit_touches_dispute(off_dispute, DISPUTE, other) is False
+
+
+def test_a_demoted_dimension_is_never_a_failed_gate() -> None:
+    """The map's silence about a demoted dimension is only safe because `agree`
+    can no longer report one as a failure: the pairing is what keeps rule 3
+    complete."""
+    for dimension in DIMENSIONS:
+        assert dimension not in GATE_DIMENSION_CODES
+    for _name, build, dimension in REVIEW_SPLITS:
+        report = agree(list(build())).report
+        assert report["failures"] == []
+        assert report["metrics"]["splits"][dimension] > 0
 
 
 def test_a_blocking_finding_on_a_disputed_target_touches() -> None:
@@ -804,6 +822,14 @@ def test_a_reopened_incomplete_adjudication_goes_back_to_incomplete() -> None:
 # Naive statement-id overlap between finder samples false-cleared 4 of 9 docs.
 # Each row below is one refuted shape, run through the REAL agreement gate and
 # the REAL dispute set over v2 samples — only the audit is scripted.
+#
+# Under validator/20 a cohort only OPENS a dispute when it fails one of the two
+# gates, so every shape below carries a polarity split on the statement both
+# samples align, alongside the structural disagreement it was written for. That
+# is not a weakening of the shape: the dispute set is still built by rules 1 and
+# 2 from the unaligned statements and the sibling-only blocks, and it is still
+# what decides whether the audit's blocking finding clears the cohort. What
+# changed is only which disagreements are worth asking the question about.
 
 
 def _v2_cohort(medoid, sibling, audit):
@@ -820,8 +846,9 @@ def test_0df0f921_a_finding_on_an_unaligned_medoid_statement_is_not_clearable() 
     the dispute in the medoid's own namespace, which cross-sample id matching
     never produced."""
     medoid = sample(statement("m_a", (0, 100)), statement("m_b", (200, 300), block="b2"))
-    sibling = sample(statement("s_a", (0, 100)))
+    sibling = sample(statement("s_a", (0, 100), polarity="negative"))
     parked = _v2_cohort(medoid, sibling, _blocking(finding("mention_linkage", "m_b")))
+    assert parked.agreement and parked.agreement["failures"] == ["negation"]
     assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
     cleared = _v2_cohort(medoid, sibling, _blocking(finding("mention_linkage", "m_a")))
     assert (cleared.status, cleared.sampling) == ("validated", "adjudicated")
@@ -833,7 +860,8 @@ def test_9d59cb88_an_omission_on_a_sibling_only_block_is_not_clearable() -> None
     medoid never cited, and the finding points straight at it."""
     medoid = sample(statement("m_a", (0, 100), block="b1"))
     sibling = sample(
-        statement("s_a", (0, 100), block="b1"), statement("s_b", (400, 500), block="b7")
+        statement("s_a", (0, 100), block="b1", polarity="negative"),
+        statement("s_b", (400, 500), block="b7"),
     )
     parked = _v2_cohort(medoid, sibling, _blocking(finding("bad_exclusion", "b7")))
     assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
@@ -844,34 +872,580 @@ def test_9d59cb88_an_omission_on_a_sibling_only_block_is_not_clearable() -> None
 def test_7b354fd4_a_shared_id_string_is_not_agreement() -> None:
     """Both samples name a statement `s1`. They are different statements about
     different text, and the medoid's is the one in dispute."""
-    medoid = sample(statement("s1", (0, 100), block="b1"), statement("s2", (200, 300)))
-    sibling = sample(statement("s1", (200, 300)), statement("s2", (900, 1000), block="b9"))
-    parked = _v2_cohort(medoid, sibling, _blocking(finding("importance", "s1")))
+    medoid = sample(statement("s1", (0, 100), block="b1"),
+                    statement("s2", (200, 300)))
+    sibling = sample(statement("s1", (200, 300), polarity="negative"),
+                     statement("s2", (900, 1000), block="b9"))
+    parked = _v2_cohort(medoid, sibling, _blocking(finding("mention_linkage", "s1")))
     assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
-    cleared = _v2_cohort(medoid, sibling, _blocking(finding("importance", "s2")))
+    cleared = _v2_cohort(medoid, sibling, _blocking(finding("mention_linkage", "s2")))
     assert (cleared.status, cleared.sampling) == ("validated", "adjudicated")
 
 
-def test_27c9a9af_an_importance_split_is_carried_by_the_gate_dimension() -> None:
-    """Both samples cite the same text and disagree about what it demands: the
-    dispute set is empty by construction, and only rule 3 stands between the
-    cohort and a false clear."""
-    medoid = sample(statement("m_a", (0, 100), importance="required"))
-    sibling = sample(statement("s_a", (0, 100), importance="preferred"))
-    parked = _v2_cohort(medoid, sibling, _blocking(finding("importance", "m_a")))
-    assert parked.agreement and parked.agreement["failures"] == ["importance"]
+def test_27c9a9af_a_polarity_split_is_carried_by_the_gate_dimension() -> None:
+    """Both samples cite the same text and read its polarity differently: every
+    claim aligns, so the dispute set is empty by construction and only rule 3
+    stands between the cohort and a false clear.
+
+    This shape was an IMPORTANCE split under validator/19. The field is gone
+    with schema 3 and the dimension went with it, so the surviving question is
+    the same one about polarity — and `polarity_subject` is the audit code that
+    restates it.
+    """
+    medoid = sample(statement("m_a", (0, 100)))
+    sibling = sample(statement("s_a", (0, 100), polarity="negative"))
+    parked = _v2_cohort(medoid, sibling, _blocking(finding("polarity_subject", "m_a")))
+    assert parked.agreement and parked.agreement["failures"] == ["negation"]
     assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
     # a finding in another dimension over an empty dispute is off-dispute
     cleared = _v2_cohort(medoid, sibling, _blocking(finding("mention_linkage", "m_a")))
     assert (cleared.status, cleared.sampling) == ("validated", "adjudicated")
 
 
-def test_7f4303c2_an_omission_restating_an_f1_split_is_not_clearable() -> None:
-    """The omission cites a block the medoid DOES cite, so no disputed id
-    appears in it — but the cohort failed on statement-set F1 and `omission` is
-    exactly that failure's dimension."""
+def test_7f4303c2_an_f1_split_no_longer_parks_a_document_at_all() -> None:
+    """Under validator/19 this cohort failed statement-set F1 and `omission`
+    was that failure's own dimension, so rule 3 kept the document. Under 20 F1
+    is a metric: the medoid found one more statement than its sibling, which is
+    thoroughness variance, and the cohort never opens a dispute to scope.
+
+    The auditor's omission has not stopped mattering — it still counts as a
+    blocking finding and still takes `search_eligible` away. It stopped
+    deciding whether the record publishes at all.
+    """
     medoid = sample(statement("m_a", (0, 100), block="b1"), statement("m_b", (200, 300)))
     sibling = sample(statement("s_a", (0, 100), block="b1"))
-    parked = _v2_cohort(medoid, sibling, _blocking(finding("omission", "b1")))
-    assert parked.agreement and parked.agreement["failures"] == ["f1"]
-    assert (parked.status, parked.sampling) == ("needs_review", "disagreement")
+    settled = _v2_cohort(medoid, sibling, _blocking(finding("omission", "b1")))
+    assert settled.agreement and settled.agreement["failures"] == []
+    assert settled.agreement["metrics"]["f1"] < 1.0
+    assert (settled.status, settled.sampling) == ("validated", "complete")
+    assert _eligible(settled) is False  # the finding still gates eligibility
+
+
+# --- validator/20 settlement: the 2026-09-22 review classes -----------------
+
+
+@pytest.mark.parametrize(
+    "name,build,dimension", REVIEW_SPLITS, ids=[r[0] for r in REVIEW_SPLITS]
+)
+def test_a_review_split_cohort_settles_validated_under_20(
+    name: str, build: Any, dimension: str
+) -> None:
+    """Each of these parked a document under validator/19 — 294 of the 300
+    sampled review documents were exactly this — and each settles under 20 with
+    the split carried in the report's metrics instead."""
+    a, b = build()
+    events = [_slot(1, 1, record=a), _slot(2, 2, record=b)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("validated", "complete")
+    assert state.agreement and state.agreement["failures"] == []
+    assert state.agreement["metrics"]["splits"][dimension] > 0
+
+
+def test_a_polarity_split_still_settles_needs_review() -> None:
+    a = sample(statement3("s1", (0, 100)))
+    b = sample(statement3("s1", (0, 100), polarity="negative"))
+    events = [_slot(1, 1, record=a), _slot(2, 2, record=b)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("needs_review", "disagreement")
+    assert state.agreement and state.agreement["failures"] == ["negation"]
+
+
+def test_a_numeric_conflict_still_settles_needs_review() -> None:
+    from tests.l2.test_agreement import experience
+
+    def with_months(months: int) -> dict[str, Any]:
+        return sample(
+            statement3("s1", (0, 100), fact_ids=("f1",)),
+            entries=[experience("f1", (0, 100), months=months, sids=["s1"])],
+        )
+
+    events = [_slot(1, 1, record=with_months(144)), _slot(2, 2, record=with_months(12))]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("needs_review", "disagreement")
+    assert state.agreement and state.agreement["failures"] == ["numeric_conflict"]
+
+
+# --- validator/20, 2026-09-28 amendment: the gates compare meaning -----------
+# The five shapes the 2026-09-28 review-queue analysis named, folded through
+# the production comparator on schema-3 cohorts (the v11 partition). Three of
+# them parked under the label-reading gates and settle now; the two real
+# misreads the gates exist for still park. What settles still says what it
+# split on, in `metrics.splits`.
+
+
+def _fold(a: dict[str, Any], b: dict[str, Any]) -> DerivedState:
+    events = [_slot(1, 1, record=a), _slot(2, 2, record=b), _slot(3, 3, record=b)]
+    return derive_state(events, [], GLOBS, HOOK)
+
+
+def _travel(polarity: str) -> dict[str, Any]:
+    return sample(statement3("s_travel", (0, 29), kind="employment_constraint",
+                             subject="role", polarity=polarity), schema="3")
+
+
+def test_a_may_require_travel_hedge_split_settles_validated() -> None:
+    """"This role may require travel": the hedge against the assertion."""
+    state = _fold(_travel("positive"), _travel("ambiguous"))
+    assert (state.status, state.sampling) == ("validated", "complete")
+    assert state.agreement and state.agreement["failures"] == []
+    assert state.agreement["metrics"]["splits"]["polarity"] == 2
+
+
+def test_an_on_site_against_remote_not_considered_split_in_hiring_policy_settles() -> None:
+    """"We hire for on-site roles only" and "remote work will not be
+    considered" are one policy read from opposite ends."""
+    def onsite(polarity: str) -> dict[str, Any]:
+        return sample(statement3("s_onsite", (0, 86), kind="hiring_policy",
+                                 polarity=polarity), schema="3")
+
+    state = _fold(onsite("positive"), onsite("negative"))
+    assert (state.status, state.sampling) == ("validated", "complete")
+    assert state.agreement and state.agreement["failures"] == []
+    assert state.agreement["metrics"]["splits"]["polarity"] == 2
+
+
+def test_an_ocaml_not_required_split_read_positive_still_parks() -> None:
+    """"We don't expect you to know OCaml" read as an OCaml requirement: the
+    real flip, on a qualification. It parks exactly as before."""
+    def ocaml(polarity: str) -> dict[str, Any]:
+        return sample(statement3("s_ocaml", (0, 60), polarity=polarity), schema="3")
+
+    state = _fold(ocaml("negative"), ocaml("positive"))
+    assert (state.status, state.sampling) == ("needs_review", "disagreement")
+    assert state.agreement and state.agreement["failures"] == ["negation"]
+
+
+def test_a_salary_period_tag_split_settles_validated() -> None:
+    """"$240,000–$315,000 USD/year" against the same numbers with period
+    null: the numbers agree and the tag is reported."""
+    from tests.l2.test_agreement import compensation
+
+    def pay(period: str | None) -> dict[str, Any]:
+        return sample(
+            statement3("s_pay", (0, 67), kind="compensation_statement", fact_ids=("f_pay",)),
+            entries=[compensation("f_pay", (39, 57), sids=["s_pay"], lo="240000",
+                                  hi="315000", period=period)],
+            schema="3",
+        )
+
+    state = _fold(pay("year"), pay(None))
+    assert (state.status, state.sampling) == ("validated", "complete")
+    assert state.agreement and state.agreement["failures"] == []
+    assert state.agreement["numeric_conflicts"] == 0
+    assert state.agreement["metrics"]["splits"]["numeric_tags"] == 4  # statement + fact, x2
+
+
+def test_five_against_eight_years_on_one_span_still_splits_the_numeric_gate() -> None:
+    """"5+ years ..., or 8+ years for the Staff level": one bullet, two
+    different numbers read off it. A misread, and it parks."""
+    from tests.l2.test_agreement import experience
+
+    def years(months: int, at: tuple[int, int]) -> dict[str, Any]:
+        return sample(statement3("s_years", (0, 93), fact_ids=("f_years",)),
+                      entries=[experience("f_years", at, months=months, sids=["s_years"])],
+                      schema="3")
+
+    state = _fold(years(60, (2, 10)), years(96, (63, 71)))
+    assert (state.status, state.sampling) == ("needs_review", "disagreement")
+    assert state.agreement and state.agreement["failures"] == ["numeric_conflict"]
+
+
+# --- validator/20: an exhausted sample budget is not a verdict --------------
+# Parsing contract v3 §3: "a document with at least one assembled-and-verified
+# candidate is validated. `needs_review` is reserved for the two gate failures
+# above and for human parking" — and §5: "the 373-of-1,000 'incomplete cohort'
+# review class was nothing but exhausted sample budgets". A missing sample is
+# monitoring information: the cohort says so in `quality.sample_notes`, and the
+# document publishes. A V1 cohort keeps validator/12's policy, unchanged.
+
+#: a slot that never came back: no record, nothing in glob, and the slot still
+#: counted as attempted — which is exactly what `sample_failed` reports
+LOST: dict[str, Any] = {
+    "outcome": "transport", "record": None, "raw_response": None, "observed_model": None,
+}
+
+
+def _v3(slot: int, no: int, **over: Any) -> Any:
+    """One slot of a SCHEMA-3 cohort: the shape `agreement._gates` reads as
+    validator/20's."""
+    over = {"record": sample(statement3("s1", (0, 100)), schema="3"), **over}
+    return _slot(slot, no, **over)
+
+
+def test_an_incomplete_v3_cohort_settles_validated() -> None:
+    """One of three requested samples arrived, it is assembled and verified,
+    and nothing it could be compared against disagreed with it. Under 19 that
+    parked the document; under 20 it publishes and the cohort reports what it
+    could not measure."""
+    events = [_v3(1, 1), _v3(2, 2, **LOST), _v3(3, 3, **LOST)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("validated", "incomplete")
+    assert state.k == 3
+    assert state.agreement and state.agreement["failures"] == ["sample_failed"]
+    # what `serve._sample_notes` publishes as requested/arrived
+    assert (state.agreement["k"], state.agreement["arrived"]) == (3, 1)
+    assert state.agreement["metrics"]["splits"] == {
+        **dict.fromkeys(DIMENSIONS, 0), "polarity": 0, "numeric_tags": 0,
+    }
+
+
+def test_an_incomplete_v3_cohort_with_a_demoted_split_settles_too() -> None:
+    """Two of three arrived and they labelled the same sentence differently.
+    `kind` is a metric under 20, so the only failure is the missing sample and
+    the split rides along in the report the blob publishes."""
+    a = sample(statement3("s1", (0, 100)), schema="3")
+    b = sample(statement3("s1", (0, 100), kind="responsibility"), schema="3")
+    events = [_slot(1, 1, record=a), _slot(2, 2, record=b), _v3(3, 3, **LOST)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("validated", "incomplete")
+    assert state.agreement and state.agreement["failures"] == ["sample_failed"]
+    assert state.agreement["metrics"]["splits"]["kind"] > 0
+    assert (state.agreement["k"], state.agreement["arrived"]) == (3, 2)
+
+
+def test_a_gate_failure_among_the_arrived_samples_still_parks() -> None:
+    """The gates still run over the samples that DID arrive: two of three read
+    the same sentence's polarity differently, and that is a parking reason
+    whatever the third slot did."""
+    a = sample(statement3("s1", (0, 100)), schema="3")
+    b = sample(statement3("s1", (0, 100), polarity="negative"), schema="3")
+    events = [_slot(1, 1, record=a), _slot(2, 2, record=b), _v3(3, 3, **LOST)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("needs_review", "disagreement")
+    assert state.agreement and state.agreement["failures"] == ["negation", "sample_failed"]
+
+
+def test_a_v1_cohort_still_parks_on_an_exhausted_sample_budget() -> None:
+    """Validator "12" is frozen: `demand-profile/v5` keeps the policy its
+    archived corpus was settled under, so an incomplete v1 cohort parks and
+    only validator/18's whole-record adjudication lets it out."""
+    v1 = v1_profile(claim((0, 100)))
+    events = [_slot(1, 1, record=v1), _slot(2, 2, **LOST), _slot(3, 3, **LOST)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert (state.status, state.sampling) == ("needs_review", "incomplete")
+    adjudicated = derive_state(events, [], GLOBS, HOOK, _audits(CLEAN))
+    assert (adjudicated.status, adjudicated.sampling) == ("validated", "adjudicated")
+
+
+def test_a_cohort_whose_policy_cannot_be_read_parks_as_before() -> None:
+    """No sample resolved at all, so nothing declares a contract. A cohort this
+    fold cannot identify is never the one that parks less (`agreement._gates`),
+    so the conservative set applies and the document stays for review."""
+    events = [_v3(1, 1, **LOST), _v3(2, 2, **LOST)]
+    state = derive_state(events, [], GLOBS, HOOK)
+    assert state.status is None  # nothing in glob ever settled it
+    ok_but_unreadable = [_v3(1, 1), _v3(2, 2, **LOST)]
+    blind = derive_state(ok_but_unreadable, [], GLOBS, cohort_hook(lambda a: None))
+    assert (blind.status, blind.sampling) == ("needs_review", "incomplete")
+
+
+# --- validator/20: a bookkeeping-only exhausted ladder serves (T-Q3S9) -------
+# Parsing contract v3 §3: every assembled-and-verified extraction serves. A
+# candidate whose ONLY defect is incomplete block bookkeeping bound and verified
+# everything it extracted — it is a faithful extraction with a completeness gap.
+# The ladder still asks the model to fix the bookkeeping (accounting findings
+# are retry-worthy errors); only a ladder that ran out settles on its best such
+# candidate instead of quarantining, flagged `completeness: accounting_gaps` and
+# never `search_eligible`. The recovery hook stands in for the runner's and the
+# replay's shared candidate recovery: an attempt -> its candidate's re-judged
+# findings, or None when no candidate can be recovered at all.
+
+
+def _failed(no: int, *, exhausted: bool | None = None, **over: object):
+    key = f"extractions/attempts/2026/09/28T06120{no}Z-abcdefabcdef-s1a{no}.json.gz"
+    base: dict[str, object] = {
+        "attempt_key": key, "attempt_no": no, "outcome": "attribution_failed",
+        "ladder_exhausted": no >= 3 if exhausted is None else exhausted,
+        "started_at": f"2026-09-28T06:12:0{no}Z", "record": None, "raw_response": "{}",
+    }
+    base.update(over)
+    return _attempt(**base)
+
+
+def _acc(code: str = "coverage_unevidenced", *, severity: str = "error",
+         block: str = "b000002") -> dict[str, Any]:
+    return {"check": "accounting", "path": "block_accounting[1]", "code": code,
+            "severity": severity, "detail": {"block_id": block}}
+
+
+def _candidate(findings: list[dict[str, Any]] | RecoveredCandidate, *, extracted: int = 4,
+               blocks: int = 5, accounted: int = 5) -> RecoveredCandidate:
+    """A recovered candidate. By default a C04-sized one that extracted the
+    document (four objects, every one of five blocks accounted), so a findings
+    list alone decides; the counts are overridden where the floor is the test."""
+    if isinstance(findings, RecoveredCandidate):
+        return findings
+    return RecoveredCandidate(tuple(findings), extracted=extracted, blocks=blocks,
+                              accounted=accounted)
+
+
+Scripted = list[dict[str, Any]] | RecoveredCandidate
+
+
+def _recovered(findings: dict[str, Scripted | None] | Scripted,
+               calls: list[str] | None = None):
+    """The recovery hook, scripted: one candidate (or findings list) for every
+    attempt, or one per attempt key (None = no candidate could be recovered)."""
+
+    def hook(attempt) -> RecoveredCandidate | None:
+        if calls is not None:
+            calls.append(attempt.attempt_key)
+        if isinstance(findings, dict):
+            found = findings.get(attempt.attempt_key)
+            return _candidate(found) if found is not None else None
+        return _candidate(findings)
+
+    return hook
+
+
+#: the shape the 271 production documents failed on: coverage claims their
+#: named objects never quote, plus the requirement-language tripwire warning
+BOOKKEEPING_ONLY = [_acc(), _acc(), _acc("context_requirement_language", severity="warning")]
+
+
+def _assessed(state: DerivedState) -> dict[str, Any]:
+    return assess(source="usable", evidence="pass", semantics=state.semantics,
+                  completeness=state.completeness, sampling=state.sampling,
+                  human_review=state.human_review, blocking_findings=state.blocking,
+                  lifecycle=state.status or "pending")
+
+
+def test_the_bookkeeping_codes_are_the_four_the_verifier_reports() -> None:
+    ticket = {
+        "coverage_unevidenced", "block_unaccounted",
+        "context_requirement_language", "exclusion_requirement_language",
+    }
+    assert set(BOOKKEEPING_CODES) == ticket
+    assert ACCOUNTING_GAPS == "accounting_gaps"
+
+
+def test_a_bookkeeping_only_exhausted_ladder_settles_validated_with_accounting_gaps() -> None:
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=_recovered(BOOKKEEPING_ONLY))
+    assert state.status == "validated"
+    # three candidates with the same two gaps: the tie goes to the LATEST, the
+    # one that took the most rounds of the verifier's feedback
+    assert state.chosen_attempt == ladder[2].attempt_key
+    assert state.completeness == ACCOUNTING_GAPS
+    # the gaps the reader is shown are the failing findings, verbatim
+    assert state.accounting_gaps == (_acc(), _acc())
+    assert state.semantics == "not_checked" and state.human_review == "none"
+    quality = _assessed(state)
+    assert quality["completeness"] == "accounting_gaps"
+    assert quality["search_eligible"] is False
+
+
+def test_the_bookkeeping_candidate_with_the_fewest_accounting_gaps_is_chosen() -> None:
+    """Fewest failing bookkeeping findings wins — completeness is the dimension
+    being flagged, so the most complete candidate is the one to serve. The
+    exhausting attempt need not be a candidate itself: a schema-invalid last
+    rung leaves the earlier bookkeeping-only candidates on record."""
+    ladder = [_failed(1), _failed(2),
+              _failed(3, outcome="schema_invalid", raw_response="not json")]
+    calls: list[str] = []
+    hook = _recovered({
+        ladder[0].attempt_key: [_acc(), _acc(), _acc("block_unaccounted")],
+        ladder[1].attempt_key: [_acc("block_unaccounted"),
+                                _acc("exclusion_requirement_language", severity="warning")],
+    }, calls)
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=hook)
+    assert state.status == "validated"
+    assert state.chosen_attempt == ladder[1].attempt_key
+    assert state.accounting_gaps == (_acc("block_unaccounted"),)
+    # only content failures that assembled can hold a candidate
+    assert sorted(calls) == sorted([ladder[0].attempt_key, ladder[1].attempt_key])
+
+
+NOT_BOOKKEEPING = [
+    ("unknown_reference",
+     [_acc(), {"check": "references", "path": "mentions[0].statement_ids",
+               "code": "unknown_reference", "severity": "error", "detail": {}}]),
+    ("ungrounded_mention",
+     [{"check": "mentions", "path": "mentions[0]", "code": "mention_ungrounded",
+       "severity": "error", "detail": {}}]),
+    ("an_accounting_code_that_is_not_bookkeeping", [_acc("unknown_block")]),
+    ("a_bare_error_the_verifier_did_not_report",
+     [_acc(), {"error": "statements[0].topic: control character U+0000"}]),
+    ("an_unexplained_deletion",
+     [_acc(), {"error": "retry:unexplained_deletion at statements[2] (id=s3)"}]),
+    ("a_non_accounting_warning",
+     [_acc(), {"check": "mentions", "path": "mentions[0]", "code": "future_warning",
+               "severity": "warning", "detail": {}}]),
+    ("nothing_failing_at_all",
+     [_acc("context_requirement_language", severity="warning")]),
+    ("no_findings", []),
+]
+
+
+@pytest.mark.parametrize("findings", [f for _, f in NOT_BOOKKEEPING],
+                         ids=[name for name, _ in NOT_BOOKKEEPING])
+def test_any_non_accounting_finding_keeps_an_exhausted_bookkeeping_ladder_quarantined(
+    findings: list[dict[str, Any]],
+) -> None:
+    """Faithfulness defects never serve: the rule is a whitelist of the four
+    bookkeeping codes, and anything it does not recognise quarantines exactly
+    as validator/19 did."""
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=_recovered(findings))
+    assert state.status == "quarantined"
+    assert state.chosen_attempt is None and state.accounting_gaps == ()
+    assert state.completeness == "not_checked"
+
+
+def test_an_unrecoverable_candidate_leaves_the_bookkeeping_ladder_quarantined() -> None:
+    """No candidate (the raw response will not re-assemble) is not a candidate
+    with no findings: there is nothing to serve."""
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=_recovered(
+        {a.attempt_key: None for a in ladder}))
+    assert state.status == "quarantined" and state.chosen_attempt is None
+
+
+def _unaccounted(n: int) -> list[dict[str, Any]]:
+    return [_acc("block_unaccounted", block=f"b00000{i}") for i in range(1, n + 1)]
+
+
+def test_a_candidate_that_extracted_nothing_is_not_a_bookkeeping_gap() -> None:
+    """2026-09-28 review: a candidate with every array empty and no accounting
+    row fails NOTHING but `block_unaccounted`, one per block — the findings
+    test alone reads it as bookkeeping-only and serves an empty profile as a
+    terminal `validated` row. It is a failed extraction, and it quarantines."""
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    nothing = _candidate(_unaccounted(5), extracted=0, blocks=5, accounted=0)
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=_recovered(nothing))
+    assert state.status == "quarantined"
+    assert state.chosen_attempt is None and state.accounting_gaps == ()
+    assert state.completeness == "not_checked"
+
+
+@pytest.mark.parametrize(("extracted", "blocks", "accounted", "settles"), [
+    (4, 5, 5, True),    # the whole source accounted: the gap is elsewhere
+    (4, 5, 3, True),    # most of the source accounted
+    (1, 5, 5, True),    # one extracted object is enough content
+    (4, 4, 2, False),   # exactly half: not most
+    (4, 5, 2, False),   # most of the source never looked at
+    (4, 5, 0, False),   # no accounting at all
+    (0, 5, 5, False),   # accounted everything, extracted nothing
+    (0, 0, 0, False),   # a source with no blocks has no gap to be incomplete by
+], ids=["all", "most", "one_object", "half", "minority", "none", "empty", "no_blocks"])
+def test_a_bookkeeping_candidate_must_have_extracted_the_document(
+    extracted: int, blocks: int, accounted: int, settles: bool
+) -> None:
+    """The floor under the findings test: at least one statement or fact entry,
+    and accounting rows covering strictly more than half of the source."""
+    candidate = _candidate([_acc()], extracted=extracted, blocks=blocks, accounted=accounted)
+    assert (bookkeeping_gaps(candidate) is not None) is settles
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=_recovered(candidate))
+    assert state.status == ("validated" if settles else "quarantined")
+
+
+def test_the_bookkeeping_floor_is_applied_before_the_fewest_gaps_choice() -> None:
+    """A candidate below the floor is no candidate at all — it cannot win on
+    having the fewest gaps. The ladder settles on the one that extracted the
+    document, even with more gaps."""
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    hook = _recovered({
+        ladder[0].attempt_key: _candidate([_acc()], extracted=4, blocks=5, accounted=1),
+        ladder[1].attempt_key: _candidate([_acc(), _acc(), _acc()]),
+        ladder[2].attempt_key: _candidate(_unaccounted(1), extracted=0, blocks=5, accounted=4),
+    })
+    state = derive_state(ladder, [], GLOBS, HOOK, recovery_hook=hook)
+    assert state.status == "validated"
+    assert state.chosen_attempt == ladder[1].attempt_key
+    assert state.accounting_gaps == (_acc(), _acc(), _acc())
+
+
+def test_no_recovery_hook_is_the_validator_19_bookkeeping_fold() -> None:
+    """The hook is additive: v1 and every archived partition folded at an older
+    validator pass none, and an exhausted ladder quarantines exactly as before."""
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    assert derive_state(ladder, [], GLOBS, HOOK).status == "quarantined"
+    assert derive_state(ladder, [], GLOBS, HOOK) == derive_state(
+        ladder, [], GLOBS, HOOK, None, recovery_hook=None)
+
+
+def test_accounting_findings_stay_retry_worthy_inside_the_ladder() -> None:
+    """Known-bad approach: settling (or downgrading) before the ladder ran out
+    would stop the model being asked to fix its bookkeeping. A ladder with rungs
+    left is pending, and the recovery hook is never even asked."""
+    calls: list[str] = []
+    ladder = [_failed(1), _failed(2)]
+    state = derive_state(ladder, [], GLOBS, HOOK,
+                         recovery_hook=_recovered(BOOKKEEPING_ONLY, calls))
+    assert state == DerivedState(None, None)
+    assert calls == []
+
+
+def test_the_bookkeeping_rule_reads_only_in_glob_attempts_of_the_current_cohort() -> None:
+    """The same admission test an `ok` attempt passes: an answer from a model
+    outside the globs is never a candidate, and a `retry` review starts a fresh
+    cohort, so a candidate from before it never settles the ladder after it."""
+    outside = [_failed(1, observed_model="claude-haiku-4-5"),
+               _failed(2, observed_model="claude-haiku-4-5"),
+               _failed(3, observed_model="claude-haiku-4-5")]
+    calls: list[str] = []
+    state = derive_state(outside, [], GLOBS, HOOK,
+                         recovery_hook=_recovered(BOOKKEEPING_ONLY, calls))
+    assert state.status == "quarantined" and calls == []
+
+    first = [_failed(1), _failed(2), _failed(3)]
+    retry = Review("retry", "2026-09-28T07:00:00Z", key="r1")
+    second = [
+        _failed(n, attempt_key=f"extractions/attempts/2026/09/28T08000{n}Z-abcdefabcdef-s1a{n}"
+                ".json.gz", started_at=f"2026-09-28T08:00:0{n}Z")
+        for n in (4, 5, 6)
+    ]
+    second = [replace(a, ladder_exhausted=a.attempt_no == 6) for a in second]
+    hook = _recovered({**{a.attempt_key: BOOKKEEPING_ONLY for a in first},
+                       **{a.attempt_key: NOT_BOOKKEEPING[0][1] for a in second}})
+    before = derive_state(first, [], GLOBS, HOOK, recovery_hook=hook)
+    assert before.status == "validated" and before.completeness == ACCOUNTING_GAPS
+    after = derive_state([*first, *second], [retry], GLOBS, HOOK, recovery_hook=hook)
+    assert after.status == "quarantined" and after.accounting_gaps == ()
+
+
+def test_human_dispositions_stay_senior_over_a_bookkeeping_settlement() -> None:
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    hook = _recovered(BOOKKEEPING_ONLY)
+    rejected = derive_state(ladder, [Review("reject", "2026-09-28T07:00:00Z", key="r1")],
+                            GLOBS, HOOK, recovery_hook=hook)
+    assert rejected.status == "rejected" and rejected.human_review == "rejected"
+    assert rejected.chosen_attempt == ladder[2].attempt_key  # provenance survives
+    assert _assessed(rejected)["search_eligible"] is False
+    flagged = derive_state(ladder, [Review("flag", "2026-09-28T07:00:00Z", key="r1")],
+                           GLOBS, HOOK, recovery_hook=hook)
+    assert flagged.status == "needs_review"
+    assert flagged.completeness == ACCOUNTING_GAPS  # still says why it is incomplete
+    accepted = derive_state(
+        ladder,
+        [Review("flag", "2026-09-28T07:00:00Z", key="r1"),
+         Review("accept", "2026-09-28T08:00:00Z", key="r2")],
+        GLOBS, HOOK, recovery_hook=hook,
+    )
+    assert accepted.status == "validated" and accepted.human_review == "accepted"
+    # a human accept is a ruling on the lifecycle, not a repair of the bookkeeping
+    assert accepted.completeness == ACCOUNTING_GAPS
+    assert _assessed(accepted)["search_eligible"] is False
+
+
+def test_an_audit_cannot_lift_an_accounting_gaps_completeness() -> None:
+    """Invariant: the audit judges fidelity, and a clean one is still a verdict
+    on a record whose bookkeeping failed the verifier. Its semantics are
+    reported; completeness stays the verifier's, and eligibility stays off."""
+    ladder = [_failed(1), _failed(2), _failed(3)]
+    state = derive_state(ladder, [], GLOBS, HOOK, _audits(CLEAN),
+                         recovery_hook=_recovered(BOOKKEEPING_ONLY))
+    assert state.status == "validated"
+    assert state.semantics == "no_findings"
+    assert state.completeness == ACCOUNTING_GAPS
+    assert _assessed(state)["search_eligible"] is False
+
+
+def test_an_over_budget_document_has_no_bookkeeping_candidate() -> None:
+    calls: list[str] = []
+    too_big = _attempt(outcome="over_budget", raw_response=None, observed_model=None,
+                       ladder_exhausted=True)
+    state = derive_state([too_big], [], GLOBS, HOOK,
+                         recovery_hook=_recovered(BOOKKEEPING_ONLY, calls))
+    assert state.status == "quarantined" and calls == []

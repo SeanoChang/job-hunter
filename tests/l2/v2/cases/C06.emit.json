@@ -29,12 +29,9 @@
             "occurrence": null
           }
         ],
-        "importance": "unstated",
-        "importance_evidence": null,
+        "modality_evidence": null,
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [],
         "unresolved": []
@@ -51,18 +48,9 @@
             "occurrence": null
           }
         ],
-        "importance": "ambiguous",
-        "importance_evidence": [
-          {
-            "block_id": "b000003",
-            "text": "We ask that you come in",
-            "occurrence": 0
-          }
-        ],
+        "modality_evidence": null,
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [
           "f_attendance"
@@ -81,12 +69,9 @@
             "occurrence": 0
           }
         ],
-        "importance": null,
-        "importance_evidence": null,
+        "modality_evidence": null,
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [
           "f_pay"

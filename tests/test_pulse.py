@@ -256,6 +256,31 @@ def test_opened_and_changed_events_carry_a_validated_profile_summary(
     assert "profile" not in by_uid[("ab:ramp:y", "closed")]
 
 
+def test_a_needs_review_extraction_is_inlined_and_labelled(
+    penv: Path, pg: psycopg.Connection[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parsing contract v3 §4: the delta carries what the corpus extracted, not
+    only what it certified — and says which of the two each event got."""
+    from tests.test_cli_q import _seed_v3_profile
+
+    row = pg.execute(
+        "SELECT d.document_hash FROM postings p"
+        " JOIN documents d ON d.version_hash = p.current_version_hash"
+        " WHERE p.uid = 'ab:ramp:x'"
+    ).fetchone()
+    assert row is not None
+    dh = str(row["document_hash"])
+    _seed_v3_profile(pg, dh, monkeypatch)
+    payload, _ = _build(pg, wm=Watermark((DAY1 - timedelta(seconds=1)).isoformat(), ()))
+    by_uid = {(e["uid"], e["kind"]): e for e in payload["events"]}
+    changed = by_uid[("ab:ramp:x", "changed")]
+    assert changed["extraction_status"] == "needs_review"
+    assert changed["profile"]["mentions"] == ["Bachelor's degree", "CPA"]
+    # a posting nothing extracted says so in both fields, never by omission
+    assert by_uid[("ab:ramp:y", "changed")]["profile"] is None
+    assert by_uid[("ab:ramp:y", "changed")]["extraction_status"] is None
+
+
 def test_attention_reports_unhealthy_boards_and_the_extraction_block(
     penv: Path, pg: psycopg.Connection[dict[str, Any]]
 ) -> None:

@@ -31,18 +31,9 @@
             "occurrence": null
           }
         ],
-        "importance": "required",
-        "importance_evidence": [
-          {
-            "block_id": "b000001",
-            "text": null,
-            "occurrence": null
-          }
-        ],
+        "modality_evidence": null,
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [],
         "unresolved": []
@@ -59,8 +50,7 @@
             "occurrence": null
           }
         ],
-        "importance": "not_required",
-        "importance_evidence": [
+        "modality_evidence": [
           {
             "block_id": "b000004",
             "text": "welcome but not required",
@@ -69,8 +59,6 @@
         ],
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [],
         "unresolved": []
@@ -87,24 +75,9 @@
             "occurrence": null
           }
         ],
-        "importance": "required",
-        "importance_evidence": [
-          {
-            "block_id": "b000001",
-            "text": null,
-            "occurrence": null
-          }
-        ],
+        "modality_evidence": null,
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": "proficient",
-        "proficiency_evidence": [
-          {
-            "block_id": "b000006",
-            "text": "Strong SQL skills",
-            "occurrence": 0
-          }
-        ],
         "condition_ids": [],
         "fact_ids": [],
         "unresolved": []
@@ -121,8 +94,7 @@
             "occurrence": null
           }
         ],
-        "importance": "preferred",
-        "importance_evidence": [
+        "modality_evidence": [
           {
             "block_id": "b000006",
             "text": "Snowflake preferred",
@@ -131,8 +103,6 @@
         ],
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [],
         "unresolved": []

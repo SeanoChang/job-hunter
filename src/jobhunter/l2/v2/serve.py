@@ -37,9 +37,27 @@ from typing import Any
 
 from jobhunter.l2.v2.project import mention_rows as _project_rows
 from jobhunter.l2.v2.quality import assess
-from jobhunter.l2.v2.types import PROFICIENCY
+from jobhunter.l2.v2.types import NO_IMPORTANCE, PROFICIENCY
 
+#: The shape a blob declares when the record it was built from declares none.
+#: Schema 2 is the oldest v2-family shape and the one every blob written before
+#: the v20 bump carries, so it is what an un-named record reads back as. It is
+#: NOT what `profile_of` stamps for a schema-3 record: the marker is the
+#: record's own `extraction.schema_version` (`_schema_of`).
 SCHEMA_VERSION = "2"
+
+#: The blob key the shape marker is written under. `agreement._gates` keys the
+#: settlement policy on it (its `_CONTRACT_KEY`), so the two are pinned by a
+#: test rather than by coincidence.
+_SCHEMA_KEY = "schema"
+
+#: Every shape marker this module's projections read. It is a SET because a
+#: reader that dispatches on one version stops seeing the shape the moment the
+#: contract bumps — `profile_of` stamps the record's own version, so a blob of
+#: the live shape carried a marker no reader recognised and fell through to the
+#: v1 walk, which drops mentions and invents an importance the shape does not
+#: have. The membership test is `reads_as_v2`, and both readers use it.
+V2_SHAPES: frozenset[str] = frozenset({"2", "3"})
 
 #: The reserved record key `runner.settle` attaches its verdict under, and the
 #: only thing in this module that knows settlement happened (spec §6).
@@ -56,11 +74,85 @@ SETTLEMENT = "settlement"
 #: together by a test.
 MAX_MENTIONS = 8
 
-#: What a statement with no importance projects as in the legacy columns.
-#: Responsibilities, compensation statements and employer context carry a null
-#: importance by contract (spec §3), and the column is NOT NULL; `contextual` is
-#: v1's existing word for "named by the posting, not demanded by it".
-NO_IMPORTANCE = "contextual"
+def _importance_of(statement: dict[str, Any] | None) -> str | None:
+    """A statement's importance, where the shape it was written under has one.
+
+    Schema 3 dropped the field entirely (parsing contract v3 §2.1), so this
+    never INDEXES it: a statement with no `importance` key is not a statement
+    whose importance is unknown, it is one the contract says carries no verdict,
+    and `NO_IMPORTANCE` is that. A schema-2 statement reads exactly as before,
+    null included, which is what keeps its projection byte-identical.
+    """
+    if statement is None:
+        return None
+    if "importance" not in statement:
+        return NO_IMPORTANCE
+    value: str | None = statement["importance"]
+    return value
+
+
+def _modality_of(statement: dict[str, Any]) -> str | None:
+    """The posting's own modal phrase for this statement, as text.
+
+    `modality_evidence` is zero or one bound reference (schema 3); the quote is
+    what a reading agent needs, and the reference itself stays in the record.
+    """
+    refs = statement.get("modality_evidence")
+    if not isinstance(refs, list) or not refs:
+        return None
+    text = refs[0].get("text")
+    return text if isinstance(text, str) else None
+
+
+def _sample_notes(agreement: Any) -> dict[str, Any] | None:
+    """What the cohort's samples split on, for the agent reading the record
+    (parsing contract v3 §4).
+
+    The dimensions validator/20 demoted are reported in the agreement report's
+    `metrics`; this carries the ones that actually split into the stored quality
+    block, with the aligned-pair count they split out of, so the reader sees
+    "the samples labelled this sentence two different kinds" without re-deriving
+    the gate. `None` when no cohort ran — an unsampled document has nothing to
+    say here, and saying nothing is not the same as saying the samples agreed.
+
+    A cohort that could not spend its budget reports that too: `requested`
+    against `arrived`, the slots the sampler opened against the records the
+    gate actually had to compare. Under validator/20 an exhausted budget no
+    longer parks the document (parsing contract v3 §5 — the 373-of-1,000
+    "incomplete cohort" review class was exactly this), so the counts are how
+    a reading agent learns that a served record was measured against fewer
+    samples than the drain asked for. They appear only when something WAS
+    lost: for a cohort that got everything, `k` is already its arrived count.
+
+    Defensive like every reader of a stored blob: a report written under an
+    older validator carries no `metrics` and yields no notes.
+    """
+    if not isinstance(agreement, dict):
+        return None
+    metrics = agreement.get("metrics")
+    if not isinstance(metrics, dict):
+        return None
+    splits = metrics.get("splits")
+    splits = splits if isinstance(splits, dict) else {}
+    notes = {
+        "k": agreement.get("k"),
+        "f1": metrics.get("f1"),
+        "aligned_pairs": metrics.get("aligned_pairs"),
+        "splits": {
+            dimension: count
+            for dimension, count in sorted(splits.items())
+            if isinstance(count, int) and not isinstance(count, bool) and count
+        },
+    }
+    requested, arrived = _count(agreement.get("k")), _count(agreement.get("arrived"))
+    if requested is not None and arrived is not None and arrived < requested:
+        notes["requested"], notes["arrived"] = requested, arrived
+    return notes
+
+
+def _count(value: Any) -> int | None:
+    """A stored count read as one: an int, and never a bool wearing one."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def quality_of(record: dict[str, Any]) -> dict[str, Any]:
@@ -90,7 +182,7 @@ def quality_of(record: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(settlement, dict):
         return quality
     blocking = settlement.get("blocking")
-    return assess(
+    assessed = assess(
         source=str(quality.get("source")),
         evidence=str(quality.get("evidence")),
         semantics=str(settlement.get("semantics", "not_checked")),
@@ -100,6 +192,56 @@ def quality_of(record: dict[str, Any]) -> dict[str, Any]:
         blocking_findings=blocking if isinstance(blocking, int) and blocking is not True else 0,
         lifecycle=str(settlement.get("lifecycle") or "pending"),
     )
+    # ... plus the one thing the eligibility policy has no opinion about: what
+    # the cohort's samples split on (parsing contract v3 §4). It is attached
+    # here rather than inside `assess` because `assess` is the frozen policy
+    # that decides `search_eligible`, and these notes decide nothing.
+    notes = _sample_notes(settlement.get("agreement"))
+    if notes is not None:
+        assessed["sample_notes"] = notes
+    # ... and, for a candidate settled after its ladder ran out failing only
+    # block bookkeeping (validator/20), WHICH blocks the record never accounted
+    # for: `completeness: accounting_gaps` says the record is incomplete, and
+    # these findings say where, verbatim as the verifier reported them. They
+    # decide nothing either — the completeness value already keeps the record
+    # out of `search_eligible`.
+    gaps = settlement.get("accounting_gaps")
+    if isinstance(gaps, list) and gaps:
+        assessed["accounting_gaps"] = gaps
+    return assessed
+
+
+def reads_as_v2(profile: dict[str, Any]) -> bool:
+    """True when this stored blob is one `summary` and the v2 renderers read.
+
+    The single dispatch point between the two record families a profile blob
+    can hold. Nothing sniffs structure: the marker `profile_of` stamped is the
+    only signal, and a blob written before the marker existed has none, so it
+    takes the v1 walk — byte-identical to what it has always returned.
+    """
+    return profile.get(_SCHEMA_KEY) in V2_SHAPES
+
+
+def _schema_of(record: dict[str, Any]) -> str:
+    """The shape marker for this record: the shape it declares, not this
+    module's default.
+
+    Two callers, two shapes of input. A RECORD carries the shape in its
+    extraction envelope, and that is the authority — a v11 record stamped "2"
+    would route schema-3 statements to every schema-2 reader there is, and
+    `agreement._gates` would pick a settlement policy off a lie. A stored BLOB
+    has no envelope (it stays in the archived attempt) but carries the marker
+    it was written with, so re-projecting one keeps its own stamp, which is
+    what `profile_of`'s idempotence promises. Neither present is schema 2: the
+    default is the shape every blob written before the v20 bump holds.
+    """
+    extraction = record.get("extraction")
+    if isinstance(extraction, dict):
+        declared = extraction.get("schema_version")
+        if isinstance(declared, str) and declared:
+            return declared
+    marker = record.get(_SCHEMA_KEY)
+    return marker if isinstance(marker, str) and marker else SCHEMA_VERSION
 
 
 def profile_of(record: dict[str, Any]) -> dict[str, Any]:
@@ -125,7 +267,7 @@ def profile_of(record: dict[str, Any]) -> dict[str, Any]:
     are these six.
     """
     return {
-        "schema": SCHEMA_VERSION,
+        _SCHEMA_KEY: _schema_of(record),
         "statements": record["statements"],
         "relations": record["relations"],
         "facts": record["facts"],
@@ -140,13 +282,15 @@ def claim_index(record: dict[str, Any]) -> dict[str, Any]:
 
     `runner.settle` hands `bundle.profile_of(record)` to
     `agreement.cohort_hook`, and `agreement._claims` reads exactly one path out
-    of it: `demand_profile.areas[].claims[]`, taking a span, an importance and a
-    negation flag off each claim. A slice without that path is not compared
-    leniently, it is not compared at all — empty claim sets divide by nothing
-    and score `f1 = 1.0` — so the audit slot (5% of documents) and every
-    reprompted document, the case v2 exists to absorb, would certify themselves
-    however far apart their samples were. This is what makes the gate real for
-    v2; `profile_of` therefore carries it.
+    of it: `demand_profile.areas[].claims[]`. A slice without that path is not
+    compared leniently, it is not compared at all — there is nothing to align,
+    so no aligned pair can split, so the audit slot (5% of documents, the only
+    cohorts validator/20 samples) would certify itself however far apart its
+    samples were. Everything settlement does with a cohort reads through here:
+    both gates — a negation split and a numeric conflict, each asked of an
+    ALIGNED pair — the medoid the audit then runs on, the dispute set findings
+    are scoped against, and the demoted metrics `profile_of` publishes as
+    `quality.sample_notes`. `profile_of` therefore carries it.
 
     One claim per statement, per (mention, statement) link, and per fact entry:
     every assertion the record makes about the document, anchored at the span it
@@ -154,15 +298,22 @@ def claim_index(record: dict[str, Any]) -> dict[str, Any]:
     is the envelope of the refs it cites, because the gate aligns claims by span
     overlap and a claim has one textual footprint.
 
-    Validator/19 adds spec §6's remaining comparator dimensions to each claim —
+    Validator/19 added spec §6's remaining comparator dimensions to each claim —
     statement `kind`, the `polarity_target` a negation actually points at, the
     `values` its fact entries derived, the `alternatives` it participates in,
-    and its `entity_links`. Until they were here, two samples that cited the
-    same spans and disagreed about everything else scored F1 1.0 and certified
-    each other: `all_of` against `any_of` over one pair of statements is a
-    different job, and the gate could not see it (external review finding 6).
-    Carrying them is this function's half; comparing them is `agreement`'s, and
-    none of them touch F1 or a threshold.
+    and its `entity_links` — and validator/20 demoted all five to metrics
+    (parsing contract v3 §3: 294 of 300 parked documents split on label variance
+    over text both samples read the same way). They are still carried and still
+    compared, because what they measure is what `quality.sample_notes` tells the
+    reading agent; they simply park nothing. `values` is the exception that
+    still gates, and only in part: `agreement._readings` keeps each parsed
+    number and its dimension and drops every tag, so two samples that both
+    PARSED a number from one span and read different numbers — a range read
+    as one of its own bounds included (`agreement._misread`) — fail
+    `numeric_conflict`, while the same number under two scope tags, or under
+    another comparator, unit, currency or period (2026-09-28 amendment), stays
+    a metric. Carrying all of it is this function's half; comparing it is
+    `agreement`'s, and none of it touches F1.
 
     Two of the five are deliberately namespace-free — derived values come from
     `facts.py` under a frozen validator, and entity links are casefolded source
@@ -205,8 +356,8 @@ def claim_index(record: dict[str, Any]) -> dict[str, Any]:
             "id": statement["id"],
             "name": statement["topic"],
             "kind": statement["kind"],
-            "importance": statement["importance"] or NO_IMPORTANCE,
-            "level": statement["proficiency"],
+            "importance": _importance_of(statement) or NO_IMPORTANCE,
+            "level": statement.get("proficiency"),
             "claims": [_claim(statement, statement["evidence"], **semantics(statement["id"]))],
         }
         for statement in record["statements"]
@@ -247,23 +398,35 @@ def _claim(
     """One claim: the cited text and its span, under its statement's labels.
 
     `negated` is v1's boolean, so `negative` and `ambiguous` both read as "not
-    plainly positive" — any split against `positive` escalates, which is what
-    the gate asks of polarity. `polarity_target` is where the rest of polarity
-    lives (validator/19): the pair a negation actually points at, so two samples
-    that agree something is negated and disagree about WHAT ("No sponsorship
+    plainly positive". It is kept exactly as it is — it is the v1 claim shape
+    readers depend on — and the negation gate no longer reads it: since the
+    2026-09-28 amendment a hedge is not a denial, so `agreement._polarity`
+    recovers the statement's polarity from `polarity_target` (and `kind`)
+    instead. `polarity_target` is where the rest of polarity lives
+    (validator/19): the pair a negation actually points at, so two samples that
+    agree something is negated and disagree about WHAT ("No sponsorship
     available" as an employer constraint or as a candidate disqualification, the
     spec §3 case) split here, as does negative against ambiguous. It is null for
-    a positive statement, which negates nothing and has no target.
+    a positive statement, which negates nothing and has no target — which is
+    exactly what lets the gate read a statement claim with no target as
+    positive.
+
+    A SCHEMA-3 claim carries two more fields and a schema-2 one carries neither
+    (parsing contract v3 §2.1): the code-derived `section_heading` and
+    `modality`, the posting's own modal phrase as text or null. They are added
+    only where the statement has them because schema 2 is a shipped corpus
+    partition — a key added unconditionally would change the stored blob of
+    every archived record for no reader's benefit.
     """
     ordered = sorted(refs, key=lambda r: (r["span"][0], r["span"][1]))
     polarity = statement["polarity"] if statement else None
-    return {
+    claim: dict[str, Any] = {
         "quote": {
             "text": " ".join(str(ref["text"]) for ref in ordered),
             "span": [min(r["span"][0] for r in refs), max(r["span"][1] for r in refs)],
         },
-        "importance": statement["importance"] if statement else None,
-        "level": statement["proficiency"] if statement else None,
+        "importance": _importance_of(statement),
+        "level": statement.get("proficiency") if statement else None,
         "negated": statement is not None and statement["polarity"] != "positive",
         "kind": statement["kind"] if statement else None,
         "polarity_target": (
@@ -275,6 +438,10 @@ def _claim(
         "alternatives": [dict(route) for route in routes],
         "entity_links": list(links),
     }
+    if statement is not None and "section_heading" in statement:
+        claim["section_heading"] = statement["section_heading"]
+        claim["modality"] = _modality_of(statement)
+    return claim
 
 
 def _values_by_statement(entries: list[dict[str, Any]]) -> dict[str, tuple[str, ...]]:

@@ -35,7 +35,7 @@ from jobhunter.l2.v2.audit import (
     template_sha,
 )
 from jobhunter.l2.v2.source import RefBindError, annotate, blocks_by_id, resolve
-from tests.l2.v2.conftest import AT, MD
+from tests.l2.v2.conftest import AT, MD, S3_MD
 
 
 def _emit(**over: Any) -> dict[str, Any]:
@@ -68,7 +68,7 @@ def _judge(record: dict[str, Any], markdown: str, **over: Any) -> AuditOutcome:
 
 
 def test_version_and_template_sha() -> None:
-    assert AUDIT_VERSION == "semantic-audit/v3"
+    assert AUDIT_VERSION == "semantic-audit/v4"
     assert template_sha() == sha256_hex(TEMPLATE.encode("utf-8"))
 
 
@@ -88,6 +88,40 @@ def test_template_forbids_model_owned_severity() -> None:
     assert "Do not emit severity" in TEMPLATE
     for code in CODES:
         assert code in TEMPLATE  # every code is explained to the model
+
+
+def test_the_template_scopes_the_audit_to_extraction_fidelity() -> None:
+    """parsing contract v3 §6: the auditor certifies that the extraction is
+    FAITHFUL — nothing missed, nothing invented, polarity/numbers/relations as
+    written — and never that a claim is one of the employer's true
+    requirements. The seven fidelity codes are named in the scope paragraph so
+    the model reads the boundary before it reads the candidate."""
+    scope = TEMPLATE.split("Omission scope:", 1)[0]
+    assert "fidelity" in scope.casefold()
+    for code in ("omission", "bad_exclusion", "unsupported_statement",
+                 "mention_linkage", "polarity_subject", "numeric_scope_unit",
+                 "relationship"):
+        assert code in scope, code
+    assert "true requirement" in scope
+
+
+def test_the_template_describes_the_schema_3_statement() -> None:
+    """The candidate the auditor is shown carries a code-derived
+    `section_heading` and a quoted `modality_evidence`; a finding against
+    either has to know which is the model's to get wrong."""
+    assert "section_heading" in TEMPLATE and "modality_evidence" in TEMPLATE
+
+
+def test_the_verdict_vocabulary_survives_only_as_its_own_removal() -> None:
+    """The fields left with schema 3, so the words leave the prompt — except
+    in the one sentence that tells a model shaped by the v10 contract they are
+    gone. Nowhere a model could read `importance` as something to check, or as
+    a code to report: a v4 finding carrying it is an audit error."""
+    codes = TEMPLATE.split("The finding codes:", 1)[1]
+    assert "importance" not in codes and "proficiency" not in codes
+    checklist = TEMPLATE.split("Check statement type", 1)[1].split("\n\n", 1)[0]
+    assert "importance" not in checklist and "proficiency" not in checklist
+    assert TEMPLATE.count("importance") == 1 and TEMPLATE.count("proficiency") == 1
 
 
 def test_the_template_heads_with_the_hash_and_asks_for_no_echo() -> None:
@@ -124,6 +158,35 @@ def test_render_sends_the_extraction_without_code_owned_bookkeeping(
     assert candidate["statements"][0]["id"] == "s1"
     assert "quality" not in candidate and "extraction" not in candidate
     assert "gpt-5.6-luna" not in out
+
+
+def _candidate_in(prompt: str) -> dict[str, Any]:
+    body = prompt.split("<<<CANDIDATE JSON\n", 1)[1].split("\nCANDIDATE JSON>>>", 1)[0]
+    loaded: dict[str, Any] = json.loads(body)
+    return loaded
+
+
+def test_render_shows_a_schema_3_candidate(v3_record: dict[str, Any]) -> None:
+    """semantic-audit/v4 audits schema-3 records: the statement the auditor
+    reads carries the code-derived heading and the posting's own modal quote,
+    and carries no verdict for the auditor to have an opinion about."""
+    out = render(S3_MD, v3_record["extraction"]["candidate_hash"], v3_record)
+    statement = _candidate_in(out)["statements"][0]
+    assert statement["section_heading"] == "Requirements"
+    assert statement["modality_evidence"][0]["text"] == "A minimum of"
+    assert "importance" not in statement and "importance_evidence" not in statement
+    assert "proficiency" not in statement and "proficiency_evidence" not in statement
+
+
+def test_render_still_shows_a_schema_2_candidate(v2_record: dict[str, Any]) -> None:
+    """A replayed archive holds schema-2 records until migration reaches them
+    (spec §7), and an audit prompt that raised on one would turn every one of
+    them into a machinery error. The shape travels with the record: nothing
+    here reaches for a field by name."""
+    out = render(MD, v2_record["extraction"]["candidate_hash"], v2_record)
+    statement = _candidate_in(out)["statements"][0]
+    assert statement["importance"] == "required"
+    assert "section_heading" not in statement and "modality_evidence" not in statement
 
 
 def test_render_is_deterministic(v2_record: dict[str, Any]) -> None:
@@ -197,7 +260,7 @@ def test_strict_transform_keeps_the_schema_expressible() -> None:
 def test_emit_schema_admits_a_real_emit_and_closes_the_code_enum() -> None:
     validator = jsonschema.Draft202012Validator(emit_schema())
     ok = _emit(
-        findings=[_finding("importance", evidence={
+        findings=[_finding("polarity_subject", evidence={
             "block_id": "b000002", "text": "minimum", "occurrence": 0})],
         unresolved=[{"question": "is the degree required?", "targets": ["s1"]}],
     )
@@ -207,7 +270,8 @@ def test_emit_schema_admits_a_real_emit_and_closes_the_code_enum() -> None:
     bad_extra["verdict"] = "accept"
     assert not validator.is_valid(bad_extra)
     assert not validator.is_valid({"findings": []})
-    assert not validator.is_valid(_emit(findings=[_finding("importance", severity="warning")]))
+    assert not validator.is_valid(
+        _emit(findings=[_finding("polarity_subject", severity="warning")]))
 
 
 def test_the_emit_schema_never_asks_for_the_candidate_hash() -> None:
@@ -222,6 +286,46 @@ def test_the_emit_schema_never_asks_for_the_candidate_hash() -> None:
 
 
 # --- severity and dimension maps -------------------------------------------
+
+
+def test_importance_left_the_code_set_with_the_field() -> None:
+    """parsing contract v3 §6: "The `importance` code is removed with the
+    field." It is gone from the vocabulary, from both maps and from the
+    engine-facing schema — a v4 auditor cannot be asked for it."""
+    assert "importance" not in CODES
+    assert "importance" not in SEVERITY and "importance" not in DIMENSION
+    schema = emit_schema()
+    assert schema["properties"]["findings"]["items"]["properties"]["code"]["enum"] == list(CODES)
+    assert "importance" not in json.dumps(schema)
+    assert "semantic-audit/v4" in schema["title"]
+    validator = jsonschema.Draft202012Validator(schema)
+    assert not validator.is_valid(_emit(findings=[_finding("importance")]))
+
+
+def test_an_importance_finding_is_a_machinery_error_not_a_silent_drop(
+    v3_record: dict[str, Any],
+) -> None:
+    """A v4 auditor answering with the retired code is a phase that went wrong
+    — a stale prompt, a stale schema — and the caller archives `audit_error`,
+    which no settlement policy reads as clean. Dropping the finding instead
+    would publish a record on the strength of an audit nobody ran."""
+    with pytest.raises(AuditJudgeError) as exc:
+        judge(_emit(findings=[_finding("importance")]), v3_record, S3_MD,
+              v3_record["extraction"]["candidate_hash"])
+    assert "importance" in str(exc.value) and "code" in str(exc.value)
+
+
+def test_judge_reads_a_schema_3_record(v3_record: dict[str, Any]) -> None:
+    """The ids and the capture index come off the record's own objects, so a
+    schema-3 candidate audits exactly like a schema-2 one: s1's evidence cites
+    b000002, which makes an omission citing it granularity."""
+    out = judge(
+        _emit(findings=[_finding("omission", targets=["s1"], evidence={
+            "block_id": "b000002", "text": None, "occurrence": None})]),
+        v3_record, S3_MD, v3_record["extraction"]["candidate_hash"],
+    )
+    assert (out.blocking, out.warnings) == (0, 1)
+    assert out.completeness == "no_findings"
 
 
 def test_severity_and_dimension_cover_exactly_the_closed_code_set() -> None:
@@ -239,7 +343,7 @@ def test_dimension_partition() -> None:
     assert {c for c in CODES if DIMENSION[c] == "completeness"} == {
         "omission", "source_insufficiency", "bad_exclusion"}
     assert {c for c in CODES if DIMENSION[c] == "semantics"} == {
-        "unsupported_statement", "importance", "polarity_subject", "relationship",
+        "unsupported_statement", "polarity_subject", "relationship",
         "numeric_scope_unit", "mention_linkage", "wording_redundancy"}
 
 
@@ -302,7 +406,7 @@ def test_judge_rejects_an_unknown_code(v2_record: dict[str, Any]) -> None:
 
 def test_judge_rejects_a_fabricated_target(v2_record: dict[str, Any]) -> None:
     with pytest.raises(AuditJudgeError) as exc:
-        _judge(v2_record, MD, findings=[_finding("importance", targets=["s99"])])
+        _judge(v2_record, MD, findings=[_finding("polarity_subject", targets=["s99"])])
     assert "s99" in str(exc.value)
 
 
@@ -313,7 +417,7 @@ def test_judge_accepts_every_id_space_the_auditor_can_see(
     """Statement, fact entry, area ids — and a source block id, which is the
     only handle a `bad_exclusion` finding has (accounting entries are keyed by
     block, not by an id of their own)."""
-    out = _judge(v2_record, MD, findings=[_finding("importance", targets=[target])])
+    out = _judge(v2_record, MD, findings=[_finding("polarity_subject", targets=[target])])
     assert out.findings[0]["targets"] == [target]
 
 
@@ -345,7 +449,7 @@ def test_judge_rejects_unbindable_evidence(v2_record: dict[str, Any]) -> None:
 
 def test_judge_rejects_an_empty_explanation(v2_record: dict[str, Any]) -> None:
     with pytest.raises(AuditJudgeError) as exc:
-        _judge(v2_record, MD, findings=[_finding("importance", explanation="  ")])
+        _judge(v2_record, MD, findings=[_finding("polarity_subject", explanation="  ")])
     assert "explanation" in str(exc.value)
 
 
@@ -365,7 +469,7 @@ def test_judge_rejects_structurally_broken_emits(v2_record: dict[str, Any]) -> N
 def test_judge_reports_every_defect_at_once(v2_record: dict[str, Any]) -> None:
     with pytest.raises(AuditJudgeError) as exc:
         judge(
-            _emit(findings=[_finding("vibes"), _finding("importance", targets=["s42"])]),
+            _emit(findings=[_finding("vibes"), _finding("polarity_subject", targets=["s42"])]),
             v2_record, MD, v2_record["extraction"]["candidate_hash"],
         )
     assert len(exc.value.errors) == 2
@@ -422,7 +526,7 @@ def test_a_warning_never_masks_a_blocking_finding(v2_record: dict[str, Any]) -> 
     """Same dimension, both severities: the blocking one still gates it."""
     out = _judge(v2_record, MD, findings=[
         _finding("wording_redundancy"),
-        _finding("importance"),
+        _finding("polarity_subject"),
     ])
     assert (out.semantics, out.completeness) == ("findings", "no_findings")
     assert (out.blocking, out.warnings) == (1, 1)
@@ -430,7 +534,7 @@ def test_a_warning_never_masks_a_blocking_finding(v2_record: dict[str, Any]) -> 
 
 def test_both_dimensions_report_independently(v2_record: dict[str, Any]) -> None:
     out = _judge(v2_record, MD, findings=[
-        _finding("importance"),
+        _finding("polarity_subject"),
         _finding("omission", targets=[], evidence={
             "block_id": "b000001", "text": None, "occurrence": None}),
     ])

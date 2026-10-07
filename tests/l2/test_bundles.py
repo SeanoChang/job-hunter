@@ -160,14 +160,18 @@ def test_v2_bundle_is_the_v6_engine_tuple() -> None:
     b = get_bundle("v2")
     assert b.name == "v2"
     assert (b.prompt_version, b.schema_version, b.validator_version) == (
-        "demand-profile/v10",
-        "2",
-        "19",
+        "demand-profile/v11",
+        "3",
+        "20",
     )
     assert b.template == prompt_v6.TEMPLATE
     assert b.prompt_sha() == prompt_v6.prompt_sha()
     assert b.render is prompt_v6.render
-    assert b.verify is verify_v2
+    # `verify` is no longer the bare module function: schema 2 and 3 records
+    # are read by one verifier told which shape it is reading, and the bundle
+    # is what tells it. Pinned by behaviour instead, in test_bundles_v11.py
+    # (`test_the_active_bundle_assembles_and_verifies_at_schema_3`).
+    assert b.verify is not verify_v2
     assert b.profile_of is serve.profile_of
     assert b.mention_rows is serve.mention_rows
 
@@ -209,22 +213,29 @@ def test_v2_registers_the_semantic_audit_phase() -> None:
     from jobhunter.l2.v2 import audit
 
     b = get_bundle("v2")
-    assert b.audit_version == audit.AUDIT_VERSION == "semantic-audit/v3"
+    assert b.audit_version == audit.AUDIT_VERSION == "semantic-audit/v4"
     assert b.audit_render is audit.render
     assert b.audit_emit_schema is audit.emit_schema
     assert b.audit_judge is audit.judge
 
 
 def test_the_validator_bump_keeps_the_replay_tuple() -> None:
-    """Replay keys on (prompt, schema) alone, so 15 -> 16 re-queues the corpus
-    under a fresh validator without orphaning the archived v2 attempts."""
+    """Replay keys on (prompt, schema) alone, so a validator bump re-queues the
+    corpus under a fresh validator without orphaning the archived v2 attempts.
+
+    The v11 bump moved the ACTIVE tuple to (v11, "3"); the archived one is
+    still claimed, now by the frozen registration, and still judged by 20."""
     b = get_bundle_for_tuple("demand-profile/v10", "2")
-    assert b is get_bundle("v2") and b.validator_version == "19"
+    assert b is not get_bundle("v2")
+    assert (b.prompt_version, b.schema_version, b.validator_version) == (
+        "demand-profile/v10", "2", "20",
+    )
 
 
 def test_get_bundle_for_tuple_maps_both_engine_tuples() -> None:
     assert get_bundle_for_tuple("demand-profile/v5", "1") is get_bundle("v1")
-    assert get_bundle_for_tuple("demand-profile/v10", "2") is get_bundle("v2")
+    assert get_bundle_for_tuple("demand-profile/v11", "3") is get_bundle("v2")
+    assert get_bundle_for_tuple("demand-profile/v10", "2").schema_version == "2"
     # a historical or unregistered tuple is a KeyError, never a silent v1
     with pytest.raises(KeyError):
         get_bundle_for_tuple("demand-profile/v4", "1")

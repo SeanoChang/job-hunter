@@ -1,4 +1,4 @@
-"""Engine-facing tightening of emit schema 2 (frozen bytes stay frozen).
+"""Engine-facing tightening of a v2-family emit schema (frozen bytes stay frozen).
 
 The verifier enforces a kind↔importance pairing (types.IMPORTANCE_KINDS): a
 qualification/employment_constraint/hiring_policy statement carries a non-null
@@ -8,7 +8,14 @@ attempts overwhelmingly on exactly this, because nothing CONSTRAINED the model
 invent one), so the rule can only bind at emit time. This module rewrites the
 statement definition the ENGINE receives into a discriminated union, making
 the violation inexpressible. `validate_emit` still checks against the frozen
-schema 2, so anything this guard admits remains contract-valid.
+schema, so anything this guard admits remains contract-valid.
+
+Schema 3 (parsing contract v3 §2.1) deletes both fields that union
+discriminates on, so the statement passes through untightened there; the
+fact-entry and accounting-row tightenings are statements about shapes schema 3
+kept, and apply to both. `engine_emit_schema` takes the version rather than
+assuming one, because the bundle — not this module — decides which contract a
+run emits under.
 """
 
 from __future__ import annotations
@@ -109,11 +116,21 @@ def _accounting_variants(entry: dict[str, Any]) -> list[dict[str, Any]]:
     return variants
 
 
-def engine_emit_schema() -> dict[str, Any]:
-    schema = copy.deepcopy(emit_schema("2"))
-    schema["$defs"]["statement"] = {
-        "anyOf": _statement_variants(schema["$defs"]["statement"])
-    }
+def engine_emit_schema(schema_version: str = "2") -> dict[str, Any]:
+    """The emit schema an engine is handed for `schema_version`.
+
+    The statement union is schema 2's alone: both conditionals it expresses —
+    kind↔importance, and proficiency ⇒ proficiency_evidence — are conditionals
+    on FIELDS schema 3 removed (parsing contract v3 §2.1), and a statement
+    whose only optional family is `modality_evidence` has no inexpressible
+    shape left to rule out. The fact-entry and accounting tightenings say the
+    same thing under either schema, so both versions get them.
+    """
+    schema = copy.deepcopy(emit_schema(schema_version))
+    if schema_version == "2":
+        schema["$defs"]["statement"] = {
+            "anyOf": _statement_variants(schema["$defs"]["statement"])
+        }
     schema["$defs"]["fact_entry"] = {
         "anyOf": _fact_entry_variants(schema["$defs"]["fact_entry"])
     }

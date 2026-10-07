@@ -21,7 +21,7 @@ from jobhunter.hashing import sha256_hex
 from jobhunter.l2.quotes import occurrence_index
 from jobhunter.l2.report import Report
 from jobhunter.l2.schemas import validate_record
-from jobhunter.l2.v2.assemble import normalize_key
+from jobhunter.l2.v2.assemble import normalize_key, section_heading
 from jobhunter.l2.v2.facts import (
     VALIDATOR_VERSION,
     derive_date,
@@ -33,6 +33,16 @@ from jobhunter.l2.v2.types import IMPORTANCE_KINDS, Block
 
 SCHEMA_VERSION = "2"
 MAX_GROUP_DEPTH = 5
+
+# Every reference family a statement carries, per schema version. Listing them
+# is what keeps attribution total: a new evidence field that is not named here
+# is a span nothing checks, so the map is explicit rather than derived from
+# whatever keys a record happens to have. Schema 3 trades the two verdict
+# families for the one modal quote (parsing contract v3 §2.1).
+_STATEMENT_REF_KEYS = {
+    "2": ("evidence", "importance_evidence", "polarity_evidence", "proficiency_evidence"),
+    "3": ("evidence", "modality_evidence", "polarity_evidence"),
+}
 
 # importance states that assert something the document must have said out loud;
 # `unstated` is the one reading that may stand bare
@@ -99,8 +109,10 @@ def _rederive(family: str, evidence: dict[str, Any]) -> dict[str, Any]:
     return {"state": state, "quantity": None, "money": None, "date": date}
 
 
-def iter_bound_refs(record: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]]:
-    """Yield (path, bound_ref) for every reference position in schema 2.
+def iter_bound_refs(
+    record: dict[str, Any], *, schema_version: str = SCHEMA_VERSION
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Yield (path, bound_ref) for every reference position in the record.
 
     One traversal, so a new evidence field cannot quietly escape attribution:
     forgetting to list it here is the only way a span goes unchecked. Assumes a
@@ -114,8 +126,7 @@ def iter_bound_refs(record: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any
     yield from many("source_assessment.evidence", record["source_assessment"]["evidence"])
     for i, statement in enumerate(record["statements"]):
         path = f"statements[{i}]"
-        for key in ("evidence", "importance_evidence", "polarity_evidence",
-                    "proficiency_evidence"):
+        for key in _STATEMENT_REF_KEYS[schema_version]:
             yield from many(f"{path}.{key}", statement[key])
         for j, issue in enumerate(statement["unresolved"]):
             yield from many(f"{path}.unresolved[{j}].evidence", issue["evidence"])
@@ -140,12 +151,13 @@ def iter_bound_refs(record: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any
 
 
 def _check_attribution(
-    record: dict[str, Any], md: str, blocks: dict[str, Block], report: Report
+    record: dict[str, Any], md: str, blocks: dict[str, Block], report: Report,
+    schema_version: str,
 ) -> None:
     """Every reference is exact: the span says what it quotes, sits inside the
     block it names, and names its own occurrence within that block."""
     n = len(md)
-    for path, ref in iter_bound_refs(record):
+    for path, ref in iter_bound_refs(record, schema_version=schema_version):
         start, end = ref["span"][0], ref["span"][1]
         if type(start) is not int or type(end) is not int or not 0 <= start < end <= n:
             # draft 2020-12 "integer" accepts 5.0; slicing with it would crash
@@ -301,7 +313,20 @@ def _check_relations(record: dict[str, Any], report: Report) -> None:
                          operator=group["operator"], group_id=group["id"])
 
 
-def _check_statements(record: dict[str, Any], report: Report) -> None:
+def _check_statements(record: dict[str, Any], blocks: list[Block], report: Report,
+                      schema_version: str) -> None:
+    if schema_version != "2":
+        # schema 3 has no verdicts to check. What it does have is one
+        # code-owned field, and code-owned fields are re-derived here rather
+        # than trusted — the same discipline as a fact entry's `derived` and a
+        # mention's `normalized_key`. A heading nobody can re-derive from the
+        # record's own first evidence span did not come from the document.
+        for i, statement in enumerate(record["statements"]):
+            expected = section_heading(blocks, statement["evidence"])
+            if statement["section_heading"] != expected:
+                report.error("statements", f"statements[{i}]", "section_heading_mismatch",
+                             stored=statement["section_heading"], derived=expected)
+        return
     for i, statement in enumerate(record["statements"]):
         path = f"statements[{i}]"
         kind, importance = statement["kind"], statement["importance"]
@@ -370,32 +395,45 @@ def _check_mentions(record: dict[str, Any], report: Report) -> None:
                          stored_key=mention["normalized_key"])
 
 
-def _evidence_blocks(record: dict[str, Any]) -> dict[str, set[str]]:
+def evidence_blocks(shape: dict[str, Any], schema_version: str) -> dict[str, set[str]]:
     """object id -> the block ids that object's OWN evidence cites.
 
     Statements and fact entries are the two kinds `block_accounting.ref_ids`
     may name, so they are the two kinds indexed here. Ids are unique per
     namespace (`duplicate_id` is its own finding); a collision across the two
     merges, which can only make the coverage check below more forgiving.
+
+    PUBLIC because the v20 migration re-accounts against this very index
+    (`l2/v2/migrate`): schema 3 retires two of schema 2's reference families, so
+    a coverage claim the archived record proved through one of them has to be
+    re-derived — and the derivation has to read coverage exactly the way
+    `_check_accounting` below reads it, or the migrated record fails the check
+    the derivation was supposed to satisfy. One implementation, never a second
+    copy of the rule.
+
+    Read with `.get`, so it answers for an EMIT (whose references carry the same
+    `block_id`, unbound) as well as for a record. Every key is present in any
+    record that reached this module — `verify` runs it only after
+    `validate_record` passed — so the tolerance costs nothing here.
     """
     index: dict[str, set[str]] = {}
-    for statement in record["statements"]:
-        cited = index.setdefault(statement["id"], set())
-        for key in ("evidence", "importance_evidence", "polarity_evidence",
-                    "proficiency_evidence"):
-            cited.update(ref["block_id"] for ref in statement[key] or [])
-        for issue in statement["unresolved"]:
-            cited.update(ref["block_id"] for ref in issue["evidence"] or [])
-    for entry in record["facts"]["entries"]:
-        cited = index.setdefault(entry["id"], set())
-        for refs in entry["evidence"].values():
+    for statement in shape.get("statements") or []:
+        cited = index.setdefault(statement.get("id"), set())
+        for key in _STATEMENT_REF_KEYS[schema_version]:
+            cited.update(ref["block_id"] for ref in statement.get(key) or [])
+        for issue in statement.get("unresolved") or []:
+            cited.update(ref["block_id"] for ref in issue.get("evidence") or [])
+    for entry in (shape.get("facts") or {}).get("entries") or []:
+        cited = index.setdefault(entry.get("id"), set())
+        for refs in (entry.get("evidence") or {}).values():
             cited.update(ref["block_id"] for ref in refs or [])
-        if entry["scope"] is not None:
-            cited.update(ref["block_id"] for ref in entry["scope"]["evidence"] or [])
+        if entry.get("scope") is not None:
+            cited.update(ref["block_id"] for ref in entry["scope"].get("evidence") or [])
     return index
 
 
-def _check_accounting(record: dict[str, Any], blocks: list[Block], report: Report) -> None:
+def _check_accounting(record: dict[str, Any], blocks: list[Block], report: Report,
+                      schema_version: str) -> None:
     """Every nonempty block is accounted for, an exclusion says why, and a
     coverage claim is backed by evidence from the block it claims.
 
@@ -406,7 +444,7 @@ def _check_accounting(record: dict[str, Any], blocks: list[Block], report: Repor
     whose named objects quote nothing from that block at all.
     """
     by_id = {block.id: block for block in blocks}
-    cited_blocks = _evidence_blocks(record)
+    cited_blocks = evidence_blocks(record, schema_version)
     accounted: set[str] = set()
     excluded: set[str] = set()
     for i, entry in enumerate(record["block_accounting"]):
@@ -484,8 +522,13 @@ def _check_usability(record: dict[str, Any], blocks: list[Block], report: Report
                      n_statements=n_statements, n_fact_entries=n_entries)
 
 
-def verify(record: dict[str, Any], markdown: str) -> Report:
-    """Check one schema-2 record against the document it claims to describe."""
+def verify(record: dict[str, Any], markdown: str, *,
+           schema_version: str = SCHEMA_VERSION) -> Report:
+    """Check one record against the document it claims to describe.
+
+    `schema_version` selects the statement shape (2 or 3) the same way the
+    bundle selects assembly and the prompt; every other check is identical.
+    """
     report = Report(validator_version=VALIDATOR_VERSION)
     document = record.get("document")
     document = document if isinstance(document, dict) else {}
@@ -500,20 +543,20 @@ def verify(record: dict[str, Any], markdown: str) -> Report:
                      stored=annotation, expected=ANNOTATION_VERSION)
         return report  # block ids and spans mean nothing under another annotation
 
-    for message in validate_record(record, SCHEMA_VERSION):
+    for message in validate_record(record, schema_version):
         report.error("schema", "<schema>", "invalid", message=message)
     if report.status == "fail":
         return report  # structure unknown; every check below would KeyError
 
     blocks = annotate(markdown)
-    _check_attribution(record, markdown, blocks_by_id(blocks), report)
+    _check_attribution(record, markdown, blocks_by_id(blocks), report, schema_version)
     _check_references(record, report)
     _check_group_nesting(record, report)
     _check_relations(record, report)
-    _check_statements(record, report)
+    _check_statements(record, blocks, report, schema_version)
     _check_facts(record, report)
     _check_mentions(record, report)
-    _check_accounting(record, blocks, report)
+    _check_accounting(record, blocks, report, schema_version)
     _check_usability(record, blocks, report)
     report.metrics.update({
         "n_statements": len(record["statements"]),

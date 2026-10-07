@@ -11,6 +11,7 @@ read from the emit.
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable
 from typing import Any, cast
 
 from jobhunter.hashing import canonical_json, sha256_hex
@@ -20,12 +21,14 @@ from jobhunter.l2.v2.facts import (
     derive_money,
     derive_quantity,
 )
+from jobhunter.l2.v2.invisible import invisible
 from jobhunter.l2.v2.quality import assess
 from jobhunter.l2.v2.source import (
     ANNOTATION_VERSION,
     RefBindError,
     annotate,
     blocks_by_id,
+    heading_of,
     resolve,
 )
 from jobhunter.l2.v2.types import Block
@@ -50,21 +53,109 @@ _PRESENCE_KEY = {"experience": "experience", "compensation": "compensation",
 _LEGAL_CONTROLS = frozenset("\n\t")
 
 
-def _scan_control_chars(path: str, node: Any, errors: list[str]) -> None:
-    """Collect every emitted string carrying a control character other than
-    newline/tab. Document text cannot contain them (md/1 normalizes), so any
-    such byte is model-fabricated content no consumer downstream can store."""
+def _unstorable(ch: str) -> bool:
+    """What no store or hash can hold: validator/17's set — a code point below
+    U+0020 other than \\n and \\t, which a jsonb column refuses — and a lone
+    surrogate (validator/20), which no UTF-8 encoder can write, so
+    `candidate_hash` crashed on it. No document holds either, so one is
+    fabricated wherever it sits."""
+    cp = ord(ch)
+    return (cp < 0x20 and ch not in _LEGAL_CONTROLS) or 0xD800 <= cp <= 0xDFFF
+
+
+def _invisible(ch: str) -> bool:
+    """Validator/20's schema-3 set: any character no reader can see, \\n and \\t
+    aside — Unicode 15.0.0's categories Cc, Cf, Co, Cn and Cs, from the frozen
+    table in `invisible.py`, never the running interpreter's Unicode database.
+    A superset of `_unstorable`."""
+    return invisible(ch)
+
+
+#: the record shapes whose assembly keeps validator/17's character rule. Schema
+#: 2 is the frozen v10 registration: replay re-judges it and cannot retry, so a
+#: wider rule there turns a served document into a refusal nothing recovers —
+#: its junk is stripped on the way to schema 3 instead (`migrate`).
+_STORAGE_RULE_SCHEMAS = frozenset({"2"})
+
+
+def _document_owned(node: dict[str, Any], key: str) -> bool:
+    """Is `node[key]` the DOCUMENT's text rather than the model's?
+
+    A bound quote's `text` (a reference carries `block_id`: binding proves
+    every character of it stands in the cited block, and in a record it IS the
+    document's bytes) and a record's `section_heading`, which code copies from
+    a heading block. 1,011 of 44,588 canonical documents carry a format
+    character (md/1 applies NFKC, which keeps them), so judging these by the
+    invisible set would fail a faithful quote the model cannot repair. They
+    get `_unstorable` only.
+    """
+    return key == "section_heading" or (key == "text" and "block_id" in node)
+
+
+def _scan(path: str, node: Any, errors: list[str], rejects: Callable[[str], bool], *,
+          document_owned: bool = False) -> None:
+    """Collect every string carrying a character the scan rejects: `rejects` in
+    what the model wrote, `_unstorable` in the document's own text. One error
+    per string, naming its path. A list inherits its key's ownership; a dict's
+    keys decide their own."""
     if isinstance(node, str):
-        bad = sorted({c for c in node if ord(c) < 0x20 and c not in _LEGAL_CONTROLS})
+        bad = sorted({c for c in node if (_unstorable if document_owned else rejects)(c)})
         if bad:
             shown = ",".join(f"U+{ord(c):04X}" for c in bad)
             errors.append(f"{path}: control character {shown} in emitted string")
     elif isinstance(node, dict):
         for k, v in node.items():
-            _scan_control_chars(f"{path}.{k}", v, errors)
+            _scan(f"{path}.{k}", v, errors, rejects, document_owned=_document_owned(node, k))
     elif isinstance(node, list):
         for i, v in enumerate(node):
-            _scan_control_chars(f"{path}[{i}]", v, errors)
+            _scan(f"{path}[{i}]", v, errors, rejects, document_owned=document_owned)
+
+
+def character_errors(path: str, node: Any, *, schema_version: str) -> list[str]:
+    """Assembly's character scan over an emit (or a record) of `schema_version`.
+
+    Validator/17 added it: codex emitted "…at global<NUL>" into a topic
+    (2026-09-12) and the NUL crossed assembly untouched, crashing only at the
+    jsonb boundary. Validator/20 (amended 2026-09-28) splits it by shape:
+
+    - schema 2, the frozen v10 registration, keeps 17's rule plus the lone
+      surrogate (`_unstorable`). Replay re-judges that partition and cannot
+      retry, and ~4,600 served v10 documents (16%) hold an only ok record
+      whose model-written topic ends in zero-width junk: judged by the wider
+      rule they would go dark. The derivation to schema 3 strips that junk
+      instead (`migrate.record3_of`), so the frozen partition re-judges as it
+      did under 19 apart from the quantity grammar.
+    - schema 3, the live contract, rejects every invisible character
+      (`_invisible`) in a string the MODEL wrote — zero-width junk tails
+      reached 22% of validated profiles — so the content-retry ladder hands a
+      live emit carrying one back to the model. The document's own text
+      (`_document_owned`) keeps `_unstorable`.
+    """
+    rejects = _unstorable if schema_version in _STORAGE_RULE_SCHEMAS else _invisible
+    errors: list[str] = []
+    _scan(path, node, errors, rejects)
+    return errors
+
+
+def control_char_errors(path: str, node: Any) -> list[str]:
+    """The storability check, for the readers of an ALREADY-ARCHIVED object:
+    replay's historical branch (`rebuild._storable_event`), a migrated record
+    adopted forward and a repaired candidate read back out of its artifact
+    (`runner._storable`).
+
+    A STORAGE constraint and nothing else: it refuses what a jsonb column or
+    `candidate_hash` cannot hold — validator/17's control characters below
+    U+0020 and a lone surrogate (`_unstorable`) — in every string of every
+    schema, and never validator/20's content rule. Two records sealed under 15
+    and 16 carry a NUL in a topic, and a full rebuild died on them at
+    `upsert_state` until this check existed. A historical record with a
+    zero-width topic tail is storable and folds exactly as it did before
+    validator 20; the error spelling is assembly's, so a defect named here
+    reads as the one assembly would have named.
+    """
+    errors: list[str] = []
+    _scan(path, node, errors, _unstorable)
+    return errors
 
 
 class AssembleError(Exception):
@@ -173,30 +264,67 @@ def _derive(family: Any, evidence: dict[str, Any]) -> dict[str, Any]:
     return {"state": state, "quantity": None, "money": None, "date": date}
 
 
-def _statement(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, Any]:
+def derive_fact(family: Any, evidence: dict[str, Any]) -> dict[str, Any]:
+    """A bound fact entry's `derived`, by assembly's own derivation.
+
+    Public for `migrate.record3_of`, which re-derives this code-owned field on
+    an archived record the way it re-derives `section_heading`: the live fold
+    adopts the ARCHIVED record while the replay re-assembles the raw emit, and
+    after validator/20 amended the quantity grammar in place (2026-09-28) the
+    two would otherwise hold different candidates for one attempt.
+    """
+    return _derive(family, evidence)
+
+
+def section_heading(blocks: list[Block], evidence: list[dict[str, Any]]) -> str | None:
+    """The heading a statement sits under, from its FIRST bound evidence span.
+
+    Code owns this (parsing contract v3 §2.1): the annotation already carries
+    the document's structure, so a statement's section is derived, never read
+    off the emit. A statement whose evidence bound nowhere has no span to
+    stand on and gets null.
+    """
+    if not evidence:
+        return None
+    return heading_of(blocks, str(evidence[0]["block_id"]))
+
+
+def _statement(binder: _Binder, index: int, node: dict[str, Any], *,
+               schema_version: str, blocks: list[Block]) -> dict[str, Any]:
     path = f"statements[{index}]"
-    return {
+    bound_evidence = binder.refs(f"{path}.evidence", node.get("evidence"))
+    statement: dict[str, Any] = {
         "id": node.get("id"),
         "kind": node.get("kind"),
         "subject": node.get("subject"),
         "topic": node.get("topic"),
-        "evidence": binder.refs(f"{path}.evidence", node.get("evidence")),
-        "importance": node.get("importance"),
-        "importance_evidence": binder.field(path, node, "importance_evidence"),
-        "polarity": node.get("polarity"),
-        "polarity_evidence": binder.field(path, node, "polarity_evidence"),
-        "proficiency": node.get("proficiency"),
-        "proficiency_evidence": binder.field(path, node, "proficiency_evidence"),
-        "condition_ids": list(node.get("condition_ids") or []),
-        "fact_ids": list(node.get("fact_ids") or []),
-        "unresolved": [
-            {
-                "reason": issue.get("reason"),
-                "evidence": binder.refs(f"{path}.unresolved[{j}].evidence", issue.get("evidence")),
-            }
-            for j, issue in enumerate(node.get("unresolved") or [])
-        ],
+        "evidence": bound_evidence,
     }
+    # binding order is the order errors are collected in, so each family binds
+    # where its field sits in the shape
+    if schema_version == "2":
+        statement["importance"] = node.get("importance")
+        statement["importance_evidence"] = binder.field(path, node, "importance_evidence")
+    else:
+        # schema 3: the verdicts are gone and objective context takes their
+        # place — one code-owned heading, one quoted modal phrase
+        statement["section_heading"] = section_heading(blocks, bound_evidence)
+        statement["modality_evidence"] = binder.field(path, node, "modality_evidence")
+    statement["polarity"] = node.get("polarity")
+    statement["polarity_evidence"] = binder.field(path, node, "polarity_evidence")
+    if schema_version == "2":
+        statement["proficiency"] = node.get("proficiency")
+        statement["proficiency_evidence"] = binder.field(path, node, "proficiency_evidence")
+    statement["condition_ids"] = list(node.get("condition_ids") or [])
+    statement["fact_ids"] = list(node.get("fact_ids") or [])
+    statement["unresolved"] = [
+        {
+            "reason": issue.get("reason"),
+            "evidence": binder.refs(f"{path}.unresolved[{j}].evidence", issue.get("evidence")),
+        }
+        for j, issue in enumerate(node.get("unresolved") or [])
+    ]
+    return statement
 
 
 def _group(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, Any]:
@@ -306,18 +434,27 @@ def assemble(
     normalizer_version: str = NORMALIZER_VERSION,
     prompt_version: str = PROMPT_VERSION,
     parent_candidate_hash: str | None = None,
+    schema_version: str = SCHEMA_VERSION,
 ) -> dict[str, Any]:
-    """Bind, derive and seal one emit into a schema-2 record.
+    """Bind, derive and seal one emit into a record of `schema_version`.
+
+    The schema version travels as a parameter for the same reason the prompt
+    version does: the bundle owns the engine tuple, and assembly is one of the
+    six functions it selects. Only the statement shape differs between 2 and
+    3 (parsing contract v3 §2.1); everything else is byte-identical.
 
     Raises AssembleError carrying every binding failure at once.
     """
-    binder = _Binder(blocks_by_id(annotate(markdown)))
+    blocks = annotate(markdown)
+    binder = _Binder(blocks_by_id(blocks))
     # validator/17: emit strings must not smuggle control characters into the
     # record — codex emitted "…at global<NUL>" into a topic (2026-09-12) and
     # the NUL crossed assemble untouched, crashing only at the jsonb boundary
     # (Postgres cannot store NUL in text). Rejected HERE so the content-retry
-    # loop hands the defect back to the model with its path.
-    _scan_control_chars("emit", emit, binder.errors)
+    # loop hands the defect back to the model with its path. validator/20
+    # widens it under schema 3 to every invisible character the model wrote;
+    # schema 2 keeps 17's set (`character_errors` says why).
+    binder.errors.extend(character_errors("emit", emit, schema_version=schema_version))
     assessment = emit.get("source_assessment") or {}
     relations = emit.get("relations") or {}
     facts = emit.get("facts") or {}
@@ -334,7 +471,8 @@ def assemble(
             "note": assessment.get("note"),
         },
         "statements": [
-            _statement(binder, i, s) for i, s in enumerate(emit.get("statements") or [])
+            _statement(binder, i, s, schema_version=schema_version, blocks=blocks)
+            for i, s in enumerate(emit.get("statements") or [])
         ],
         "relations": {
             "groups": [_group(binder, i, g) for i, g in enumerate(relations.get("groups") or [])],
@@ -361,7 +499,7 @@ def assemble(
         "extraction": {
             "model": observed_model,
             "prompt_version": prompt_version,
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": schema_version,
             "validator_version": VALIDATOR_VERSION,
             "rules_version": RULES_VERSION,
             "at": at,

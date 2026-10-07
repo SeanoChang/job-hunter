@@ -26,7 +26,7 @@ def test_clean_record_passes(v2_record: dict[str, Any]) -> None:
     assert [(f.code, f.severity, f.detail["block_id"]) for f in report.findings] == [
         ("context_requirement_language", "warning", "b000001")
     ]
-    assert report.status == "pass" and report.validator_version == "19"
+    assert report.status == "pass" and report.validator_version == "20"
     assert report.metrics == {
         "n_statements": 1, "n_mentions": 0, "n_fact_entries": 1,
         "n_blocks": 2, "blocks_accounted": 2, "excluded_blocks": 0,

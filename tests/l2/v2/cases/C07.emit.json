@@ -33,8 +33,7 @@
             "occurrence": null
           }
         ],
-        "importance": "required",
-        "importance_evidence": [
+        "modality_evidence": [
           {
             "block_id": "b000002",
             "text": "requires",
@@ -43,8 +42,6 @@
         ],
         "polarity": "positive",
         "polarity_evidence": null,
-        "proficiency": null,
-        "proficiency_evidence": null,
         "condition_ids": [],
         "fact_ids": [],
         "unresolved": []

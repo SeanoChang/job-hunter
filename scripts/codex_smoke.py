@@ -33,7 +33,7 @@ SCHEMA = {
 
 
 def main() -> int:
-    model = sys.argv[1] if len(sys.argv) > 1 else "gpt-5.6-sol"
+    model = sys.argv[1] if len(sys.argv) > 1 else "gpt-6-luna"
     captured: dict[str, str] = {}
 
     def capturing_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
