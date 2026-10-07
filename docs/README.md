@@ -41,7 +41,7 @@ dispositions of the 2026-08-17 external review:
 
 ## Design documents
 
-- `superpowers/specs/2026-10-07-parsing-contract-v4-design.md` — **draft
+- `superpowers/specs/2026-10-07-parsing-contract-v4-design.md` — **approved
   2026-10-07, amends v3**: a derived `authorization` object (sponsorship
   yes/no/undeclared, `citizenship_required`) from three new presence
   families; typed mentions; mentions from responsibility lines; `tracks` for

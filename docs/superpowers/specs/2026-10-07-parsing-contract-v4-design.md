@@ -1,6 +1,6 @@
 # Parsing contract v4 — sponsorship, typed mentions, tracks
 
-Status: **draft 2026-10-07**, for Sean's review. Amends
+Status: **approved 2026-10-07** (Sean). Amends
 `2026-09-22-parsing-contract-v3-design.md`; every section of v3 (and of v2
 through it) not named here stands. Engine identifiers: prompt
 `demand-profile/v12`, schema `4`, validator `21`, `semantic-audit/v5`,
@@ -224,17 +224,14 @@ New fixture cases, each written to fail before the change:
 
 The twelve v2 audit cases (C01–C12) carry over, re-emitted under schema 4.
 
-## 8. Open questions for review
+## 8. Rulings on the review questions (Sean, 2026-10-07)
 
-1. Does "sponsorship may be available" count as `yes`? This draft says yes
-   (the posting states a policy that can grant it). The alternative is
-   `undeclared` with the quote.
-2. Should F-1 CPT/OPT wording ("we accept CPT/OPT", "OPT not supported") get
-   its own presence family? It matters for internships and is distinct from
-   H-1B sponsorship. This draft leaves it out; the quote reaches the record as
-   a `hiring_policy` statement.
-3. Should the digest bound on skills stay at 8 now that it reports an omitted
-   count?
+1. "Sponsorship may be available" counts as `yes`: the posting states a
+   policy that can grant it.
+2. F-1 CPT/OPT wording gets no field in v4. Its quote reaches the record as a
+   `hiring_policy` statement.
+3. The digest keeps its bound of 8 skills and reports the omitted count;
+   `--full` carries every skill.
 
 ## 9. Non-goals
 
