@@ -1146,6 +1146,7 @@ def _extract_once(
     *,
     doc: str | None = None,
     dry_run: bool = False,
+    title_regex: str | None = None,
 ) -> dict[str, Any]:
     """One extraction batch under the extract lock (`extract run`, `sync`).
 
@@ -1175,7 +1176,7 @@ def _extract_once(
             engine=_make_engine(settings),
             max_docs=max_docs if max_docs is not None else settings.l2_max_docs,
             max_usd=max_usd if max_usd is not None else settings.l2_max_usd,
-            only_doc=doc, dry_run=dry_run, bundle=bundle,
+            only_doc=doc, dry_run=dry_run, bundle=bundle, title_regex=title_regex,
             # a batch outlives a managed Postgres' idle timeout; the runner
             # replaces the dropped connection itself and commits its own work
             connect=lambda: _db.connect(settings.require_database_url(), schema=_schema),
@@ -1222,6 +1223,9 @@ def extract_run(
     max_docs: int | None = typer.Option(None, "--max-docs"),
     max_usd: float | None = typer.Option(None, "--max-usd"),
     doc: str | None = typer.Option(None, "--doc", help="Extract exactly this document_hash"),
+    title_regex: str | None = typer.Option(
+        None, "--title-regex",
+        help="Queue only documents whose posting title matches (Postgres regex, case-insensitive)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show the queue, write nothing"),
     output: str | None = output_option(),
 ) -> None:
@@ -1229,7 +1233,8 @@ def extract_run(
     settings = _settings(output)
     store = _store(settings, output)
     try:
-        data = _extract_once(settings, store, max_docs, max_usd, doc=doc, dry_run=dry_run)
+        data = _extract_once(settings, store, max_docs, max_usd, doc=doc, dry_run=dry_run,
+                             title_regex=title_regex)
     except _ExtractFailure as e:
         fail(e.kind, e.message, code=e.code, output=output, hint=e.hint)
     emit(data, human=_extract_human(data, dry_run), output=output)

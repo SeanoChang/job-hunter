@@ -2352,6 +2352,7 @@ def run(
     now: Callable[[], datetime] = utcnow_precise,
     connect: Callable[[], Conn] | None = None,
     bundle: Bundle | None = None,
+    title_regex: str | None = None,
 ) -> ExtractSummary:
     # the engine tuple travels as a parameter, never as module state: the
     # parallel drain runs this loop on several threads and the tests re-enter it
@@ -2376,6 +2377,7 @@ def run(
                 c, prompt_version=active.prompt_version, schema_version=active.schema_version,
                 validator_version=active.validator_version, model_regex=model_regex,
                 normalizer_version=NORMALIZER_VERSION, limit=max_docs,
+                title_regex=title_regex,
             )
 
         if dry_run:

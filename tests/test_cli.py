@@ -932,3 +932,23 @@ def test_pulse_human_prints_a_schema_3_digest_without_a_verdict() -> None:
     assert "Java, Python [required], Build tools" in out
     assert "None" not in out
     assert "mentions: Java, Python (+3 more)" in out
+
+
+def test_extract_run_passes_the_title_filter_to_the_runner(
+    xenv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`extract run --title-regex` reaches the queue, so a re-extraction can
+    start with internship and new-grad postings."""
+    from jobhunter.l2 import runner as l2_runner
+
+    seen: dict[str, Any] = {}
+
+    def fake_run(*args: Any, **kwargs: Any) -> l2_runner.ExtractSummary:
+        seen.update(kwargs)
+        return l2_runner.ExtractSummary(run_id="x-test")
+
+    monkeypatch.setattr(l2_runner, "run", fake_run)
+    r = runner.invoke(cli.app, ["extract", "run", "--title-regex", r"\mintern", "--dry-run",
+                                "-o", "json"])
+    assert r.exit_code == 0, r.stdout + r.stderr
+    assert seen["title_regex"] == r"\mintern"

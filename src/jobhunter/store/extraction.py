@@ -276,10 +276,15 @@ def queue(
     model_regex: str,
     normalizer_version: str,
     limit: int,
+    title_regex: str | None = None,
 ) -> list[str]:
     """Pending = absence of ANY row under the current config (spec §4.6);
     priority: current text of open postings -> older versions of open postings
-    -> closes within 60 days -> rest; recency DESC within a class."""
+    -> closes within 60 days -> rest; recency DESC within a class.
+
+    `title_regex` (Postgres, case-insensitive) keeps only documents whose
+    posting version's title matches, so a re-extraction can start with the
+    roles the reader hunts in; None keeps every document."""
     rows = conn.execute(
         """
         WITH satisfied AS (
@@ -299,6 +304,7 @@ def queue(
         JOIN postings p ON p.uid = v.uid
         WHERE d.normalizer_version = %(nv)s
           AND d.document_hash NOT IN (SELECT document_hash FROM satisfied)
+          AND (%(tr)s::text IS NULL OR v.title ~* %(tr)s::text)
         GROUP BY d.document_hash
         ORDER BY prio, recency DESC
         LIMIT %(limit)s
@@ -306,6 +312,7 @@ def queue(
         {
             "pv": prompt_version, "sv": schema_version, "vv": validator_version,
             "model_regex": model_regex, "nv": normalizer_version, "limit": limit,
+            "tr": title_regex,
         },
     ).fetchall()
     return [r["document_hash"] for r in rows]

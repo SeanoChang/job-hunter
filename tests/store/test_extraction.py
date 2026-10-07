@@ -99,6 +99,31 @@ def test_queue_priorities_and_blocking(pg: Conn) -> None:
     assert ("d" * 63 + "1") in extraction.queue(pg, **other)  # new config re-selects
 
 
+def test_queue_can_be_limited_to_matching_titles(pg: Conn) -> None:
+    """A re-extraction can start with the slice the reader hunts in (internship
+    and new-grad roles) instead of the whole corpus: `title_regex` keeps only
+    documents whose posting version's title matches, case-insensitively, and
+    leaves the priority order untouched."""
+    _seed(pg)
+    titles = {"1": "Software Engineer Intern", "2": "Senior Staff Engineer",
+              "3": "New Grad Software Engineer"}
+    for suffix, title in titles.items():
+        pg.execute(
+            "UPDATE posting_versions SET title = %s WHERE version_hash ="
+            " (SELECT version_hash FROM documents WHERE document_hash = %s)",
+            (title, "d" * 63 + suffix),
+        )
+    kwargs: dict[str, Any] = {
+        **CONFIG,
+        "model_regex": extraction.globs_to_regex(("z-ai/*",)),
+        "normalizer_version": "md/1",
+        "limit": 10,
+    }
+    entry = r"\m(intern|new grad)"
+    assert extraction.queue(pg, **kwargs, title_regex=entry) == ["d" * 63 + "1", "d" * 63 + "3"]
+    assert len(extraction.queue(pg, **kwargs, title_regex=None)) == 3
+
+
 def test_attempt_idempotent_and_watermark(pg: Conn) -> None:
     a = _attempt()
     extraction.record_attempt(pg, a, {"errors": 1})
