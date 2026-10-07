@@ -57,6 +57,13 @@ before (`LEGACY_GATES`), because `demand-profile/v5` settles under validator
 "12", a shipped frozen identity parsing contract v3 does not bump. Which set
 applies is read off the cohort itself: see `_gates`.
 
+Validator/21 (parsing contract v4 §3) judges schema-4 cohorts only (`_contract_4`)
+with the same two gates. Negation also reads the `sponsorship` and
+`citizenship` presence polarities, compared per sample pair without alignment
+because presence is one entry per family; mention `type`, track membership,
+track `selection` and the derived `authorization` value are metrics
+(`V21_SPLITS`). Schema 2 and 3 cohorts report and gate exactly as before.
+
 The thresholds here are part of VALIDATOR_VERSION: wiring this gate into the
 runner, or changing any constant, bumps it (a $0 archive replay).
 
@@ -74,6 +81,9 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
+
+from jobhunter.l2.v2.assemble import derive_authorization
+from jobhunter.l2.v2.facts import SCHEMA_4_VALIDATOR_VERSION, validator_version_for
 
 JACCARD_MIN = 0.5
 F1_MIN = 0.80
@@ -188,6 +198,168 @@ def _gates(samples: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     return GATES if samples and all(_CONTRACT_KEY in s for s in samples) else LEGACY_GATES
 
 
+# --- validator/21 (parsing contract v4 §3) ------------------------------------
+#
+# Schema 4 keeps validator/20's two gates and extends `negation` to the two
+# authorization presence polarities. Presence is one entry per family per
+# record, so it needs no alignment: two samples that BOTH state `sponsorship`
+# (or `citizenship`) and read it `positive` in one and `negative` in the other
+# split on negation — "will not sponsor" read as a grant is the error that
+# harms the reader most, whatever statement kind carries the sentence. A hedge
+# (`ambiguous`) against a definite reading is `metrics.splits.polarity`, exactly
+# as a hedged statement is. Everything else schema 4 adds is reported under
+# `V21_SPLITS` and parks nothing.
+
+#: The presence families whose polarity the negation gate reads.
+AUTHORIZATION_POLARITY_FAMILIES: tuple[str, ...] = ("sponsorship", "citizenship")
+
+#: The metric counts a schema-4 cohort reports beside `SPLITS`, zeroes included:
+#: `authorization` — the derived `sponsorship` or `citizenship_required` value
+#: differs and the presence polarities did not already split (one sample stated
+#: the family, the other found none or left it unresolved); `mention_type` — an
+#: aligned mention pair typed differently; `track_membership` — an aligned track
+#: whose member blocks differ, or a track the other sample never recorded;
+#: `track_selection` — both samples recorded tracks with different `selection`.
+V21_SPLITS: tuple[str, ...] = (
+    "authorization", "mention_type", "track_membership", "track_selection",
+)
+
+_STATED = "stated"
+
+
+def _contract_4(samples: Sequence[Mapping[str, Any]]) -> bool:
+    """True when every sample declares a schema validator/21 judges.
+
+    A cohort mixing shapes cannot come from one engine tuple; it is judged
+    under validator/20, which compares less and so cannot park on a field one
+    side does not have.
+    """
+    return bool(samples) and all(
+        isinstance(s.get(_CONTRACT_KEY), str)
+        and validator_version_for(s[_CONTRACT_KEY]) == SCHEMA_4_VALIDATOR_VERSION
+        for s in samples
+    )
+
+
+def _splits(samples: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+    """The `metrics.splits` keys this cohort reports."""
+    return (*SPLITS, *V21_SPLITS) if _contract_4(samples) else SPLITS
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _presence_of(profile: Mapping[str, Any]) -> dict[str, Any]:
+    return dict(_mapping(_mapping(profile.get("facts")).get("presence")))
+
+
+def _authorization_splits(x: Mapping[str, Any], y: Mapping[str, Any]) -> dict[str, int]:
+    """One sample pair's authorization disagreement: `negation` (the gate),
+    `polarity` (a hedge or a missing polarity against a reading, both stated)
+    and `authorization` (the derived value split anywhere else)."""
+    px, py = _presence_of(x), _presence_of(y)
+    counts = {"negation": 0, "polarity": 0, "authorization": 0}
+    split: set[str] = set()
+    for family in AUTHORIZATION_POLARITY_FAMILIES:
+        ex, ey = _mapping(px.get(family)), _mapping(py.get(family))
+        if ex.get("state") != _STATED or ey.get("state") != _STATED:
+            continue
+        if ex.get("polarity") == ey.get("polarity"):
+            continue
+        split.add(family)
+        flip = {ex.get("polarity"), ey.get("polarity")} == {_POSITIVE, _NEGATIVE}
+        counts["negation" if flip else "polarity"] += 1
+    dx, dy = derive_authorization(px), derive_authorization(py)
+    for family, field in (("sponsorship", "sponsorship"),
+                          ("citizenship", "citizenship_required")):
+        if family not in split and dx[field] != dy[field]:
+            counts["authorization"] += 1
+    return counts
+
+
+def _span_of(refs: Any) -> tuple[int, int] | None:
+    """The envelope of bound references, as `serve._claim` spans a claim."""
+    spans = [
+        (r["span"][0], r["span"][1])
+        for r in (refs if isinstance(refs, list) else [refs])
+        if isinstance(r, Mapping) and isinstance(r.get("span"), list) and len(r["span"]) == 2
+        and all(isinstance(v, int) and not isinstance(v, bool) for v in r["span"])
+    ]
+    if not spans:
+        return None
+    lo, hi = min(s[0] for s in spans), max(s[1] for s in spans)
+    return (lo, hi) if lo < hi else None
+
+
+def _blocks_of(refs: Any) -> set[str]:
+    return {
+        r["block_id"]
+        for r in (refs if isinstance(refs, list) else [refs])
+        if isinstance(r, Mapping) and isinstance(r.get("block_id"), str)
+    }
+
+
+def _mention_type_splits(x: Mapping[str, Any], y: Mapping[str, Any]) -> int:
+    """Aligned mentions (by evidence span, as claims align) typed differently."""
+    mx = [m for m in _list(x.get("mentions")) if isinstance(m, Mapping)]
+    my = [m for m in _list(y.get("mentions")) if isinstance(m, Mapping)]
+    pairs = _align_spans([_span_of(m.get("evidence")) for m in mx],
+                         [_span_of(m.get("evidence")) for m in my])
+    return sum(int(_differs(mx[i].get("type"), my[j].get("type"))) for i, j in pairs)
+
+
+def _tracks_of(
+    profile: Mapping[str, Any],
+) -> tuple[Any, list[tuple[tuple[int, int] | None, frozenset[str]]]] | None:
+    """A sample's tracks as (selection, [(span, member blocks)]), or None.
+
+    Members are compared as the BLOCKS their statements and mentions cite:
+    statement and mention ids are minted per sample, block ids are shared.
+    """
+    tracks = _mapping(profile.get("relations")).get("tracks")
+    if not isinstance(tracks, Mapping):
+        return None
+    statements = {s.get("id"): s for s in _list(profile.get("statements"))
+                  if isinstance(s, Mapping)}
+    mentions = {m.get("id"): m for m in _list(profile.get("mentions"))
+                if isinstance(m, Mapping)}
+    items: list[tuple[tuple[int, int] | None, frozenset[str]]] = []
+    for item in _list(tracks.get("items")):
+        if not isinstance(item, Mapping):
+            continue
+        members: set[str] = set()
+        for sid in _list(item.get("statement_ids")):
+            members |= _blocks_of(_mapping(statements.get(sid)).get("evidence"))
+        for mid in _list(item.get("mention_ids")):
+            members |= _blocks_of(_mapping(mentions.get(mid)).get("evidence"))
+        items.append((_span_of(item.get("evidence")), frozenset(members)))
+    return tracks.get("selection"), items
+
+
+def _track_splits(x: Mapping[str, Any], y: Mapping[str, Any]) -> dict[str, int]:
+    tx, ty = _tracks_of(x), _tracks_of(y)
+    if tx is None and ty is None:
+        return {"track_membership": 0, "track_selection": 0}
+    ix = tx[1] if tx is not None else []
+    iy = ty[1] if ty is not None else []
+    pairs = _align_spans([span for span, _ in ix], [span for span, _ in iy])
+    membership = sum(int(ix[i][1] != iy[j][1]) for i, j in pairs)
+    membership += (len(ix) - len(pairs)) + (len(iy) - len(pairs))
+    selection = int(tx is not None and ty is not None and tx[0] != ty[0])
+    return {"track_membership": membership, "track_selection": selection}
+
+
+def _contract_4_splits(x: Mapping[str, Any], y: Mapping[str, Any]) -> dict[str, int]:
+    """Everything validator/21 compares on one sample pair beyond validator/20."""
+    return {**_authorization_splits(x, y), "mention_type": _mention_type_splits(x, y),
+            **_track_splits(x, y)}
+
+
 def cohort_hook(
     records_of: Callable[[Any], Mapping[str, Any] | None],
     *,
@@ -223,6 +395,7 @@ def cohort_hook(
         ]
         if len(resolved) < 2:
             medoid_key = by_slot[slot_order[0]].attempt_key
+            arrived = [rec for _, rec in resolved]
             report: dict[str, Any] = {
                 "k": slots_attempted,
                 # how many of those slots produced a record to compare. Under
@@ -231,11 +404,12 @@ def cohort_hook(
                 # (parsing contract v3 §5) — and `serve._sample_notes` carries
                 # it into the stored blob as requested/arrived.
                 "arrived": len(resolved),
-                "gates": list(_gates([rec for _, rec in resolved])),
+                "gates": list(_gates(arrived)),
                 "mean_f1": None,
                 "pair_f1": {},
                 "required_importance_agreement": None,
                 "negation_disagreements": 0,
+                **({"authorization_negations": 0} if _contract_4(arrived) else {}),
                 "numeric_conflicts": 0,
                 # nothing was compared, so no dimension disagreed — the keys are
                 # here because this report is read by the same code as the other
@@ -243,7 +417,7 @@ def cohort_hook(
                 "thresholds": {"jaccard": JACCARD_MIN, "f1": f1_min,
                                "importance": IMPORTANCE_MIN},
                 "metrics": {"aligned_pairs": 0, "f1": None,
-                            "splits": dict.fromkeys(SPLITS, 0)},
+                            "splits": dict.fromkeys(_splits(arrived), 0)},
                 "failures": ["sample_failed"],
                 "medoid": 0,
             }
@@ -576,12 +750,20 @@ def _jaccard(a: tuple[int, int], b: tuple[int, int]) -> float:
 
 def _align(xs: list[_Claim], ys: list[_Claim]) -> list[tuple[int, int]]:
     """Greedy one-to-one alignment, best Jaccard first, threshold JACCARD_MIN."""
+    return _align_spans([x.span for x in xs], [y.span for y in ys])
+
+
+def _align_spans(
+    xs: Sequence[tuple[int, int] | None], ys: Sequence[tuple[int, int] | None]
+) -> list[tuple[int, int]]:
+    """`_align` over bare spans, so schema 4's mentions and tracks align by the
+    same rule claims do (validator/21)."""
     scored = [
-        (_jaccard(x.span, y.span), i, j)
+        (_jaccard(x, y), i, j)
         for i, x in enumerate(xs)
-        if x.span is not None
+        if x is not None
         for j, y in enumerate(ys)
-        if y.span is not None
+        if y is not None
     ]
     pairs: list[tuple[int, int]] = []
     used_x: set[int] = set()
@@ -735,8 +917,17 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
     required_pairs = 0
     required_agree = 0
     dimensions = dict.fromkeys(DIMENSIONS, 0)
+    contract_4 = _contract_4(samples)
+    authorization_negations = 0
+    v21 = dict.fromkeys(V21_SPLITS, 0)
     for a in range(len(samples)):
         for b in range(a + 1, len(samples)):
+            if contract_4:
+                pair = _contract_4_splits(samples[a], samples[b])
+                authorization_negations += pair["negation"]
+                polarity_splits += pair["polarity"]
+                for key in V21_SPLITS:
+                    v21[key] += pair[key]
             xs, ys = claim_sets[a], claim_sets[b]
             pairs = _align(xs, ys)
             denom = len(xs) + len(ys)
@@ -762,6 +953,9 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
                 for dimension, split in _dimension_splits(x, y):
                     dimensions[dimension] += split
 
+    # validator/21: an authorization polarity flip is a negation split like any
+    # other, so it is in the count the gate reads; it is ALSO named on its own
+    negation_splits += authorization_negations
     mean_f1 = sum(f1s) / len(f1s)
     imp_agreement = (required_agree / required_pairs) if required_pairs else 1.0
 
@@ -795,6 +989,7 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
         "pair_f1": {f"{a}-{b}": f1 for (a, b), f1 in sorted(pair_f1.items())},
         "required_importance_agreement": imp_agreement,
         "negation_disagreements": negation_splits,
+        **({"authorization_negations": authorization_negations} if contract_4 else {}),
         "numeric_conflicts": numeric_conflicts,
         **{DIMENSIONS[d]: n for d, n in dimensions.items()},
         "thresholds": {"jaccard": JACCARD_MIN, "f1": f1_min, "importance": IMPORTANCE_MIN},
@@ -806,7 +1001,7 @@ def agree(samples: Sequence[Mapping[str, Any]], *, f1_min: float = F1_MIN) -> Ag
             "aligned_pairs": aligned_pairs,
             "f1": mean_f1,
             "splits": {**dimensions, "polarity": polarity_splits,
-                       "numeric_tags": numeric_tags},
+                       "numeric_tags": numeric_tags, **(v21 if contract_4 else {})},
         },
         "failures": failures,
         "medoid": medoid,
