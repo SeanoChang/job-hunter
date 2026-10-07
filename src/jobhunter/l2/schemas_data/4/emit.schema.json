@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "job-hunter L2 emit schema (what the LLM returns), schema_version 4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source_assessment", "statements", "relations", "facts",
+               "mentions", "areas", "block_accounting"],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,40}$" },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["block_id", "text", "occurrence"],
+      "properties": {
+        "block_id": { "type": "string", "pattern": "^b[0-9]{6}$" },
+        "text": { "type": ["string", "null"], "minLength": 1 },
+        "occurrence": { "type": ["integer", "null"], "minimum": 0 }
+      },
+      "description": "text=null AND occurrence=null selects the whole block; otherwise text is an exact substring of the block and occurrence indexes its occurrences within the block. Binding enforces the pairing."
+    },
+    "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/reference" } },
+    "modality": {
+      "type": "array", "minItems": 1, "maxItems": 1,
+      "items": { "$ref": "#/$defs/reference" },
+      "description": "Exactly one reference quoting the posting's OWN modal phrase for this statement, verbatim (\"must\", \"required\", \"preferred\", \"ideally\", \"a plus\", \"nice to have\", \"minimum\"). Null when the text carries none: never inferred from a heading or from the clause's own descriptor. The vocabulary is open — binding is what is validated, not wording."
+    },
+    "polarity": { "enum": ["positive", "negative", "ambiguous"] },
+    "unresolved_issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "evidence"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "evidence": { "$ref": "#/$defs/evidence" }
+      }
+    },
+    "statement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "subject", "topic", "evidence",
+                   "modality_evidence", "polarity", "polarity_evidence",
+                   "condition_ids", "fact_ids", "unresolved"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["qualification", "responsibility", "employment_constraint",
+                            "compensation_statement", "hiring_policy", "employer_context"] },
+        "subject": { "enum": ["candidate", "employer", "role", "unstated"] },
+        "topic": { "type": "string", "minLength": 1 },
+        "evidence": { "$ref": "#/$defs/evidence" },
+        "modality_evidence": { "anyOf": [{ "$ref": "#/$defs/modality" }, { "type": "null" }] },
+        "polarity": { "$ref": "#/$defs/polarity" },
+        "polarity_evidence": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] },
+        "condition_ids": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "fact_ids": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "unresolved": { "type": "array", "items": { "$ref": "#/$defs/unresolved_issue" } }
+      },
+      "description": "schema 3: statements carry no verdicts. importance/proficiency and their evidence are gone — neither was checkable against the source — and `section_heading` is derived by code from the block structure, never emitted."
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "operator", "members", "evidence"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "operator": { "enum": ["all_of", "any_of", "unresolved"] },
+        "members": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/id" } },
+        "evidence": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] }
+      },
+      "description": "members reference statement or group ids; all_of/any_of require connective evidence (verify enforces); unresolved marks ambiguous coordination."
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "evidence", "statement_ids", "fact_ids"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["qualification_route", "role_level", "geography",
+                            "employment_type", "schedule", "other"] },
+        "evidence": { "$ref": "#/$defs/evidence" },
+        "statement_ids": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "fact_ids": { "type": "array", "items": { "$ref": "#/$defs/id" } }
+      }
+    },
+    "example_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "parent_statement_id", "mention_ids", "exhaustive", "evidence"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "parent_statement_id": { "$ref": "#/$defs/id" },
+        "mention_ids": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/id" } },
+        "exhaustive": { "type": "boolean" },
+        "evidence": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] }
+      }
+    },
+    "presence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "evidence"],
+      "properties": {
+        "state": { "enum": ["stated", "none_found", "explicitly_absent", "unresolved"] },
+        "evidence": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] }
+      },
+      "description": "explicitly_absent and unresolved require evidence (verify enforces); none_found means the model searched and found nothing."
+    },
+    "authorization_presence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "evidence", "polarity", "polarity_evidence"],
+      "properties": {
+        "state": { "enum": ["stated", "none_found", "unresolved"] },
+        "evidence": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] },
+        "polarity": { "enum": ["positive", "negative", "ambiguous", null] },
+        "polarity_evidence": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] }
+      },
+      "description": "sponsorship: the sentence stating a visa-sponsorship policy; polarity positive = granted (\"we sponsor H-1B\", \"sponsorship may be available\"), negative = refused (\"will not sponsor\"). citizenship: the sentence restricting eligibility by citizenship, U.S.-person status, clearance or export control; positive = the restriction applies. polarity_evidence quotes the negation or modal words verbatim. stated and unresolved require evidence (verify enforces)."
+    },
+    "work_authorization_presence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "evidence", "polarity", "polarity_evidence"],
+      "properties": {
+        "state": { "enum": ["stated", "none_found", "unresolved"] },
+        "evidence": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] },
+        "polarity": { "type": "null" },
+        "polarity_evidence": { "type": "null" }
+      },
+      "description": "A work-authorization requirement that says nothing about sponsorship (\"Must be authorized to work in the US\"). It carries no polarity."
+    },
+    "track": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name_evidence", "evidence", "open", "statement_ids", "mention_ids"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name_evidence": { "$ref": "#/$defs/evidence" },
+        "evidence": { "$ref": "#/$defs/evidence" },
+        "open": { "type": "boolean" },
+        "statement_ids": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "mention_ids": { "type": "array", "items": { "$ref": "#/$defs/id" } }
+      },
+      "description": "One kind of work the candidate can be placed on. name_evidence quotes the track's name, evidence the whole list item; open marks an undecided choice (\"I'm flexible and still exploring\"). A linked statement holds only inside this track."
+    },
+    "tracks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selection", "selection_evidence", "items"],
+      "properties": {
+        "selection": { "enum": ["candidate_choice", "team_match", "unstated"] },
+        "selection_evidence": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] },
+        "items": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/track" } }
+      },
+      "description": "Set when one requisition covers several kinds of work and the candidate is placed on one; null otherwise. Statements outside every track apply to all of them."
+    },
+    "fact_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "family", "statement_ids", "condition_ids", "scope",
+                   "date_kind", "component", "evidence"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "family": { "enum": ["experience", "compensation", "quantity", "date"] },
+        "statement_ids": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "condition_ids": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "evidence"],
+              "properties": {
+                "kind": { "enum": ["overall", "management", "domain", "unstated"] },
+                "evidence": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "date_kind": { "enum": ["application_deadline", "interview_date", "other", null] },
+        "component": { "enum": ["base", "total", "bonus", "equity", "unspecified", null] },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value", "comparison", "unit", "currency", "component", "applicability"],
+          "properties": {
+            "value": { "$ref": "#/$defs/evidence" },
+            "comparison": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] },
+            "unit": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] },
+            "currency": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] },
+            "component": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] },
+            "applicability": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] }
+          }
+        }
+      }
+    },
+    "mention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "surface", "evidence", "statement_ids", "role", "type"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "surface": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "evidence": { "$ref": "#/$defs/reference" },
+        "statement_ids": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/id" } },
+        "role": { "enum": ["direct", "example", "contextual"] },
+        "type": { "enum": ["skill", "field_of_study", "credential", "location",
+                            "organization", "other"] }
+      },
+      "description": "role says how the name is used in its sentence; type says what kind of thing it is: skill (languages, tools, frameworks, platforms, methods), field_of_study, credential (degrees, certifications, licences), location, organization (employers, customers, institutions), other (dates, programmes, anything else)."
+    },
+    "area": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "kind", "statement_ids", "evidence"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "kind": { "enum": ["technical", "capability", "trait", "credential", "constraint"] },
+        "statement_ids": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/id" } },
+        "evidence": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] }
+      },
+      "description": "Presentation only. No importance, no proficiency, no operators."
+    },
+    "accounting_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["block_id", "disposition", "ref_ids", "exclusion_reason", "evidence"],
+      "properties": {
+        "block_id": { "type": "string", "pattern": "^b[0-9]{6}$" },
+        "disposition": { "enum": ["statements", "facts", "context", "excluded", "unresolved"] },
+        "ref_ids": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "exclusion_reason": { "enum": ["eeo", "benefits", "employer_description",
+                                        "contact_privacy_admin", "navigation", null] },
+        "evidence": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] }
+      },
+      "description": "One or more entries per nonempty block; mixed blocks repeat the block_id with different dispositions. excluded requires exclusion_reason; statements/facts require ref_ids."
+    }
+  },
+  "properties": {
+    "source_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["usability", "evidence", "note"],
+      "properties": {
+        "usability": { "enum": ["usable", "partial", "placeholder", "empty", "unsupported"] },
+        "evidence": { "anyOf": [{ "$ref": "#/$defs/evidence" }, { "type": "null" }] },
+        "note": { "type": ["string", "null"], "maxLength": 300 }
+      }
+    },
+    "statements": { "type": "array", "items": { "$ref": "#/$defs/statement" } },
+    "relations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["groups", "conditions", "example_sets", "tracks"],
+      "properties": {
+        "groups": { "type": "array", "items": { "$ref": "#/$defs/group" } },
+        "conditions": { "type": "array", "items": { "$ref": "#/$defs/condition" } },
+        "example_sets": { "type": "array", "items": { "$ref": "#/$defs/example_set" } },
+        "tracks": { "anyOf": [{ "$ref": "#/$defs/tracks" }, { "type": "null" }] }
+      }
+    },
+    "facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["presence", "entries"],
+      "properties": {
+        "presence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["experience", "compensation", "quantities", "dates",
+                       "sponsorship", "citizenship", "work_authorization"],
+          "properties": {
+            "experience": { "$ref": "#/$defs/presence" },
+            "compensation": { "$ref": "#/$defs/presence" },
+            "quantities": { "$ref": "#/$defs/presence" },
+            "dates": { "$ref": "#/$defs/presence" },
+            "sponsorship": { "$ref": "#/$defs/authorization_presence" },
+            "citizenship": { "$ref": "#/$defs/authorization_presence" },
+            "work_authorization": { "$ref": "#/$defs/work_authorization_presence" }
+          }
+        },
+        "entries": { "type": "array", "items": { "$ref": "#/$defs/fact_entry" } }
+      }
+    },
+    "mentions": { "type": "array", "items": { "$ref": "#/$defs/mention" } },
+    "areas": { "type": "array", "items": { "$ref": "#/$defs/area" } },
+    "block_accounting": { "type": "array", "items": { "$ref": "#/$defs/accounting_entry" } }
+  }
+}

@@ -151,6 +151,20 @@ from typing import Any
 # 2026-09-28 failed on nothing else.
 VALIDATOR_VERSION = "20"
 
+# 21 (parsing contract v4) judges schema 4 ONLY: it binds the authorization
+# presence and track references, re-derives the code-owned `authorization`
+# block, resolves track ids, and warns on a `skill` mention linked only to
+# non-demand statements. The derivation grammars above are unchanged. Schema 2
+# and 3 records keep 20, so bundle v2's tuple (demand-profile/v11, 3, 20) and
+# every record it seals stay exactly as they were.
+SCHEMA_4_VALIDATOR_VERSION = "21"
+_VALIDATOR_BY_SCHEMA = {"4": SCHEMA_4_VALIDATOR_VERSION}
+
+
+def validator_version_for(schema_version: str) -> str:
+    """The validator that seals and judges a record of `schema_version`."""
+    return _VALIDATOR_BY_SCHEMA.get(schema_version, VALIDATOR_VERSION)
+
 _CMP_PHRASES: list[tuple[str, str]] = [
     (r"at\s+least|a\s+minimum\s+of|minimum\s+of|minimum|no\s+less\s+than", "gte"),
     (r"more\s+than|over|greater\s+than", "gt"),

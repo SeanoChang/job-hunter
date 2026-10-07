@@ -21,15 +21,20 @@ from jobhunter.hashing import sha256_hex
 from jobhunter.l2.quotes import occurrence_index
 from jobhunter.l2.report import Report
 from jobhunter.l2.schemas import validate_record
-from jobhunter.l2.v2.assemble import normalize_key, section_heading
+from jobhunter.l2.v2.assemble import derive_authorization, normalize_key, section_heading
 from jobhunter.l2.v2.facts import (
-    VALIDATOR_VERSION,
     derive_date,
     derive_money,
     derive_quantity,
+    validator_version_for,
 )
 from jobhunter.l2.v2.source import ANNOTATION_VERSION, annotate, blocks_by_id
-from jobhunter.l2.v2.types import IMPORTANCE_KINDS, Block
+from jobhunter.l2.v2.types import (
+    AUTHORIZATION_FAMILIES,
+    IMPORTANCE_KINDS,
+    NON_DEMAND_KINDS,
+    Block,
+)
 
 SCHEMA_VERSION = "2"
 MAX_GROUP_DEPTH = 5
@@ -42,7 +47,11 @@ MAX_GROUP_DEPTH = 5
 _STATEMENT_REF_KEYS = {
     "2": ("evidence", "importance_evidence", "polarity_evidence", "proficiency_evidence"),
     "3": ("evidence", "modality_evidence", "polarity_evidence"),
+    "4": ("evidence", "modality_evidence", "polarity_evidence"),
 }
+
+#: the record shapes that carry parsing contract v4's additions (validator/21)
+_CONTRACT_4_SCHEMAS = frozenset({"4"})
 
 # importance states that assert something the document must have said out loud;
 # `unstated` is the one reading that may stand bare
@@ -134,8 +143,18 @@ def iter_bound_refs(
     for kind in ("groups", "conditions", "example_sets"):
         for i, node in enumerate(relations[kind]):
             yield from many(f"relations.{kind}[{i}].evidence", node["evidence"])
+    tracks = relations.get("tracks")  # schema 4 only
+    if tracks is not None:
+        yield from many("relations.tracks.selection_evidence", tracks["selection_evidence"])
+        for i, item in enumerate(tracks["items"]):
+            path = f"relations.tracks.items[{i}]"
+            yield from many(f"{path}.name_evidence", item["name_evidence"])
+            yield from many(f"{path}.evidence", item["evidence"])
     for family, presence in record["facts"]["presence"].items():
         yield from many(f"facts.presence.{family}.evidence", presence["evidence"])
+        # schema 4's authorization families quote their polarity words too
+        yield from many(f"facts.presence.{family}.polarity_evidence",
+                        presence.get("polarity_evidence"))
     for i, entry in enumerate(record["facts"]["entries"]):
         path = f"facts.entries[{i}]"
         for aspect, refs in entry["evidence"].items():
@@ -183,6 +202,8 @@ def _check_attribution(
 def _check_references(record: dict[str, Any], report: Report) -> None:
     """Ids are unique in their namespace and every reference resolves to an
     object of the right kind — a dangling id is a broken record, not a hint."""
+    tracks = record["relations"].get("tracks")  # schema 4 only; null when one track
+    track_items: list[dict[str, Any]] = tracks["items"] if tracks is not None else []
     namespaces: dict[str, list[dict[str, Any]]] = {
         "statements": record["statements"],
         "relations.groups": record["relations"]["groups"],
@@ -191,6 +212,7 @@ def _check_references(record: dict[str, Any], report: Report) -> None:
         "facts.entries": record["facts"]["entries"],
         "mentions": record["mentions"],
         "areas": record["areas"],
+        "relations.tracks.items": track_items,
     }
     known: dict[str, set[str]] = {}
     for path, items in namespaces.items():
@@ -225,6 +247,11 @@ def _check_references(record: dict[str, Any], report: Report) -> None:
         resolves(f"relations.example_sets[{i}].parent_statement_id",
                  [example_set["parent_statement_id"]], "statement", statements)
         resolves(f"relations.example_sets[{i}].mention_ids", example_set["mention_ids"],
+                 "mention", known["mentions"])
+    for i, item in enumerate(track_items):
+        resolves(f"relations.tracks.items[{i}].statement_ids", item["statement_ids"],
+                 "statement", statements)
+        resolves(f"relations.tracks.items[{i}].mention_ids", item["mention_ids"],
                  "mention", known["mentions"])
     for i, entry in enumerate(record["facts"]["entries"]):
         resolves(f"facts.entries[{i}].statement_ids", entry["statement_ids"],
@@ -374,6 +401,39 @@ def _check_facts(record: dict[str, Any], report: Report) -> None:
         if presence["state"] in _PRESENCE_NEEDING_EVIDENCE and not presence["evidence"]:
             report.error("facts", path, "presence_mismatch",
                          state=presence["state"], reason="evidence_required")
+
+
+def _check_authorization(record: dict[str, Any], report: Report) -> None:
+    """Schema 4 (parsing contract v4 §2.1–2.2). A stated or unresolved
+    authorization family cites the sentence it read, and the code-owned
+    `authorization` block is re-derived from the presence entries rather than
+    trusted — the same discipline as `section_heading`."""
+    presence = record["facts"]["presence"]
+    for family in AUTHORIZATION_FAMILIES:
+        node = presence[family]
+        if node["state"] in ("stated", "unresolved") and not node["evidence"]:
+            report.error("facts", f"facts.presence.{family}", "presence_mismatch",
+                         state=node["state"], reason="evidence_required")
+    expected = derive_authorization(presence)
+    if record["authorization"] != expected:
+        report.error("facts", "authorization", "authorization_mismatch",
+                     stored=record["authorization"], derived=expected)
+
+
+def _check_skill_links(record: dict[str, Any], report: Report) -> None:
+    """The contract v4 §3 warning, never a gate: a `skill` mention linked only
+    to statements that impose no skill demand (employment constraints,
+    compensation, employer context, hiring policy) — the Toronto case under
+    the typed contract. The auditor decides whether the type or the link is
+    wrong; a dangling statement id is `_check_references`' finding."""
+    kinds = {statement["id"]: statement["kind"] for statement in record["statements"]}
+    for i, mention in enumerate(record["mentions"]):
+        if mention["type"] != "skill":
+            continue
+        linked = [kinds[sid] for sid in mention["statement_ids"] if sid in kinds]
+        if linked and all(kind in NON_DEMAND_KINDS for kind in linked):
+            report.warn("mentions", f"mentions[{i}]", "skill_outside_demand",
+                        surface=mention["surface"], statement_kinds=sorted(set(linked)))
 
 
 def _check_mentions(record: dict[str, Any], report: Report) -> None:
@@ -528,8 +588,11 @@ def verify(record: dict[str, Any], markdown: str, *,
 
     `schema_version` selects the statement shape (2 or 3) the same way the
     bundle selects assembly and the prompt; every other check is identical.
+    Schema 4 is judged by validator/21: everything above, plus the
+    authorization presence, the derived `authorization` block, track
+    references and the skill-link warning (parsing contract v4).
     """
-    report = Report(validator_version=VALIDATOR_VERSION)
+    report = Report(validator_version=validator_version_for(schema_version))
     document = record.get("document")
     document = document if isinstance(document, dict) else {}
     stored = document.get("document_hash")
@@ -556,6 +619,9 @@ def verify(record: dict[str, Any], markdown: str, *,
     _check_statements(record, blocks, report, schema_version)
     _check_facts(record, report)
     _check_mentions(record, report)
+    if schema_version in _CONTRACT_4_SCHEMAS:
+        _check_authorization(record, report)
+        _check_skill_links(record, report)
     _check_accounting(record, blocks, report, schema_version)
     _check_usability(record, blocks, report)
     report.metrics.update({

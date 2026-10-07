@@ -31,6 +31,21 @@ COMPONENTS = ("base", "total", "bonus", "equity", "unspecified")
 PERIODS = ("year", "month", "week", "day", "hour")
 DATE_KINDS = ("application_deadline", "interview_date", "other")
 
+# schema 4 (parsing contract v4 §2.1–2.5)
+MENTION_TYPES = ("skill", "field_of_study", "credential", "location", "organization", "other")
+TRACK_SELECTIONS = ("candidate_choice", "team_match", "unstated")
+#: the three authorization presence families, in schema order
+AUTHORIZATION_FAMILIES = ("sponsorship", "citizenship", "work_authorization")
+#: the families whose `polarity` means something; work_authorization's is null
+POLARIZED_AUTHORIZATION = ("sponsorship", "citizenship")
+AUTHORIZATION_STATES = ("stated", "none_found", "unresolved")
+#: the code-derived `authorization.sponsorship` values (§2.2)
+SPONSORSHIP = ("yes", "no", "undeclared")
+#: statement kinds that impose no skill demand: a `skill` mention linked only
+#: to these is the §3 warning (the Toronto case under the new contract)
+NON_DEMAND_KINDS = frozenset({"employment_constraint", "compensation_statement",
+                              "employer_context", "hiring_policy"})
+
 # statement kinds that carry a non-null importance (spec §3: qualifications and
 # employment constraints; hiring policies impose applicant rules the same way)
 IMPORTANCE_KINDS = frozenset({"qualification", "employment_constraint", "hiring_policy"})

@@ -439,6 +439,218 @@ def make_headingless_serving_record(*, lifecycle: str = "needs_review") -> dict[
     )
 
 
+# --- schema 4: authorization, typed mentions, tracks (parsing contract v4) --
+#
+# Small hand-written sources for the spec §7 regression cases. Each builds its
+# own emit over its own markdown; block ids are noted beside every source.
+
+
+def whole(block_id: str) -> dict[str, Any]:
+    """An emit reference to a whole block."""
+    return {"block_id": block_id, "text": None, "occurrence": None}
+
+
+def quote(block_id: str, text: str, occurrence: int = 0) -> dict[str, Any]:
+    """An emit reference to an exact substring of a block."""
+    return {"block_id": block_id, "text": text, "occurrence": occurrence}
+
+
+def s4_presence(state: str = "none_found", evidence: Any = None,
+                polarity: str | None = None, polarity_evidence: Any = None) -> dict[str, Any]:
+    """One authorization presence entry (contract v4 §2.1)."""
+    return {"state": state, "evidence": evidence,
+            "polarity": polarity, "polarity_evidence": polarity_evidence}
+
+
+def s4_statement(sid: str, kind: str, block_id: str, topic: str = "topic") -> dict[str, Any]:
+    """A schema-3/4 statement whose evidence is one whole block."""
+    return {
+        "id": sid, "kind": kind, "subject": "candidate", "topic": topic,
+        "evidence": [whole(block_id)], "modality_evidence": None,
+        "polarity": "positive", "polarity_evidence": None,
+        "condition_ids": [], "fact_ids": [], "unresolved": [],
+    }
+
+
+def s4_mention(mid: str, surface: str, block_id: str, statement_ids: list[str],
+               mtype: str, role: str = "direct") -> dict[str, Any]:
+    return {"id": mid, "surface": surface, "evidence": quote(block_id, surface),
+            "statement_ids": statement_ids, "role": role, "type": mtype}
+
+
+def s4_emit(statements: list[dict[str, Any]], accounting: list[tuple[str, list[str]]], *,
+            mentions: list[dict[str, Any]] | None = None,
+            authorization: dict[str, dict[str, Any]] | None = None,
+            tracks: dict[str, Any] | None = None) -> dict[str, Any]:
+    """A schema-4 emit. `accounting` is (block_id, ref_ids) per block: an empty
+    ref list is a `context` block, a non-empty one a `statements` block."""
+    presence: dict[str, Any] = {
+        "experience": {"state": "none_found", "evidence": None},
+        "compensation": {"state": "none_found", "evidence": None},
+        "quantities": {"state": "none_found", "evidence": None},
+        "dates": {"state": "none_found", "evidence": None},
+        "sponsorship": s4_presence(),
+        "citizenship": s4_presence(),
+        "work_authorization": s4_presence(),
+    }
+    presence.update(authorization or {})
+    return {
+        "source_assessment": {"usability": "usable", "evidence": None, "note": None},
+        "statements": statements,
+        "relations": {"groups": [], "conditions": [], "example_sets": [], "tracks": tracks},
+        "facts": {"presence": presence, "entries": []},
+        "mentions": mentions or [],
+        "areas": [],
+        "block_accounting": [
+            {"block_id": block_id, "disposition": "statements" if refs else "context",
+             "ref_ids": refs, "exclusion_reason": None, "evidence": None}
+            for block_id, refs in accounting
+        ],
+    }
+
+
+def assemble4(emit: dict[str, Any], markdown: str) -> dict[str, Any]:
+    return assemble(emit, markdown, document_hash=sha256_hex(markdown.encode("utf-8")),
+                    observed_model="gpt-5.6-luna", at=AT, schema_version="4")
+
+
+# V1 (Visa sophomore SWE intern): b000001 "## Responsibilities" / b000002 the
+# duty line / b000003 "## Additional information" / b000004 the policy line.
+VISA_MD = (
+    "## Responsibilities\n"
+    "Self-serve deployment of Kafka clusters using Docker and Kubernetes.\n"
+    "## Additional information\n"
+    "Visa will not sponsor applicants for work visas in connection with this position.\n"
+)
+VISA_POLICY = (
+    "Visa will not sponsor applicants for work visas in connection with this position."
+)
+
+
+def make_visa_emit() -> dict[str, Any]:
+    return s4_emit(
+        [s4_statement("s_duty", "responsibility", "b000002", "Kafka cluster deployment"),
+         s4_statement("s_visa", "hiring_policy", "b000004", "No visa sponsorship")],
+        [("b000001", []), ("b000002", ["s_duty"]), ("b000003", []), ("b000004", ["s_visa"])],
+        mentions=[s4_mention("m_kafka", "Kafka", "b000002", ["s_duty"], "skill"),
+                  s4_mention("m_docker", "Docker", "b000002", ["s_duty"], "skill"),
+                  s4_mention("m_k8s", "Kubernetes", "b000002", ["s_duty"], "skill")],
+        authorization={"sponsorship": s4_presence(
+            "stated", [whole("b000004")], "negative",
+            [quote("b000004", "will not sponsor")])},
+    )
+
+
+# V2 (Lyft SWE intern, ML, Toronto): b000001 "## Qualifications" / b000002 the
+# degree line / b000003 the location line.
+LYFT_MD = (
+    "## Qualifications\n"
+    "Pursuing a degree in Computer Science or a related field.\n"
+    "This internship is based in Toronto.\n"
+)
+
+
+def make_lyft_emit(toronto_type: str = "location") -> dict[str, Any]:
+    return s4_emit(
+        [s4_statement("s_degree", "qualification", "b000002", "Computer Science degree"),
+         s4_statement("s_where", "employment_constraint", "b000003", "Based in Toronto")],
+        [("b000001", []), ("b000002", ["s_degree"]), ("b000003", ["s_where"])],
+        mentions=[
+            s4_mention("m_cs", "Computer Science", "b000002", ["s_degree"], "field_of_study"),
+            s4_mention("m_toronto", "Toronto", "b000003", ["s_where"], toronto_type,
+                       role="contextual"),
+        ],
+    )
+
+
+# V3 (Figma SWE intern): b000001 heading / b000002 the selection sentence /
+# b000003..b000006 the four track list items.
+FIGMA_MD = (
+    "## What you'll do\n"
+    "When you apply, you'll tell us which areas you're most interested in:\n"
+    "- Product: build features used by millions of designers.\n"
+    "- Backend/Infrastructure: work on distributed systems and developer tooling.\n"
+    "- Security Engineering: protect Figma and its users.\n"
+    "- Open: I'm flexible and still exploring.\n"
+)
+
+
+def _track(tid: str, block_id: str, name: str, statement_ids: list[str],
+           mention_ids: list[str] | None = None, *, open_: bool = False) -> dict[str, Any]:
+    return {"id": tid, "name_evidence": [quote(block_id, name)], "evidence": [whole(block_id)],
+            "open": open_, "statement_ids": statement_ids, "mention_ids": mention_ids or []}
+
+
+def make_figma_emit() -> dict[str, Any]:
+    return s4_emit(
+        [s4_statement("s_product", "responsibility", "b000003", "Product features"),
+         s4_statement("s_backend", "responsibility", "b000004", "Backend systems"),
+         s4_statement("s_security", "responsibility", "b000005", "Security"),
+         s4_statement("s_open", "responsibility", "b000006", "Undecided area")],
+        [("b000001", []), ("b000002", []), ("b000003", ["s_product"]),
+         ("b000004", ["s_backend"]), ("b000005", ["s_security"]), ("b000006", ["s_open"])],
+        mentions=[
+            s4_mention("m_ds", "distributed systems", "b000004", ["s_backend"], "skill"),
+            s4_mention("m_tooling", "developer tooling", "b000004", ["s_backend"], "skill"),
+        ],
+        tracks={
+            "selection": "candidate_choice",
+            "selection_evidence": [quote("b000002", "When you apply, you'll tell us which areas")],
+            "items": [
+                _track("t_product", "b000003", "Product", ["s_product"]),
+                _track("t_backend", "b000004", "Backend/Infrastructure", ["s_backend"],
+                       ["m_ds", "m_tooling"]),
+                _track("t_security", "b000005", "Security Engineering", ["s_security"]),
+                _track("t_open", "b000006", "Open", ["s_open"], open_=True),
+            ],
+        },
+    )
+
+
+# V4 (Anduril flight software intern): b000001 heading / b000002 the line.
+ANDURIL_MD = (
+    "## Requirements\n"
+    "Must be a U.S. Person due to required access to U.S. export-controlled "
+    "information or facilities.\n"
+)
+
+
+def make_anduril_emit() -> dict[str, Any]:
+    return s4_emit(
+        [s4_statement("s_person", "hiring_policy", "b000002", "U.S. Person required")],
+        [("b000001", []), ("b000002", ["s_person"])],
+        authorization={"citizenship": s4_presence(
+            "stated", [quote("b000002", "Must be a U.S. Person due to required access to "
+                                        "U.S. export-controlled information or facilities")],
+            "positive", [quote("b000002", "Must be a U.S. Person")])},
+    )
+
+
+# V5 (synthetic): only a work-authorization line. b000001 heading / b000002.
+WORK_AUTH_MD = "## Requirements\nMust be authorized to work in the US.\n"
+
+
+def make_work_auth_emit() -> dict[str, Any]:
+    return s4_emit(
+        [s4_statement("s_auth", "hiring_policy", "b000002", "US work authorization")],
+        [("b000001", []), ("b000002", ["s_auth"])],
+        authorization={"work_authorization": s4_presence("stated", [whole("b000002")])},
+    )
+
+
+# V6 (synthetic): a sponsorship line with a modal grant. b000001 / b000002.
+MAY_SPONSOR_MD = "## Additional information\nSponsorship may be available for this role.\n"
+
+
+def make_may_sponsor_emit(polarity: str = "positive") -> dict[str, Any]:
+    return s4_emit(
+        [s4_statement("s_sponsor", "hiring_policy", "b000002", "Sponsorship available")],
+        [("b000001", []), ("b000002", ["s_sponsor"])],
+        authorization={"sponsorship": s4_presence(
+            "stated", [whole("b000002")], polarity, [quote("b000002", "may be available")])},
+    )
+
+
 # --- the C02/C07 English-footer shape --------------------------------------
 
 FOOTER_MD = (
