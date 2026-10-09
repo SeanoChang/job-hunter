@@ -1811,20 +1811,37 @@ def _folded_at(
     }
 
 
-def _catch_up(conn: Conn, journal: _Journal, updated_at: str) -> int:
+def _key_floor(at: datetime) -> str:
+    """The listing cursor one second before `at`: keys stamp whole seconds, so
+    an attempt written in that same second is still listed."""
+    stamp = iso(at - timedelta(seconds=1))
+    return (
+        f"{keys.X_ATTEMPTS_PREFIX}{stamp[0:4]}/{stamp[5:7]}/"
+        f"{stamp[8:10]}T{stamp[11:19].replace(':', '')}Z"
+    )
+
+
+def _catch_up(
+    conn: Conn, journal: _Journal, updated_at: str, since: datetime | None = None
+) -> int:
     store, globs = journal.store, journal.globs
     mark = extraction.watermark(conn)
     mark = mark.replace(microsecond=0) if mark is not None else None
-    start_after = None
-    if mark is not None:
-        # one second BEFORE the watermark: keys stamp whole seconds, and an
-        # orphan written in the same second as the watermark must be replayed
-        # (record_attempt is idempotent, so re-listing that second is free)
-        stamp = iso(mark - timedelta(seconds=1))
-        start_after = (
-            f"{keys.X_ATTEMPTS_PREFIX}{stamp[0:4]}/{stamp[5:7]}/"
-            f"{stamp[8:10]}T{stamp[11:19].replace(':', '')}Z"
-        )
+    # one second BEFORE the watermark: an orphan written in the same second as
+    # the watermark must be replayed (record_attempt is idempotent, so
+    # re-listing that second is free)
+    start_after = _key_floor(mark) if mark is not None else None
+    # `since` reaches behind the watermark. An outbox drained locally stamps
+    # its attempts when the local run made them, and production's own drains
+    # keep moving the watermark meanwhile, so an upload's older keys sit below
+    # it and the steady-state scan never lists them. The ingest passes the
+    # outbox's earliest stamp; keys between it and the watermark that already
+    # have a row are listed but never fetched, so the cost is one key listing
+    # plus one lookup per page, not a re-read of the archive.
+    floor = None
+    if since is not None and (mark is None or since.replace(microsecond=0) < mark):
+        floor = since.replace(microsecond=0)
+        start_after = _key_floor(floor)
     # [A1] the scan below is archive traffic: end the watermark read's
     # transaction before the first listing page, and end each batch's with the
     # batch. Chunking is what makes the direct `extraction.record_*` calls safe
@@ -1851,14 +1868,26 @@ def _catch_up(conn: Conn, journal: _Journal, updated_at: str) -> int:
     replayed = 0
     for batch in batched(store.list(keys.X_ATTEMPTS_PREFIX, start_after=start_after),
                          CATCH_UP_CHUNK):
-        loaded: list[Attempt] = []
+        wanted: set[str] = set()
+        behind: list[str] = []
         for key in batch:
             parsed = keys.parse_x_attempt_key(key)
             if parsed is None:
                 continue
             if mark is not None and parsed[0] < mark:
+                if floor is not None and parsed[0] >= floor:
+                    behind.append(key)
                 continue
-            loaded.append(from_bytes(store.get(key)))
+            wanted.add(key)
+        # behind the watermark only an unrecorded key is news; the at-or-after
+        # window keeps folding every key it SAW (below)
+        unknown: set[str] = set()
+        if behind:
+            unknown = set(behind) - extraction.known_attempt_keys(conn, behind)
+            conn.commit()  # [A1] the lookup's transaction ends before the GETs
+        loaded: list[Attempt] = [
+            from_bytes(store.get(key)) for key in batch if key in unknown or key in wanted
+        ]
         touched: set[tuple[str, str, str, str]] = set()
         for attempt in loaded:
             if extraction.record_attempt(conn, attempt, derived_error_detail(attempt)):
@@ -2353,6 +2382,7 @@ def run(
     connect: Callable[[], Conn] | None = None,
     bundle: Bundle | None = None,
     title_regex: str | None = None,
+    catch_up_since: datetime | None = None,
 ) -> ExtractSummary:
     # the engine tuple travels as a parameter, never as module state: the
     # parallel drain runs this loop on several threads and the tests re-enter it
@@ -2385,7 +2415,8 @@ def run(
             summary.queued = [only_doc] if only_doc else session.do(queue)
             return summary
         _ensure_write_once(store, active)
-        summary.replayed = session.do(lambda c: _catch_up(c, journal, iso(now())))
+        summary.replayed = session.do(
+            lambda c: _catch_up(c, journal, iso(now()), since=catch_up_since))
         session.do(lambda c: c.commit())
         # after the replay, so a document whose audit artifact never reached a
         # derived row is folded before it is judged to need another audit

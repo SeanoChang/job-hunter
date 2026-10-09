@@ -1147,6 +1147,7 @@ def _extract_once(
     doc: str | None = None,
     dry_run: bool = False,
     title_regex: str | None = None,
+    catch_up_since: datetime | None = None,
 ) -> dict[str, Any]:
     """One extraction batch under the extract lock (`extract run`, `sync`).
 
@@ -1177,6 +1178,7 @@ def _extract_once(
             max_docs=max_docs if max_docs is not None else settings.l2_max_docs,
             max_usd=max_usd if max_usd is not None else settings.l2_max_usd,
             only_doc=doc, dry_run=dry_run, bundle=bundle, title_regex=title_regex,
+            catch_up_since=catch_up_since,
             # a batch outlives a managed Postgres' idle timeout; the runner
             # replaces the dropped connection itself and commits its own work
             connect=lambda: _db.connect(settings.require_database_url(), schema=_schema),
@@ -1226,15 +1228,26 @@ def extract_run(
     title_regex: str | None = typer.Option(
         None, "--title-regex",
         help="Queue only documents whose posting title matches (Postgres regex, case-insensitive)"),
+    catch_up_since: str | None = typer.Option(
+        None, "--catch-up-since",
+        help="Also replay unrecorded attempts stamped at or after this UTC time, even behind "
+             "the watermark (an uploaded outbox's earliest stamp)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show the queue, write nothing"),
     output: str | None = output_option(),
 ) -> None:
     """Drain the extraction queue under the caps (harness spec §4.6)."""
+    since = None
+    if catch_up_since is not None:
+        try:
+            since = parse_iso(catch_up_since)
+        except ValueError:
+            fail("usage", f"--catch-up-since: not an ISO-8601 UTC time: {catch_up_since!r}",
+                 code=Exit.USAGE, output=output, hint="e.g. 2026-10-09T13:00:00Z")
     settings = _settings(output)
     store = _store(settings, output)
     try:
         data = _extract_once(settings, store, max_docs, max_usd, doc=doc, dry_run=dry_run,
-                             title_regex=title_regex)
+                             title_regex=title_regex, catch_up_since=since)
     except _ExtractFailure as e:
         fail(e.kind, e.message, code=e.code, output=output, hint=e.hint)
     emit(data, human=_extract_human(data, dry_run), output=output)

@@ -56,20 +56,30 @@ jobs:
           store = open_store(os.environ["JOB_HUNTER_ARCHIVE_URL"])
           root = Path("outbox")
           new = skipped = junk = 0
+          earliest = None
           for path in sorted(root.rglob("*.json.gz")):
               key = path.relative_to(root).as_posix()
               # only real attempt keys: macOS tar AppleDouble entries (._*) and
               # anything else the catch-up scan would skip must not reach the
               # write-once archive
-              if keys.parse_x_attempt_key(key) is None:
+              parsed = keys.parse_x_attempt_key(key)
+              if parsed is None:
                   junk += 1
                   continue
+              earliest = parsed[0] if earliest is None else min(earliest, parsed[0])
               if store.exists(key):
                   skipped += 1
                   continue
               store.put(key, path.read_bytes())
               new += 1
           print(f"archived {new} attempts, {skipped} already present, {junk} non-attempt files ignored")
+          # the outbox was stamped while it was drained, and production's own
+          # drains kept moving the watermark meanwhile: the catch-up must reach
+          # back to the outbox's first key or it never lists the older ones
+          if earliest is not None:
+              with open(os.environ["GITHUB_ENV"], "a") as env:
+                  env.write(f"CATCH_UP_SINCE={earliest.isoformat()}\n")
+              print(f"catch-up reaches back to {earliest.isoformat()}")
           EOF
       - name: catch up and settle
         env:
@@ -86,4 +96,7 @@ jobs:
         run: |
           # --max-docs 0 is the documented free-work mode: catch-up replay and
           # settle only, zero engine calls (codex-cli here is never invoked).
-          uv run job-hunter extract run --max-docs 0 --max-usd 0 -o json
+          # --catch-up-since reaches behind the watermark to the outbox's first
+          # key; unset (an outbox with no attempts) keeps the steady-state scan
+          uv run job-hunter extract run --max-docs 0 --max-usd 0 \
+            ${CATCH_UP_SINCE:+--catch-up-since "$CATCH_UP_SINCE"} -o json

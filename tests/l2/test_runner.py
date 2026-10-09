@@ -17,7 +17,7 @@ from jobhunter.archive import keys, open_store
 from jobhunter.archive.base import ArchiveStore
 from jobhunter.config import Settings
 from jobhunter.hashing import sha256_hex
-from jobhunter.l2.attempts import from_bytes, to_bytes
+from jobhunter.l2.attempts import Attempt, from_bytes, to_bytes
 from jobhunter.l2.engines import (
     EngineAuthError,
     EngineFatalError,
@@ -468,6 +468,75 @@ def test_catch_up_replays_same_second_orphan(pg: Conn, store: ArchiveStore) -> N
     assert summary.replayed >= 1  # the same-second orphan is not skipped
     row = _state_row(pg)
     assert row and row["status"] == "validated"
+
+
+def _orphan_behind_the_watermark(pg: Conn, store: ArchiveStore) -> Attempt:
+    """A recorded attempt at 08:00 (the watermark) and an archived, never
+    recorded success at 07:00 — what an outbox made before production's own
+    newest attempt looks like once its upload lands."""
+    from jobhunter.store import extraction as xstore
+
+    _seed_doc(pg)
+    late = datetime(2026, 8, 27, 8, 0, 0, tzinfo=UTC)
+    recorded = _attempt(
+        attempt_key=keys.x_attempt_key(late, DH, 1, 1), document_hash=DH,
+        outcome="transport", raw_response=None, observed_model=None,
+        started_at="2026-08-27T08:00:00Z", validator_version=VALIDATOR_VERSION,
+    )
+    store.put(recorded.attempt_key, to_bytes(recorded))
+    xstore.record_attempt(pg, recorded, None)
+    pg.commit()
+    record = {"facts": {"boilerplate_spans": []},
+              "demand_profile": {"areas": [], "interview_evaluated": []}}
+    orphan = _attempt(
+        attempt_key=keys.x_attempt_key(datetime(2026, 8, 27, 7, 0, 0, tzinfo=UTC), DH, 1, 2),
+        document_hash=DH, record=record, started_at="2026-08-27T07:00:00Z", attempt_no=2,
+    )
+    store.put(orphan.attempt_key, to_bytes(orphan))
+    return orphan
+
+
+def test_catch_up_skips_an_orphan_behind_the_watermark(pg: Conn, store: ArchiveStore) -> None:
+    _orphan_behind_the_watermark(pg, store)
+    summary = run(_settings(), pg, store, engine=FakeEngine([]), max_docs=0, max_usd=0.0)
+    assert summary.replayed == 0  # the steady-state scan starts at the watermark
+    assert _state_row(pg) is None
+
+
+def test_catch_up_since_replays_an_orphan_behind_the_watermark(
+    pg: Conn, store: ArchiveStore
+) -> None:
+    _orphan_behind_the_watermark(pg, store)
+    summary = run(_settings(), pg, store, engine=FakeEngine([]), max_docs=0, max_usd=0.0,
+                  catch_up_since=datetime(2026, 8, 27, 7, 0, 0, tzinfo=UTC))
+    assert summary.replayed == 1  # the orphan; the known 08:00 attempt is not news
+    row = _state_row(pg)
+    assert row and row["status"] == "validated"
+
+
+def test_catch_up_since_does_not_reread_known_attempts(
+    pg: Conn, store: ArchiveStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobhunter.store import extraction as xstore
+
+    orphan = _orphan_behind_the_watermark(pg, store)
+    early = datetime(2026, 8, 27, 6, 0, 0, tzinfo=UTC)
+    other = sha256_hex(b"another document")  # no fold of DH reads its attempts
+    known = _attempt(
+        attempt_key=keys.x_attempt_key(early, other, 1, 1), document_hash=other,
+        outcome="transport", raw_response=None, observed_model=None,
+        started_at="2026-08-27T06:00:00Z", validator_version=VALIDATOR_VERSION,
+    )
+    store.put(known.attempt_key, to_bytes(known))
+    xstore.record_attempt(pg, known, None)
+    pg.commit()
+    reads: list[str] = []
+    real_get = store.get
+    monkeypatch.setattr(store, "get", lambda key: reads.append(key) or real_get(key))
+    run(_settings(), pg, store, engine=FakeEngine([]), max_docs=0, max_usd=0.0,
+        catch_up_since=early)
+    assert known.attempt_key not in reads  # already recorded: listed, never fetched
+    assert orphan.attempt_key in reads
 
 
 def test_zero_usd_cap_is_free_only_mode(pg: Conn, store: ArchiveStore) -> None:

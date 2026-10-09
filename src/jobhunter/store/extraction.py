@@ -336,6 +336,17 @@ def watermark(conn: Conn) -> datetime | None:
     return row["w"] if row else None
 
 
+def known_attempt_keys(conn: Conn, attempt_keys: list[str]) -> set[str]:
+    """The subset of these archive keys that already have an attempt row."""
+    if not attempt_keys:
+        return set()
+    rows = conn.execute(
+        "SELECT attempt_key FROM extraction_attempts WHERE attempt_key = ANY(%s)",
+        (attempt_keys,),
+    ).fetchall()
+    return {r["attempt_key"] for r in rows}
+
+
 def markdown_for(conn: Conn, document_hash: str, normalizer_version: str) -> str | None:
     row = conn.execute(
         "SELECT markdown FROM documents WHERE document_hash=%s AND normalizer_version=%s LIMIT 1",

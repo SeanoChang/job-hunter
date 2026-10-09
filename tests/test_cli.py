@@ -952,3 +952,26 @@ def test_extract_run_passes_the_title_filter_to_the_runner(
                                 "-o", "json"])
     assert r.exit_code == 0, r.stdout + r.stderr
     assert seen["title_regex"] == r"\mintern"
+
+
+def test_extract_run_passes_catch_up_since_to_the_runner(
+    xenv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`extract run --catch-up-since` reaches the runner as a UTC datetime, so
+    the outbox ingest can replay an upload stamped behind the watermark."""
+    from jobhunter.l2 import runner as l2_runner
+
+    seen: dict[str, Any] = {}
+
+    def fake_run(*args: Any, **kwargs: Any) -> l2_runner.ExtractSummary:
+        seen.update(kwargs)
+        return l2_runner.ExtractSummary(run_id="x-test")
+
+    monkeypatch.setattr(l2_runner, "run", fake_run)
+    r = runner.invoke(cli.app, ["extract", "run", "--catch-up-since", "2026-10-09T13:00:00Z",
+                                "--max-docs", "0", "-o", "json"])
+    assert r.exit_code == 0, r.stdout + r.stderr
+    assert seen["catch_up_since"] == datetime(2026, 10, 9, 13, 0, 0, tzinfo=UTC)
+    bad = runner.invoke(cli.app, ["extract", "run", "--catch-up-since", "yesterday",
+                                  "-o", "json"])
+    assert bad.exit_code == 2
