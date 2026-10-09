@@ -15,11 +15,11 @@ import pytest
 
 from jobhunter.config import Settings
 from jobhunter.l2.bundles import BUNDLE_NAMES, get_bundle, get_bundle_for_tuple, registered
-from jobhunter.l2.v2 import audit, prompt, prompt_v14, serve
+from jobhunter.l2.v2 import audit, prompt, prompt_v15, serve
 from jobhunter.l2.v2.emit_guard import engine_emit_schema
 from tests.l2.v2.conftest import VISA_MD, make_visa_emit
 
-V3 = ("demand-profile/v14", "4", "21")  # v12, then v13, until 2026-10-08; see test_bundles_v13
+V3 = ("demand-profile/v15", "4", "21")  # v12, v13, v14 before; see test_bundles_v13
 V2 = ("demand-profile/v11", "3", "20")
 
 
@@ -32,13 +32,13 @@ def test_bundle_v3_is_the_contract_v4_tuple() -> None:
     assert _tuple("v3") == V3
     b = get_bundle("v3")
     assert b.name == "v3"
-    assert b.template == prompt_v14.TEMPLATE
-    assert b.prompt_sha() == prompt_v14.prompt_sha()
-    assert b.render(VISA_MD, [], None) == prompt_v14.render(VISA_MD, [], None)
+    assert b.template == prompt_v15.TEMPLATE
+    assert b.prompt_sha() == prompt_v15.prompt_sha()
+    assert b.render(VISA_MD, [], None) == prompt_v15.render(VISA_MD, [], None)
 
 
 def test_the_new_tuple_resolves_for_replay() -> None:
-    assert get_bundle_for_tuple("demand-profile/v14", "4") is get_bundle("v3")
+    assert get_bundle_for_tuple("demand-profile/v15", "4") is get_bundle("v3")
     assert get_bundle_for_tuple("demand-profile/v11", "3") is get_bundle("v2")
 
 
@@ -114,6 +114,6 @@ def test_config_accepts_the_bundle(name: str) -> None:
     assert settings.l2_bundle == name
 
 
-def test_the_v3_render_is_the_v13_prompt_with_a_retry() -> None:
+def test_the_v3_render_is_the_v15_prompt_with_a_retry() -> None:
     render = get_bundle("v3").render
-    assert render(VISA_MD, ["x"], "{}") == partial(prompt_v14.render, VISA_MD)(["x"], "{}")
+    assert render(VISA_MD, ["x"], "{}") == partial(prompt_v15.render, VISA_MD)(["x"], "{}")
