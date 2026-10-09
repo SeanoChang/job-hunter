@@ -605,6 +605,9 @@ def assemble(
     if contract_4:
         # after binding succeeded: derived from bound evidence only, never the emit
         record["authorization"] = derive_authorization(record["facts"]["presence"])
+        dropped = _drop_dangling_links(record)
+        if dropped:  # absent when empty: a clean record keeps validator 21's shape
+            record["extraction"]["dropped_links"] = dropped
     record["extraction"]["candidate_hash"] = candidate_hash(record)
     return record
 
@@ -631,3 +634,35 @@ def _reconcile_presence(record: dict[str, Any]) -> None:
             node["state"] = "stated"
         elif node["state"] == "stated":
             node["state"] = "unresolved" if node["evidence"] else "none_found"
+
+
+def _drop_dangling_links(record: dict[str, Any]) -> list[dict[str, str]]:
+    """validator/22 (schema 4): drop a dangling link that sits beside a live one.
+
+    A mention's `statement_ids`, and a track's `statement_ids`/`mention_ids`,
+    are links, not evidence: the mention and the track keep their own bound
+    quotes. So an id that names no object of the right kind is dropped, as long
+    as at least one id in the same list still resolves. A list with no live id
+    is left alone, and the verifier's `unknown_reference` error stands for it.
+    Returns what was dropped, in record order, with the verifier's path form.
+    """
+    statements = {s["id"] for s in record["statements"] if isinstance(s["id"], str)}
+    mentions = {m["id"] for m in record["mentions"] if isinstance(m["id"], str)}
+    dropped: list[dict[str, str]] = []
+
+    def prune(path: str, node: dict[str, Any], key: str, valid: set[str]) -> None:
+        ids = node[key]
+        live = [ref_id for ref_id in ids if ref_id in valid]
+        if not live or len(live) == len(ids):
+            return
+        dropped.extend({"path": f"{path}.{key}", "ref_id": ref_id}
+                       for ref_id in ids if ref_id not in valid)
+        node[key] = live
+
+    tracks = record["relations"].get("tracks")
+    for i, item in enumerate(tracks["items"] if tracks is not None else []):
+        prune(f"relations.tracks.items[{i}]", item, "statement_ids", statements)
+        prune(f"relations.tracks.items[{i}]", item, "mention_ids", mentions)
+    for i, mention in enumerate(record["mentions"]):
+        prune(f"mentions[{i}]", mention, "statement_ids", statements)
+    return dropped

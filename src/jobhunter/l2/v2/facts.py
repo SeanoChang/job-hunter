@@ -157,7 +157,15 @@ VALIDATOR_VERSION = "20"
 # non-demand statements. The derivation grammars above are unchanged. Schema 2
 # and 3 records keep 20, so bundle v2's tuple (demand-profile/v11, 3, 20) and
 # every record it seals stay exactly as they were.
-SCHEMA_4_VALIDATOR_VERSION = "21"
+#
+# 22 (schema 4 only) changes assembly, not the check table. A mention's
+# `statement_ids`, or a track's `statement_ids`/`mention_ids`, that holds a
+# dangling id beside at least one live id loses the dangling id, and the record
+# lists it under `extraction.dropped_links`. A link is not evidence: the
+# mention's own quote still binds, so nothing quoted is lost. A list with no
+# live id keeps 21's `unknown_reference` error. On the 2026-10 entry-level run
+# (bundle v3), 58 of 280 quarantined documents failed every attempt on that.
+SCHEMA_4_VALIDATOR_VERSION = "22"
 _VALIDATOR_BY_SCHEMA = {"4": SCHEMA_4_VALIDATOR_VERSION}
 
 

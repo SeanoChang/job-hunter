@@ -360,7 +360,19 @@
         "at": { "type": "string" },
         "candidate_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "parent_candidate_hash": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
-        "cost_usd": { "type": ["number", "null"] }
+        "cost_usd": { "type": ["number", "null"] },
+        "dropped_links": {
+          "description": "validator/22: dangling link ids assembly dropped from a list that kept at least one live id; absent when nothing was dropped",
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["path", "ref_id"],
+            "properties": {
+              "path": { "type": "string" },
+              "ref_id": { "type": "string" }
+            }
+          }
+        }
       }
     },
     "quality": {

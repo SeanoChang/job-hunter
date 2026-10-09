@@ -289,7 +289,7 @@ def _v2_bundle(
 
     Bundle v3 (parsing contract v4) is the same family one contract later: its
     validator is whatever `facts.validator_version_for` seals its schema with
-    ("21" for schema 4, "20" for 2 and 3 — so v2's registrations are
+    ("22" for schema 4, "20" for 2 and 3 — so v2's registrations are
     unchanged), and it names its own audit contract and compat set. The keyword
     defaults are bundle v2's, so v2's two calls below read exactly as before.
     """

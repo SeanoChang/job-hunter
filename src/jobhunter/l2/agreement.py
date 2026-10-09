@@ -228,7 +228,8 @@ _STATED = "stated"
 
 
 def _contract_4(samples: Sequence[Mapping[str, Any]]) -> bool:
-    """True when every sample declares a schema validator/21 judges.
+    """True when every sample declares a schema the schema-4 validator judges
+    (validator/21, and 22 since 2026-10-08: `SCHEMA_4_VALIDATOR_VERSION`).
 
     A cohort mixing shapes cannot come from one engine tuple; it is judged
     under validator/20, which compares less and so cannot park on a field one
