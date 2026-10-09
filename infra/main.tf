@@ -155,6 +155,22 @@ resource "google_cloud_run_v2_service" "mcp" {
         value = var.archive_url
       }
 
+      dynamic "env" {
+        for_each = var.l2_bundle == "" ? [] : [var.l2_bundle]
+        content {
+          name  = "JOB_HUNTER_L2_BUNDLE"
+          value = env.value
+        }
+      }
+
+      dynamic "env" {
+        for_each = var.l2_models == "" ? [] : [var.l2_models]
+        content {
+          name  = "JOB_HUNTER_L2_MODELS"
+          value = env.value
+        }
+      }
+
       env {
         name = "JOB_HUNTER_DATABASE_URL"
 

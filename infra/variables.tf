@@ -31,3 +31,21 @@ variable "archive_url" {
   type        = string
   default     = "s3://job-hunter/corpus"
 }
+
+# The extraction bundle the read surface serves (config.py, JOB_HUNTER_L2_BUNDLE):
+# v1 serves demand-profile/v5, v3 serves parsing contract v4 (sponsorship,
+# citizenship, typed skills, tracks). Switch only once that tuple's rows are in
+# Neon; rollback is setting it back. Empty keeps the code default (v1).
+variable "l2_bundle" {
+  description = "JOB_HUNTER_L2_BUNDLE for the container (v1, v2 or v3); empty = code default."
+  type        = string
+  default     = ""
+}
+
+# Comma-separated model globs the read surface scopes stored rows by
+# (JOB_HUNTER_L2_MODELS), e.g. "gpt-5.6-luna*,gpt-6-luna*". Empty = code default.
+variable "l2_models" {
+  description = "JOB_HUNTER_L2_MODELS for the container; empty = code default."
+  type        = string
+  default     = ""
+}
