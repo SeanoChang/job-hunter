@@ -213,6 +213,16 @@ BOOKKEEPING_CODES: frozenset[str] = frozenset({
     "context_requirement_language", "exclusion_requirement_language",
 })
 
+#: Warnings outside `accounting` that do not disqualify a bookkeeping candidate
+#: (validator/23): ones a passing candidate already carries without
+#: consequence. `skill_outside_demand` (schema 4) says a skill mention is linked
+#: only to non-demand statements, an advisory about the profile and not about
+#: whether the extraction is faithful. Tolerated, never itself a gap. Schema 2
+#: and 3 never report it, so bundle v2's rule is unchanged.
+TOLERATED_WARNINGS: frozenset[tuple[str, str]] = frozenset({
+    ("mentions", "skill_outside_demand"),
+})
+
 #: The completeness value a bookkeeping settlement carries. `quality.py` owns
 #: the vocabulary (`quality.ACCOUNTING_GAPS`); restated here because this is
 #: the shared fold and imports no v2 module, and pinned to it by a test.
@@ -277,6 +287,9 @@ def bookkeeping_gaps(candidate: RecoveredCandidate) -> tuple[dict[str, Any], ...
     if not findings:
         return None
     for finding in findings:
+        if (finding.get("severity") == "warning"
+                and (finding.get("check"), finding.get("code")) in TOLERATED_WARNINGS):
+            continue
         if finding.get("check") != "accounting" or finding.get("code") not in BOOKKEEPING_CODES:
             return None
     gaps = tuple(dict(f) for f in findings if f.get("severity") != "warning")

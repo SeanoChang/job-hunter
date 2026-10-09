@@ -1346,8 +1346,12 @@ def _bookkeeping_rule(active: Bundle, validator_version: str) -> bool:
     20's settlement policy, so a partition folded at an older validator (a
     live catch-up of rows still keyed 19, replay's historical branch) keeps
     that validator's rule, which quarantined.
+
+    Bundle v3 (schema 4) joins at validator/23. The gate named v2 when it was
+    the only bundle of the family, so schema 4 lost the rule silently until
+    then; its partitions at 21 and 22 keep the quarantining fold.
     """
-    return active.name == "v2" and validator_version == active.validator_version
+    return active.name in ("v2", "v3") and validator_version == active.validator_version
 
 
 def _count(metrics: Mapping[str, object], key: str) -> int:
