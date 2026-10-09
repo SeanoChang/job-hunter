@@ -19,6 +19,7 @@ import psycopg
 import pytest
 
 from jobhunter.archive.base import ArchiveStore
+from tests.conftest import TEST_DSN
 from tests.l2.test_runner import store  # noqa: F401
 
 Conn = psycopg.Connection[dict[str, Any]]
@@ -467,7 +468,7 @@ def test_the_dry_run_says_so_when_the_drain_cannot_happen(
 
     v2.seed_case(pg, "C03")
     pg.commit()
-    holder = psycopg.connect(pg.info.dsn)
+    holder = psycopg.connect(TEST_DSN)  # info.dsn drops the password
     try:
         holder.execute("SELECT pg_advisory_lock(%s)", (db.EXTRACT_LOCK_KEY,))
         holder.commit()
@@ -495,7 +496,7 @@ def test_the_gate_fails_when_a_drain_holds_the_writer_lock(
 
     v2.seed_case(pg, "C03")
     pg.commit()
-    holder = psycopg.connect(pg.info.dsn)
+    holder = psycopg.connect(TEST_DSN)  # info.dsn drops the password
     try:
         holder.execute("SELECT pg_advisory_lock(%s)", (db.EXTRACT_LOCK_KEY,))
         holder.commit()
@@ -520,7 +521,7 @@ def test_the_gate_exits_non_zero_when_the_drain_never_ran(
     v2.seed_case(pg, "C03")
     pg.commit()
     _as_operator(monkeypatch, pg, JOB_HUNTER_L2_ENGINE="codex-cli")
-    holder = psycopg.connect(pg.info.dsn)
+    holder = psycopg.connect(TEST_DSN)  # info.dsn drops the password
     try:
         holder.execute("SELECT pg_advisory_lock(%s)", (db.EXTRACT_LOCK_KEY,))
         holder.commit()
