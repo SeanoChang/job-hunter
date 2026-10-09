@@ -218,6 +218,9 @@ def _comparable(a: Attempt) -> dict[str, Any]:
     if record is not None:
         record.get("extraction", {}).pop("at", None)
         record.get("extraction", {}).pop("extracted_at", None)
+        # hashed over the record WITH its clock, so two writers a second
+        # apart differ here and nowhere else (CI run 37960047437)
+        record.get("extraction", {}).pop("candidate_hash", None)
     return {
         "sample_slot": a.sample_slot, "outcome": a.outcome,
         "tuple": (a.prompt_version, a.schema_version, a.validator_version),
