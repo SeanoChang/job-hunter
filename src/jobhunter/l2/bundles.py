@@ -290,7 +290,7 @@ def _v2_bundle(
 
     Bundle v3 (parsing contract v4) is the same family one contract later: its
     validator is whatever `facts.validator_version_for` seals its schema with
-    ("21" for schema 4, "20" for 2 and 3 — so v2's registrations are
+    ("22" for schema 4, "20" for 2 and 3 — so v2's registrations are
     unchanged), and it names its own audit contract and compat set. The keyword
     defaults are bundle v2's, so v2's two calls below read exactly as before.
     """
@@ -365,12 +365,14 @@ _V2_SCHEMA2 = _v2_bundle(
 
 #: parsing contract v4: the tuple a v3 run extracts under. Schema 4 adds the
 #: authorization presence families (and the code-derived `authorization`
-#: block), typed mentions and `relations.tracks`, judged by validator 21, and
-#: audited under semantic-audit/v5 (its repair round, semantic-repair/v3, is
-#: wired by schema version in `runner._REPAIR_CONTRACTS`). Nothing migrates
-#: into it — schema 3 cannot derive what the model must newly anchor (contract
-#: v4 §6) — so it adopts no retired tuple and carries no compat validators:
-#: validator 21 has no predecessor at schema 4.
+#: block), typed mentions and `relations.tracks`, judged by the schema-4
+#: validator (`facts.SCHEMA_4_VALIDATOR_VERSION`: 21, then 22 from 2026-10-08,
+#: which drops a dangling link beside a live one), and audited under
+#: semantic-audit/v5 (its repair round, semantic-repair/v3, is wired by schema
+#: version in `runner._REPAIR_CONTRACTS`). Nothing migrates into it — schema 3
+#: cannot derive what the model must newly anchor (contract v4 §6) — so it
+#: adopts no retired tuple and carries no compat validators: each prompt bump
+#: starts a fresh partition that the entry-level drain re-extracts.
 _V3 = _v2_bundle(
     prompt_version=_v15.PROMPT_VERSION,
     template=_v15.TEMPLATE,
