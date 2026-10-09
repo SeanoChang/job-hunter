@@ -40,12 +40,12 @@ def _warnings(record: dict[str, Any], markdown: str) -> list[Any]:
     return [f for f in _report(record, markdown).findings if f.severity == "warning"]
 
 
-def test_clean_schema_4_records_pass_under_validator_22() -> None:
+def test_clean_schema_4_records_pass_under_the_schema_4_validator() -> None:
     for emit, markdown in ((make_visa_emit(), VISA_MD), (make_figma_emit(), FIGMA_MD),
                            (make_anduril_emit(), ANDURIL_MD), (make_lyft_emit(), LYFT_MD)):
         report = _report(assemble4(emit, markdown), markdown)
         assert report.status == "pass", [(f.code, f.path) for f in report.findings]
-        assert report.validator_version == "22"
+        assert report.validator_version == "23"
         assert not [f for f in report.findings if f.check == "mentions"]
 
 

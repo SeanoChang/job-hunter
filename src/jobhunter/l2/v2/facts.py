@@ -165,7 +165,13 @@ VALIDATOR_VERSION = "20"
 # mention's own quote still binds, so nothing quoted is lost. A list with no
 # live id keeps 21's `unknown_reference` error. On the 2026-10 entry-level run
 # (bundle v3), 58 of 280 quarantined documents failed every attempt on that.
-SCHEMA_4_VALIDATOR_VERSION = "22"
+#
+# 23 (schema 4 only) changes the check table: `coverage_unevidenced` reads a
+# block's coverage unit (`verify.coverage_units`), so a lead-in is covered by a
+# quote from its own section and a wrapped sentence by a quote from any of its
+# lines. 93 of the 237 documents the 2026-10-09 v15 run quarantined carried the
+# error, and its excerpts were those two shapes.
+SCHEMA_4_VALIDATOR_VERSION = "23"
 _VALIDATOR_BY_SCHEMA = {"4": SCHEMA_4_VALIDATOR_VERSION}
 
 

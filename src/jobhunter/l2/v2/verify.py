@@ -492,6 +492,73 @@ def evidence_blocks(shape: dict[str, Any], schema_version: str) -> dict[str, set
     return index
 
 
+_HEADING = re.compile(r"^\s*(?:#{1,6}\s+\S|\*\*[^*].*\*\*\s*$|__[^_].*__\s*$)")
+_MARKUP = re.compile(r"[*_`#>\s]+$")
+_SENTENCE_END = re.compile(r"[.!?:;]$")
+_STARTS_LOWER = re.compile(r"^\s*[a-z]")
+_SAME_TEXT = re.compile(r"\W+")
+
+
+def _bare(text: str) -> str:
+    """The line without trailing emphasis/markup, so `**Includes:**` ends in ':'."""
+    return _MARKUP.sub("", text.rstrip())
+
+
+def coverage_units(blocks: list[Block]) -> dict[str, frozenset[str]]:
+    """block id -> the blocks whose quotes count as covering it (validator/23).
+
+    Every block covers itself. Two more shapes, both from the 2026-10-09 v15
+    run's `coverage_unevidenced` excerpts:
+
+    A LEAD-IN — a markdown heading, a line that is all bold, or a line ending
+    in ':' — is covered by any block of its own section: the blocks after it
+    up to the next heading (for a heading) or the next lead-in (for a ':'
+    line). It introduces that section and says nothing a statement could quote
+    on its own. Borrowing runs one way: a bullet under a lead-in is never
+    covered by its lead-in or by an intro paragraph (the validator/19 shape).
+
+    A WRAPPED SENTENCE — consecutive lines where a line has no sentence-final
+    punctuation and the next starts lowercase — is one coverage unit: a quote
+    from any of its lines covers all of them.
+
+    A REPEATED LINE — the same text (ignoring case, spacing and punctuation)
+    elsewhere in the posting — is covered by a quote of any copy.
+    """
+    units: dict[str, set[str]] = {block.id: {block.id} for block in blocks}
+    copies: dict[str, set[str]] = {}
+    for block in blocks:
+        key = _SAME_TEXT.sub(" ", block.text).strip().casefold()
+        if key:
+            copies.setdefault(key, set()).add(block.id)
+    for same in copies.values():
+        if len(same) > 1:
+            for bid in same:
+                units[bid] |= same
+    texts = [_bare(block.text) for block in blocks]
+    headings = [bool(_HEADING.match(block.text)) for block in blocks]
+    lead_ins = [headings[i] or texts[i].endswith(":") for i in range(len(blocks))]
+    for i, block in enumerate(blocks):
+        if not lead_ins[i]:
+            continue
+        for j in range(i + 1, len(blocks)):
+            if headings[j] or (not headings[i] and lead_ins[j]):
+                break
+            units[block.id].add(blocks[j].id)
+    start = 0
+    for i in range(1, len(blocks) + 1):
+        joined = (i < len(blocks) and not lead_ins[i - 1] and not headings[i]
+                  and not _SENTENCE_END.search(texts[i - 1])
+                  and bool(_STARTS_LOWER.match(blocks[i].text)))
+        if joined:
+            continue
+        chain = {blocks[k].id for k in range(start, i)}
+        if len(chain) > 1:
+            for bid in chain:
+                units[bid] |= chain
+        start = i
+    return {bid: frozenset(ids) for bid, ids in units.items()}
+
+
 def _check_accounting(record: dict[str, Any], blocks: list[Block], report: Report,
                       schema_version: str) -> None:
     """Every nonempty block is accounted for, an exclusion says why, and a
@@ -502,9 +569,15 @@ def _check_accounting(record: dict[str, Any], blocks: list[Block], report: Repor
     are warnings pointed at the auditor rather than pass/fail verdicts. What
     validator/19 does make an error is the empty claim — a `statements` row
     whose named objects quote nothing from that block at all.
+
+    Under schema 4 (validator/23) "that block" is the block's coverage unit
+    (`coverage_units`): a lead-in is covered by a quote from its own section,
+    and a sentence wrapped over several lines by a quote from any of them.
     """
     by_id = {block.id: block for block in blocks}
     cited_blocks = evidence_blocks(record, schema_version)
+    units = (coverage_units(blocks) if schema_version in _CONTRACT_4_SCHEMAS
+             else {block.id: frozenset({block.id}) for block in blocks})
     accounted: set[str] = set()
     excluded: set[str] = set()
     for i, entry in enumerate(record["block_accounting"]):
@@ -540,7 +613,7 @@ def _check_accounting(record: dict[str, Any], blocks: list[Block], report: Repor
             report.error("accounting", path, "refs_missing",
                          block_id=block_id, disposition=disposition)
         elif (disposition in _DISPOSITIONS_NEEDING_REFS and block is not None
-              and not any(block_id in cited_blocks.get(ref_id, frozenset())
+              and not any(units[block_id] & cited_blocks.get(ref_id, frozenset())
                           for ref_id in entry["ref_ids"])):
             # validator/19: "extracted into these objects" is a claim about
             # THIS block, so one of the objects has to quote it. v1 checked

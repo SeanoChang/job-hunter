@@ -12,7 +12,7 @@ from jobhunter.l2.v2 import prompt_v12, prompt_v13, prompt_v14, prompt_v15
 def test_bundle_v3_extracts_under_v15() -> None:
     b = get_bundle("v3")
     assert (b.prompt_version, b.schema_version, b.validator_version) == (
-        "demand-profile/v15", "4", "22")
+        "demand-profile/v15", "4", "23")
     assert b.template == prompt_v15.TEMPLATE
     assert b.prompt_sha() == prompt_v15.prompt_sha()
 
@@ -37,7 +37,7 @@ def test_v12_attempts_still_replay_under_their_own_prompt() -> None:
     b = get_bundle_for_tuple("demand-profile/v12", "4")
     assert b.prompt_version == "demand-profile/v12"
     assert b.template == prompt_v12.TEMPLATE
-    assert b.validator_version == "22"
+    assert b.validator_version == "23"
 
 
 def test_v12_is_frozen_not_selectable() -> None:

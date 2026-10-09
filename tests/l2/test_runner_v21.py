@@ -36,7 +36,7 @@ from tests.l2.v2.conftest import VISA_MD, make_visa_emit
 
 Conn = psycopg.Connection[dict[str, Any]]
 
-V3_TUPLE = ("demand-profile/v15", "4", "22")
+V3_TUPLE = ("demand-profile/v15", "4", "23")
 
 
 class SchemaRecordingEngine(AuditingEngine):

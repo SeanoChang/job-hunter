@@ -19,7 +19,7 @@ from jobhunter.l2.v2 import audit, prompt, prompt_v15, serve
 from jobhunter.l2.v2.emit_guard import engine_emit_schema
 from tests.l2.v2.conftest import VISA_MD, make_visa_emit
 
-V3 = ("demand-profile/v15", "4", "22")  # v12, v13, v14 before; see test_bundles_v13
+V3 = ("demand-profile/v15", "4", "23")  # v12, v13, v14 before; see test_bundles_v13
 V2 = ("demand-profile/v11", "3", "20")
 
 
@@ -61,7 +61,8 @@ def test_bundle_v3_carries_audit_v5_and_the_schema_4_guard() -> None:
     assert b.audit_render is audit.render_v5
     assert b.audit_emit_schema is audit.emit_schema_v5
     assert b.audit_judge is audit.judge
-    assert b.compat_validators == () and b.migrated_from == () and b.adopt is None
+    # 22's attempts fold under 23: it relaxes one check, assembly is unchanged
+    assert b.compat_validators == ("22",) and b.migrated_from == () and b.adopt is None
     schema = b.engine_emit_schema
     assert schema is not None and schema() == engine_emit_schema("4")
     assert b.profile_of is serve.profile_of and b.mention_rows is serve.mention_rows
@@ -92,10 +93,10 @@ def test_bundle_v3_assembles_and_verifies_a_visa_emit() -> None:
         prompt_version=b.prompt_version,
     )
     assert record["extraction"]["schema_version"] == "4"
-    assert record["extraction"]["validator_version"] == "22"
+    assert record["extraction"]["validator_version"] == "23"
     assert record["authorization"]["sponsorship"] == "no"
     report = b.verify(record, VISA_MD)
-    assert report.status == "pass" and report.validator_version == "22"
+    assert report.status == "pass" and report.validator_version == "23"
 
 
 def test_v3_is_registered_and_selectable() -> None:
