@@ -368,14 +368,17 @@ _V2_SCHEMA2 = _v2_bundle(
 #: block), typed mentions and `relations.tracks`, judged by the schema-4
 #: validator (`facts.SCHEMA_4_VALIDATOR_VERSION`: 21, then 22 from 2026-10-08,
 #: which drops a dangling link beside a live one, then 23 from 2026-10-09,
-#: which covers lead-ins and wrapped sentences), and audited under
+#: which covers lead-ins and wrapped sentences, then 24 from 2026-10-10, which
+#: reads a quoted plus sign as a floor and serves a code-derived requirement),
+#: and audited under
 #: semantic-audit/v5 (its repair round, semantic-repair/v3, is wired by schema
 #: version in `runner._REPAIR_CONTRACTS`). Nothing migrates into it — schema 3
 #: cannot derive what the model must newly anchor (contract v4 §6) — so it
 #: adopts no retired tuple: each prompt bump starts a fresh partition that the
-#: entry-level drain re-extracts. Its one compat validator is 22: 23 relaxes
-#: one check and leaves assembly byte-identical, so the ~4k v15 documents
-#: extracted under 22 fold under 23 and `extract rebuild` re-judges them.
+#: entry-level drain re-extracts. It has no compat validator: 24 changes what
+#: assembly derives (a quoted "+" now parses), so an archived 22/23 record is
+#: not the candidate 24 would seal, and `extract rebuild` re-judges every
+#: archived v15 attempt under 24 instead (the 21 -> 22 precedent).
 _V3 = _v2_bundle(
     prompt_version=_v15.PROMPT_VERSION,
     template=_v15.TEMPLATE,
@@ -383,7 +386,7 @@ _V3 = _v2_bundle(
     render=_v15.render,
     schema_version="4",
     name="v3",
-    compat_validators=("22",),
+    compat_validators=(),
     audit_version=_V3_AUDIT_VERSION,
     audit_render=_v3_audit_render,
     audit_emit_schema=_v3_audit_emit_schema,

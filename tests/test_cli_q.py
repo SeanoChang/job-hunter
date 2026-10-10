@@ -520,11 +520,12 @@ def test_q_claims_table_leaves_a_headingless_schema_3_row_blank(
     assert row["importance"] == NO_IMPORTANCE  # the sentinel, still in the column
 
 
-def test_q_claims_importance_is_documented_as_a_legacy_filter(qenv: Path) -> None:
+def test_q_claims_importance_documents_both_vocabularies(qenv: Path) -> None:
     # wide enough that the option table prints its help instead of eliding it
     r = runner.invoke(cli.app, ["q", "claims", "--help"], env={"COLUMNS": "200"})
     assert r.exit_code == 0
-    assert "Legacy filter, schema-2 rows only" in r.stdout
+    # validator/24: schema-2 verdicts and schema-4 requirements share the filter
+    assert "schema-2 verdicts, or schema-4 requirements" in r.stdout
     assert "required|preferred" in r.stdout  # and the sentinel is not among them
     # and why the third v1 word is missing: it is the no-verdict sentinel now
     assert "contextual" in r.stdout and "sentinel" in r.stdout

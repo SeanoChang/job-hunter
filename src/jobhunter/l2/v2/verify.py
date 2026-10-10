@@ -87,7 +87,8 @@ def _cited(refs: list[dict[str, Any]] | None) -> str | None:
     return " ".join(str(ref["text"]) for ref in ordered)
 
 
-def _rederive(family: str, evidence: dict[str, Any]) -> dict[str, Any]:
+def _rederive(family: str, evidence: dict[str, Any], *,
+              plus_is_floor: bool = False) -> dict[str, Any]:
     """Recompute a fact entry's `derived` from the spans the record cites.
 
     A second call site of the `facts` grammar rather than a call into assembly's
@@ -102,7 +103,8 @@ def _rederive(family: str, evidence: dict[str, Any]) -> dict[str, Any]:
         # as assembly forwards it — a fix applied to the writer alone would
         # leave this call reading "12+" as a count and passing the record
         quantity = derive_quantity(
-            value, _cited(evidence["comparison"]), _cited(evidence["unit"])
+            value, _cited(evidence["comparison"]), _cited(evidence["unit"]),
+            plus_is_floor=plus_is_floor,
         )
         return {"state": "parsed" if quantity else "present_unparsed",
                 "quantity": quantity, "money": None, "date": None}
@@ -372,7 +374,7 @@ def _check_statements(record: dict[str, Any], blocks: list[Block], report: Repor
                          field="importance", value=importance)
 
 
-def _check_facts(record: dict[str, Any], report: Report) -> None:
+def _check_facts(record: dict[str, Any], report: Report, schema_version: str) -> None:
     entries = record["facts"]["entries"]
     for i, entry in enumerate(entries):
         path = f"facts.entries[{i}]"
@@ -385,7 +387,8 @@ def _check_facts(record: dict[str, Any], report: Report) -> None:
                          field="component", family=family, value=entry["component"])
         if entry["scope"] is not None and family not in ("experience", "quantity"):
             report.error("facts", path, "fact_family_shape", field="scope", family=family)
-        rederived = _rederive(family, entry["evidence"])
+        rederived = _rederive(family, entry["evidence"],
+                              plus_is_floor=schema_version in _CONTRACT_4_SCHEMAS)
         if rederived != entry["derived"]:
             report.error("facts", path, "fact_mismatch",
                          derived=rederived, stored=entry["derived"])
@@ -690,7 +693,7 @@ def verify(record: dict[str, Any], markdown: str, *,
     _check_group_nesting(record, report)
     _check_relations(record, report)
     _check_statements(record, blocks, report, schema_version)
-    _check_facts(record, report)
+    _check_facts(record, report, schema_version)
     _check_mentions(record, report)
     if schema_version in _CONTRACT_4_SCHEMAS:
         _check_authorization(record, report)

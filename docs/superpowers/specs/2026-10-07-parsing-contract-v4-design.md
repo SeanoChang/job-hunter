@@ -188,6 +188,24 @@ drain audits new v12 extractions before the corpus re-extracts.
   document has no extraction under the tuple in force reports
   `sponsorship: null` (not extracted), never `undeclared`, and no
   `--sponsorship` value matches it.
+- **Requirement** (validator `24`, 2026-10-10). Each schema-4 claim-index
+  area and claim carries `requirement`: `required`, `preferred` or null.
+  Code reads it from two quotes the record already binds — the statement's
+  `modality_evidence` first, then its `section_heading` — with the fixed
+  lexicon in `facts.derive_requirement`. A quote that names both strengths,
+  or neither, gives null. This is not the model verdict contract v3 removed:
+  every sample of a posting reads the same quotes, so every sample gets the
+  same answer. `profile_mentions.importance` carries it, so
+  `q claims --importance required|preferred` selects schema-4 rows. The claim
+  `importance` stays the no-verdict sentinel, so the agreement gate is
+  unchanged. On 3,000 validated v15 documents it labels 62% of
+  qualification statements; the rest sit under headings such as "What we
+  look for".
+- **Experience floors** (validator `24`). A fact's cited comparison that is
+  the value's own plus sign (`+`, `3+`) or `or more` derives `gte`, and a
+  `gte` phrase beside a plus value (`Minimum` · `3+ years`) agrees with it.
+  72% of the corpus's 52,133 unparsed experience facts had this shape.
+  Schemas 2 and 3 keep validator `20`'s grammar.
 
 ## 6. Migration and re-extraction
 

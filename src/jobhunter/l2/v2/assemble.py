@@ -233,7 +233,8 @@ def _texts(bound: list[dict[str, Any]] | None) -> str | None:
     return " ".join(str(r["text"]) for r in ordered)
 
 
-def _derive(family: Any, evidence: dict[str, Any]) -> dict[str, Any]:
+def _derive(family: Any, evidence: dict[str, Any], *,
+            plus_is_floor: bool = False) -> dict[str, Any]:
     """Code-owned parse of the cited spans. A grammar miss is `present_unparsed`,
     never a dropped fact: stated-but-unparsed must stay distinguishable from
     unstated. `conflicting` is the increment-2 auditor's state, never assembly's."""
@@ -243,7 +244,8 @@ def _derive(family: Any, evidence: dict[str, Any]) -> dict[str, Any]:
         # currency/period anchors do below. Without it "12+" · "years" derived
         # a dimensionless count of 12 (2026-09-15 review, finding 1).
         quantity = derive_quantity(
-            value, _texts(evidence["comparison"]), _texts(evidence["unit"])
+            value, _texts(evidence["comparison"]), _texts(evidence["unit"]),
+            plus_is_floor=plus_is_floor,
         )
         return {
             "state": "parsed" if quantity else "present_unparsed",
@@ -439,7 +441,8 @@ def _tracks(binder: _Binder, node: Any) -> dict[str, Any] | None:
     }
 
 
-def _entry(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, Any]:
+def _entry(binder: _Binder, index: int, node: dict[str, Any], *,
+           contract_4: bool = False) -> dict[str, Any]:
     path = f"facts.entries[{index}]"
     emitted = node.get("evidence")
     emitted = emitted if isinstance(emitted, dict) else {}
@@ -463,7 +466,8 @@ def _entry(binder: _Binder, index: int, node: dict[str, Any]) -> dict[str, Any]:
         "date_kind": node.get("date_kind"),
         "component": node.get("component"),
         "evidence": evidence,
-        "derived": _derive(node.get("family"), evidence),
+        # validator/24: schema 4 reads a quoted plus sign as its floor
+        "derived": _derive(node.get("family"), evidence, plus_is_floor=contract_4),
     }
 
 
@@ -575,7 +579,8 @@ def assemble(
                 **{family: _authorization_presence(binder, family, presence.get(family))
                    for family in (AUTHORIZATION_FAMILIES if contract_4 else ())},
             },
-            "entries": [_entry(binder, i, e) for i, e in enumerate(facts.get("entries") or [])],
+            "entries": [_entry(binder, i, e, contract_4=contract_4)
+                        for i, e in enumerate(facts.get("entries") or [])],
         },
         "mentions": [
             _mention(binder, i, m, schema_version=schema_version)

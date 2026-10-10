@@ -429,8 +429,9 @@ def q_claims(
     mention: str = typer.Option(..., "--mention", help="One mention, matched case-insensitively"),
     importance: str | None = typer.Option(
         None, "--importance",
-        help=f"Legacy filter, schema-2 rows only: {'|'.join(IMPORTANCES)}"
-             f" ({NO_IMPORTANCE} is the schema-3 no-verdict sentinel, not a value)"),
+        help=f"{'|'.join(IMPORTANCES)}: schema-2 verdicts, or schema-4 requirements"
+             f" read from the posting's own words ({NO_IMPORTANCE} is the no-verdict"
+             f" sentinel, not a value)"),
     board: str | None = typer.Option(None, "--board", help="source:board"),
     fields: str | None = typer.Option(None, "--fields", help="Comma list of keys to keep"),
     limit: int = typer.Option(50, "--limit", help=f"1-{MAX_LIMIT}"),
@@ -438,9 +439,10 @@ def q_claims(
 ) -> None:
     """Who demands one mention, across the corpus — the postings live on it today.
 
-    `--importance` selects the schema-2 (and v1) partition only: a schema-3
-    record issues no verdict, so its rows read their section heading and quoted
-    modal phrase instead (parsing contract v3 §2.1).
+    `--importance` selects schema-2 (and v1) verdicts and, since validator/24,
+    schema-4 rows whose requirement the posting's own modal phrase or section
+    heading states. A schema-3 record issues no verdict and a schema-4 statement
+    whose cues say neither carries none (parsing contract v3 §2.1).
     """
     from jobhunter.cli import _split_board
 

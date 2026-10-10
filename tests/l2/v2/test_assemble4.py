@@ -210,7 +210,7 @@ def test_new_reference_families_collect_their_binding_errors_together() -> None:
 def test_schema_4_seals_validator_22_and_hashes_the_derived_block() -> None:
     record = assemble4(make_visa_emit(), VISA_MD)
     assert record["extraction"]["schema_version"] == "4"
-    assert record["extraction"]["validator_version"] == "23"
+    assert record["extraction"]["validator_version"] == "24"
     assert record["extraction"]["candidate_hash"] == candidate_hash(record)
     other = make_visa_emit()
     other["facts"]["presence"]["sponsorship"]["polarity"] = "positive"

@@ -45,7 +45,7 @@ def test_clean_schema_4_records_pass_under_the_schema_4_validator() -> None:
                            (make_anduril_emit(), ANDURIL_MD), (make_lyft_emit(), LYFT_MD)):
         report = _report(assemble4(emit, markdown), markdown)
         assert report.status == "pass", [(f.code, f.path) for f in report.findings]
-        assert report.validator_version == "23"
+        assert report.validator_version == "24"
         assert not [f for f in report.findings if f.check == "mentions"]
 
 

@@ -33,7 +33,7 @@ Conn = psycopg.Connection[dict[str, Any]]
 def test_the_rule_runs_for_bundles_v2_and_v3_at_their_own_validator() -> None:
     v2, v3 = get_bundle("v2"), get_bundle("v3")
     assert _bookkeeping_rule(v2, v2.validator_version)
-    assert _bookkeeping_rule(v3, "23")
+    assert _bookkeeping_rule(v3, "24")
     assert not _bookkeeping_rule(v3, "22")  # a partition at an older validator keeps its rule
     assert not _bookkeeping_rule(get_bundle("v1"), get_bundle("v1").validator_version)
 
@@ -86,5 +86,5 @@ def test_a_bookkeeping_only_v3_ladder_serves_with_accounting_gaps(
         "SELECT status, validator_version, profile FROM extractions WHERE document_hash=%s",
         (dh,)).fetchone()
     assert row is not None
-    assert (row["status"], row["validator_version"]) == ("validated", "23")
+    assert (row["status"], row["validator_version"]) == ("validated", "24")
     assert row["profile"]["quality"]["completeness"] == "accounting_gaps"

@@ -36,9 +36,9 @@ def _account(emit: dict[str, Any], block_id: str, refs: list[str]) -> dict[str, 
     return emit
 
 
-def test_schema_4_is_judged_by_validator_23() -> None:
-    assert facts.SCHEMA_4_VALIDATOR_VERSION == "23"
-    assert facts.validator_version_for("4") == "23"
+def test_schema_4_is_judged_by_validator_23_or_later() -> None:
+    assert int(facts.SCHEMA_4_VALIDATOR_VERSION) >= 23
+    assert facts.validator_version_for("4") == facts.SCHEMA_4_VALIDATOR_VERSION
     assert facts.validator_version_for("3") == "20"  # schema 2/3 keep their table
 
 

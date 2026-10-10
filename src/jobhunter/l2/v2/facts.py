@@ -171,7 +171,15 @@ VALIDATOR_VERSION = "20"
 # quote from its own section and a wrapped sentence by a quote from any of its
 # lines. 93 of the 237 documents the 2026-10-09 v15 run quarantined carried the
 # error, and its excerpts were those two shapes.
-SCHEMA_4_VALIDATOR_VERSION = "23"
+#
+# 24 (schema 4 only) changes the quantity grammar: a comparison span quoting
+# the plus sign ("+", "3+") or "or more" reads as `gte`, and a `gte` phrase
+# beside a plus value agrees with it (`derive_quantity(plus_is_floor=True)`,
+# in assembly and verification alike). On the 2026-10-10 v15 corpus 52,133
+# experience facts were `present_unparsed`, 72% of them a quoted "+" over
+# "N+ years". Serving gains the code-derived `requirement` (serve.requirement_of)
+# on the same identifier, because both reach readers through one rebuild.
+SCHEMA_4_VALIDATOR_VERSION = "24"
 _VALIDATOR_BY_SCHEMA = {"4": SCHEMA_4_VALIDATOR_VERSION}
 
 
@@ -220,10 +228,23 @@ _CARRIED = re.compile(r"\d(?:" + _GLUE + r"|or\s+more|plus)*" + _UNIT_BODY, re.I
 _HAS_ALPHA = re.compile(r"[A-Za-z]")
 
 
-def _comparison(comparison_text: str | None) -> str | None:
+#: validator/24 (schema 4): a cited comparison that is the plus sign itself —
+#: alone ("+") or with its number ("3+") — or the words "or more"/"or above"
+#: says what "at least" says. The number, if quoted, must be the value's own.
+_PLUS_CMP = re.compile(r"(?:(?P<num>\d+(?:\.\d+)?)\s*)?\+|or\s+(?:more|above|greater)",
+                       re.IGNORECASE)
+
+
+def _comparison(comparison_text: str | None, value_text: str = "",
+                plus_is_floor: bool = False) -> str | None:
     if comparison_text is None:
         return None
     text = comparison_text.strip()
+    if plus_is_floor and (m := _PLUS_CMP.fullmatch(text)):
+        num = m.group("num")
+        if num is not None and not re.search(rf"(?<![\d.]){re.escape(num)}\s*\+", value_text):
+            return "?"  # "4+" quoted against "3+ years": not this value's floor
+        return "gte"
     for pattern, op in _CMP_PHRASES:
         # fullmatch, not search: a phrase must consume the whole cited span.
         # "no more than" is one of the lte alternatives below and fullmatches
@@ -237,8 +258,43 @@ def _comparison(comparison_text: str | None) -> str | None:
     return "?"  # comparison evidence present but not in the grammar: unparsed
 
 
+#: validator/24 (schema 4): the requirement lexicon. Whole words, casefolded;
+#: "require" catches "requires"/"requirement(s)".
+_PREFERRED_WORDS = re.compile(
+    r"\b(?:prefer(?:red|ably)?|ideally|plus|nice[\s-]to[\s-]have|bonus"
+    r"|desired|desirable|optional|advantage(?:ous)?)\b", re.IGNORECASE)
+_REQUIRED_WORDS = re.compile(
+    r"\b(?:must|require[sd]?|requirements?|minimum|basic\s+qualifications?|mandatory"
+    r"|essential|at\s+least|need(?:ed)?)\b", re.IGNORECASE)
+
+
+def _requirement_in(text: str | None) -> str | None:
+    if not text:
+        return None
+    preferred = _PREFERRED_WORDS.search(text)
+    required = _REQUIRED_WORDS.search(text)
+    if preferred and required:
+        # "strongly preferred" names one strength; "Required and Preferred
+        # Qualifications" names two, and a heading over both decides nothing
+        return None
+    return "preferred" if preferred else "required" if required else None
+
+
+def derive_requirement(modality_text: str | None, heading_text: str | None) -> str | None:
+    """`required`, `preferred` or None from a statement's two bound cues: its
+    own modal quote first, then its code-derived section heading.
+
+    Not the verdict parsing contract v3 removed — that was the model's label,
+    and its samples disagreed. This reads quotes the record already binds to
+    the source with a fixed lexicon, so every sample of one posting gets the
+    same answer. A cue naming both strengths, or neither, decides nothing.
+    """
+    return _requirement_in(modality_text) or _requirement_in(heading_text)
+
+
 def derive_quantity(value_text: str, comparison_text: str | None,
-                    unit_text: str | None = None) -> dict[str, Any] | None:
+                    unit_text: str | None = None, *,
+                    plus_is_floor: bool = False) -> dict[str, Any] | None:
     """The cited spans as one quantity, or None when the grammar cannot read them.
 
     validator/19: `unit_text` is the unit the emit cited as its OWN span, the
@@ -255,8 +311,13 @@ def derive_quantity(value_text: str, comparison_text: str | None,
     know is never skipped to borrow a later one it does ("13 paid days per
     year" is not 13 years), and hour/day/week, known but outside the record's
     unit vocabulary, derive None rather than a month conversion.
+
+    validator/24 (`plus_is_floor`, schema 4 only): a comparison span quoting
+    the value's own plus sign ("+", "3+") or "or more" reads as `gte`, and a
+    `gte` phrase beside a plus value ("Minimum" · "3+ years") agrees with it
+    instead of reading as two operators. Off, the grammar is validator/20's.
     """
-    op = _comparison(comparison_text)
+    op = _comparison(comparison_text, value_text, plus_is_floor)
     if op == "?":
         return None
     unit_m = _CARRIED.search(value_text)
@@ -293,7 +354,7 @@ def derive_quantity(value_text: str, comparison_text: str | None,
             return _q(dimension, "range", lo, hi, True, True, unit)
         return None  # a comparison phrase over a range: ambiguous, unparsed
     if m := _PLUS.search(value_text):
-        if op is None:
+        if op is None or (plus_is_floor and op == "gte"):
             return _q(dimension, "gte", num(m.group(1)), None, True, None, unit)
         return None
     singles = _SINGLE.findall(value_text)

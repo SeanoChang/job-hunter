@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from jobhunter.l2.v2.facts import derive_requirement
 from jobhunter.l2.v2.migrate import MODAL_LEXICON
 from jobhunter.l2.v2.project import mention_rows as _project_rows
 from jobhunter.l2.v2.quality import assess
@@ -101,6 +102,15 @@ def _importance_of(statement: dict[str, Any] | None) -> str | None:
         return NO_IMPORTANCE
     value: str | None = statement["importance"]
     return value
+
+
+def requirement_of(statement: dict[str, Any]) -> str | None:
+    """A schema-4 statement's `required`/`preferred`, or None: the posting's own
+    modal quote, then its section heading, read by the versioned lexicon in
+    `facts.derive_requirement` (validator/24). Derived there, not here."""
+    heading = statement.get("section_heading")
+    return derive_requirement(_modality_of(statement),
+                              heading if isinstance(heading, str) else None)
 
 
 def _modality_of(statement: dict[str, Any]) -> str | None:
@@ -405,6 +415,16 @@ def claim_index(record: dict[str, Any]) -> dict[str, Any]:
                              "importance": NO_IMPORTANCE, "level": None, "claims": [claim]})
         else:
             areas[anchor["id"]]["claims"].append(claim)
+    if _schema_of(record) == "4":
+        # validator/24: the code-derived requirement rides beside `importance`
+        # (still the no-verdict sentinel, so the agreement gate reads what it
+        # always read); a fact no statement claims has no cue to read
+        for area in [*areas.values(), *unlinked]:
+            statement = statements.get(area["id"])
+            requirement = requirement_of(statement) if statement is not None else None
+            area["requirement"] = requirement
+            for claim in area["claims"]:
+                claim["requirement"] = requirement
     return {"areas": [*areas.values(), *unlinked]}
 
 
@@ -597,12 +617,16 @@ def mention_rows(record: dict[str, Any]) -> list[tuple[str, str, str]]:
     """
     rows: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str, str]] = set()
+    requirement: dict[str, str | None] = {}
     if _schema_of(record) == "4":
         # typed mentions (parsing contract v4 §2.3): the aggregate behind
         # `q claims` is a skill index, so a place, an employer, a degree or a
         # field of study is not a row in it. They stay in the blob.
         record = {**record, "mentions": [
             m for m in record["mentions"] if m.get("type") == SKILL_TYPE]}
+        # validator/24: the importance column carries the code-derived
+        # requirement, so `q claims --importance required` selects schema-4 rows
+        requirement = {s["id"]: requirement_of(s) for s in record["statements"]}
     # two-tier serving (2026-09-18 ruling): the skill LISTING serves for every
     # record the store accepts (validated status, gated there) — grounding is
     # validator-enforced and needs no audit. `search_eligible` stays the gate
@@ -614,7 +638,8 @@ def mention_rows(record: dict[str, Any]) -> list[tuple[str, str, str]]:
         row = (
             projected["surface"],
             projected["kind"],
-            projected["importance"] or NO_IMPORTANCE,
+            requirement.get(projected["statement_id"])
+            or projected["importance"] or NO_IMPORTANCE,
         )
         # two statements a mention supports can be indistinguishable in three
         # columns; the aggregate's primary key would reject the second anyway

@@ -303,9 +303,10 @@ def claims(
     """Who demands one mention across the corpus — the postings living on it today.
 
     mention is matched case-insensitively (python, kubernetes); board is
-    source:board. importance is the legacy filter and selects schema-2 rows
-    only — required or preferred; a schema-3 row carries section_heading and
-    the posting's own modality quote instead, and issues no verdict at all.
+    source:board. importance is required or preferred: a schema-2 verdict,
+    or a schema-4 requirement read from the posting's own modal phrase or
+    section heading. A schema-3 row, and a schema-4 row whose posting says
+    neither, carries no verdict and is not selected by it.
     """
     from jobhunter.l2.v2.types import NO_IMPORTANCE
 

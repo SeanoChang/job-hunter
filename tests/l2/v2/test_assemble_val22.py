@@ -37,8 +37,8 @@ def _unknown_refs(record: dict[str, Any], markdown: str, schema_version: str) ->
 
 
 def test_schema_4_seals_validator_22() -> None:
-    assert facts.SCHEMA_4_VALIDATOR_VERSION == "23"
-    assert facts.validator_version_for("4") == "23"
+    assert facts.SCHEMA_4_VALIDATOR_VERSION == "24"
+    assert facts.validator_version_for("4") == "24"
     assert facts.validator_version_for("3") == facts.VALIDATOR_VERSION == "20"
     assert facts.validator_version_for("2") == "20"
 
@@ -52,10 +52,10 @@ def test_a_dangling_link_beside_a_live_one_is_dropped_and_recorded() -> None:
     assert record["extraction"]["dropped_links"] == [
         {"path": "mentions[1].statement_ids", "ref_id": "s25"}
     ]
-    assert record["extraction"]["validator_version"] == "23"
+    assert record["extraction"]["validator_version"] == "24"
     report = verify(record, VISA_MD, schema_version="4")
     assert report.status == "pass", [(f.code, f.path) for f in report.findings]
-    assert report.validator_version == "23"
+    assert report.validator_version == "24"
 
 
 def test_a_clean_record_carries_no_dropped_links_key() -> None:

@@ -189,7 +189,7 @@ def test_validator_21_leaves_bundle_v2_at_validator_20() -> None:
     assert facts.VALIDATOR_VERSION == "20"
     assert facts.validator_version_for("2") == "20"
     assert facts.validator_version_for("3") == "20"
-    assert facts.validator_version_for("4") == "23"
+    assert facts.validator_version_for("4") == "24"
     record = b.assemble(make_s3_emit(), S3_MD, document_hash=S3_DOC_HASH,
                         observed_model="gpt-5.6-luna", at=AT)
     assert record["extraction"]["validator_version"] == "20"
