@@ -26,6 +26,7 @@ from jobhunter.l2.v2.facts import (
     derive_date,
     derive_money,
     derive_quantity,
+    pay_context,
     validator_version_for,
 )
 from jobhunter.l2.v2.source import ANNOTATION_VERSION, annotate, blocks_by_id
@@ -88,7 +89,7 @@ def _cited(refs: list[dict[str, Any]] | None) -> str | None:
 
 
 def _rederive(family: str, evidence: dict[str, Any], *,
-              plus_is_floor: bool = False) -> dict[str, Any]:
+              plus_is_floor: bool = False, blocks: list[Block] | None = None) -> dict[str, Any]:
     """Recompute a fact entry's `derived` from the spans the record cites.
 
     A second call site of the `facts` grammar rather than a call into assembly's
@@ -109,8 +110,15 @@ def _rederive(family: str, evidence: dict[str, Any], *,
         return {"state": "parsed" if quantity else "present_unparsed",
                 "quantity": quantity, "money": None, "date": None}
     if family == "compensation":
+        # validator/25: the amount's context, read from the source blocks
+        # here as independently as assembly reads it
+        pay = None
+        if blocks is not None:
+            first = min(evidence["value"] or [], key=lambda ref: ref["span"][0], default=None)
+            pay = pay_context(blocks, str(first["block_id"]) if first else "")
         money = derive_money(value, _cited(evidence["comparison"]),
-                             _cited(evidence["currency"]), _cited(evidence["unit"]))
+                             _cited(evidence["currency"]), _cited(evidence["unit"]),
+                             context=pay)
         return {"state": "parsed" if money else "present_unparsed",
                 "quantity": None, "money": money, "date": None}
     date = derive_date(value)
@@ -374,7 +382,8 @@ def _check_statements(record: dict[str, Any], blocks: list[Block], report: Repor
                          field="importance", value=importance)
 
 
-def _check_facts(record: dict[str, Any], report: Report, schema_version: str) -> None:
+def _check_facts(record: dict[str, Any], report: Report, schema_version: str,
+                 blocks: list[Block]) -> None:
     entries = record["facts"]["entries"]
     for i, entry in enumerate(entries):
         path = f"facts.entries[{i}]"
@@ -387,8 +396,9 @@ def _check_facts(record: dict[str, Any], report: Report, schema_version: str) ->
                          field="component", family=family, value=entry["component"])
         if entry["scope"] is not None and family not in ("experience", "quantity"):
             report.error("facts", path, "fact_family_shape", field="scope", family=family)
-        rederived = _rederive(family, entry["evidence"],
-                              plus_is_floor=schema_version in _CONTRACT_4_SCHEMAS)
+        contract_4 = schema_version in _CONTRACT_4_SCHEMAS
+        rederived = _rederive(family, entry["evidence"], plus_is_floor=contract_4,
+                              blocks=blocks if contract_4 else None)
         if rederived != entry["derived"]:
             report.error("facts", path, "fact_mismatch",
                          derived=rederived, stored=entry["derived"])
@@ -693,7 +703,7 @@ def verify(record: dict[str, Any], markdown: str, *,
     _check_group_nesting(record, report)
     _check_relations(record, report)
     _check_statements(record, blocks, report, schema_version)
-    _check_facts(record, report, schema_version)
+    _check_facts(record, report, schema_version, blocks)
     _check_mentions(record, report)
     if schema_version in _CONTRACT_4_SCHEMAS:
         _check_authorization(record, report)

@@ -16,9 +16,11 @@ from typing import Any, cast
 
 from jobhunter.hashing import canonical_json, sha256_hex
 from jobhunter.l2.v2.facts import (
+    PayContext,
     derive_date,
     derive_money,
     derive_quantity,
+    pay_context,
     validator_version_for,
 )
 from jobhunter.l2.v2.invisible import invisible
@@ -234,7 +236,7 @@ def _texts(bound: list[dict[str, Any]] | None) -> str | None:
 
 
 def _derive(family: Any, evidence: dict[str, Any], *,
-            plus_is_floor: bool = False) -> dict[str, Any]:
+            plus_is_floor: bool = False, pay: PayContext | None = None) -> dict[str, Any]:
     """Code-owned parse of the cited spans. A grammar miss is `present_unparsed`,
     never a dropped fact: stated-but-unparsed must stay distinguishable from
     unstated. `conflicting` is the increment-2 auditor's state, never assembly's."""
@@ -257,6 +259,7 @@ def _derive(family: Any, evidence: dict[str, Any], *,
             _texts(evidence["comparison"]),
             _texts(evidence["currency"]),
             _texts(evidence["unit"]),
+            context=pay,
         )
         return {
             "state": "parsed" if money else "present_unparsed",
@@ -441,6 +444,13 @@ def _tracks(binder: _Binder, node: Any) -> dict[str, Any] | None:
     }
 
 
+def _pay_context(binder: _Binder, evidence: dict[str, Any]) -> PayContext:
+    """validator/25: the context of the amount's first cited value line."""
+    values = sorted(evidence["value"] or [], key=lambda ref: ref["span"][0])
+    block_id = str(values[0]["block_id"]) if values else ""
+    return pay_context(list(binder.blocks.values()), block_id)
+
+
 def _entry(binder: _Binder, index: int, node: dict[str, Any], *,
            contract_4: bool = False) -> dict[str, Any]:
     path = f"facts.entries[{index}]"
@@ -466,8 +476,10 @@ def _entry(binder: _Binder, index: int, node: dict[str, Any], *,
         "date_kind": node.get("date_kind"),
         "component": node.get("component"),
         "evidence": evidence,
-        # validator/24: schema 4 reads a quoted plus sign as its floor
-        "derived": _derive(node.get("family"), evidence, plus_is_floor=contract_4),
+        # validator/24: schema 4 reads a quoted plus sign as its floor;
+        # validator/25: and reads pay in the context of its own lines
+        "derived": _derive(node.get("family"), evidence, plus_is_floor=contract_4,
+                            pay=_pay_context(binder, evidence) if contract_4 else None),
     }
 
 

@@ -107,10 +107,14 @@ def _importance_of(statement: dict[str, Any] | None) -> str | None:
 def requirement_of(statement: dict[str, Any]) -> str | None:
     """A schema-4 statement's `required`/`preferred`, or None: the posting's own
     modal quote, then its section heading, read by the versioned lexicon in
-    `facts.derive_requirement` (validator/24). Derived there, not here."""
+    `facts.derive_requirement` (validator/24; an unmarked qualification is
+    preferred from validator/25). Derived there, not here."""
     heading = statement.get("section_heading")
+    kind = statement.get("kind")
+    # validator/25: an unmarked qualification reads as preferred
     return derive_requirement(_modality_of(statement),
-                              heading if isinstance(heading, str) else None)
+                              heading if isinstance(heading, str) else None,
+                              kind=kind if isinstance(kind, str) else None)
 
 
 def _modality_of(statement: dict[str, Any]) -> str | None:

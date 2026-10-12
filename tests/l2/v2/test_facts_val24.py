@@ -24,9 +24,9 @@ GTE_36 = {"dimension": "duration", "comparison": "gte", "min_value": 36, "max_va
           "inclusive_min": True, "inclusive_max": None, "unit": "month"}
 
 
-def test_schema_4_is_judged_by_validator_24() -> None:
-    assert facts.SCHEMA_4_VALIDATOR_VERSION == "24"
-    assert facts.validator_version_for("4") == "24"
+def test_schema_4_is_judged_by_validator_24_or_later() -> None:
+    assert facts.SCHEMA_4_VALIDATOR_VERSION == "25"
+    assert facts.validator_version_for("4") == "25"
     assert facts.validator_version_for("3") == "20"
 
 

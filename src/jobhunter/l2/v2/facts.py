@@ -8,8 +8,12 @@ repair, spec [A3]). Null-over-guess governs every branch.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import date as _date
 from typing import Any
+
+from jobhunter.l2.v2.types import Block
 
 # validator/13 (11/12 are v1's): casefolded mention grounding (aliases/1
 # consistency) and code-derived presence reconciliation in assemble.
@@ -179,7 +183,16 @@ VALIDATOR_VERSION = "20"
 # experience facts were `present_unparsed`, 72% of them a quoted "+" over
 # "N+ years". Serving gains the code-derived `requirement` (serve.requirement_of)
 # on the same identifier, because both reach readers through one rebuild.
-SCHEMA_4_VALIDATOR_VERSION = "24"
+#
+# 25 (schema 4 only) reads pay the posting states and the model quoted but
+# the grammar dropped: a currency code or symbol inside the amount, a range
+# cited as two values and its dash, "between" over a range, and non-English
+# period words. An uncited period or currency comes from `pay_context` — the
+# amount's own line and a short label line above it, and what a bare "$"
+# names in this document. Serving reads an unmarked qualification as
+# `preferred` (`derive_requirement(kind=)`, 2026-10-11 ruling). On the
+# 2026-10-11 answer key pay scored 0.48-0.62 with the amounts almost all right.
+SCHEMA_4_VALIDATOR_VERSION = "25"
 _VALIDATOR_BY_SCHEMA = {"4": SCHEMA_4_VALIDATOR_VERSION}
 
 
@@ -280,16 +293,23 @@ def _requirement_in(text: str | None) -> str | None:
     return "preferred" if preferred else "required" if required else None
 
 
-def derive_requirement(modality_text: str | None, heading_text: str | None) -> str | None:
+def derive_requirement(modality_text: str | None, heading_text: str | None, *,
+                       kind: str | None = None) -> str | None:
     """`required`, `preferred` or None from a statement's two bound cues: its
     own modal quote first, then its code-derived section heading.
 
     Not the verdict parsing contract v3 removed — that was the model's label,
     and its samples disagreed. This reads quotes the record already binds to
     the source with a fixed lexicon, so every sample of one posting gets the
-    same answer. A cue naming both strengths, or neither, decides nothing.
+    same answer. A cue naming both strengths, or neither, decides nothing —
+    except for a qualification (validator/25, 2026-10-11 ruling): what a
+    posting asks of the candidate without saying it is required reads as
+    preferred, and only a required cue makes it required.
     """
-    return _requirement_in(modality_text) or _requirement_in(heading_text)
+    found = _requirement_in(modality_text) or _requirement_in(heading_text)
+    if found is None and kind == "qualification":
+        return "preferred"
+    return found
 
 
 def derive_quantity(value_text: str, comparison_text: str | None,
@@ -413,8 +433,163 @@ def _period(period_text: str | None) -> str | None:
     return next(name for name in ("hour", "year", "month", "week", "day") if m.group(name))
 
 
+#: validator/25 (schema 4). Codes are matched in capitals only: "try", "pen"
+#: and "sar" are words.
+_CODE_25 = re.compile(
+    r"\b(USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|CNY|CHF|SEK|INR|TWD|KRW|MXN|COP|BRL|CLP|ARS"
+    r"|PEN|PLN|CZK|HUF|RON|DKK|NOK|ILS|AED|SAR|ZAR|TRY|PHP|MYR|IDR|THB|VND)\b"
+)
+#: a dollar sign with its country in front ("C$95,000", "CAD $112,000" is a code)
+_PREFIXED_DOLLAR = re.compile(r"\b(CA|C|AU|A|NZ|S|HK|US|R|MX)\$")
+_PREFIX_CODES = {"C": "CAD", "CA": "CAD", "A": "AUD", "AU": "AUD", "NZ": "NZD", "S": "SGD",
+                 "HK": "HKD", "US": "USD", "R": "BRL", "MX": "MXN"}
+#: "34 $" (French and Quebec order): the symbol after its number, none after it
+_TRAILING_SYMBOL = re.compile(r"(\d(?:[\d.,]*\d)?)\s*([$£€¥])(?!\s*\d)")
+_MONEY_RANGE_25 = re.compile(_AMT + r"\s*(?:--?|–|—|to|à|and|bis)\s*" + _AMT, re.IGNORECASE)
+_MONEY_PAIR = re.compile(_AMT + r"\s+" + _AMT)
+#: a comparison span that only says "this is a range": over a range it is the
+#: range, and a range cited as two value spans and its dash is one range
+_RANGE_WORD = re.compile(r"between|from|range|-|–|—|to|à|and", re.IGNORECASE)
+_PERIOD_25 = re.compile(
+    r"(?P<hour>/\s*(?:hr|hour|heure|hora|h)\b|per\s+hour|an\s+hour|hourly|par\s+heure"
+    r"|de\s+l'heure|horaire|por\s+hora|pro\s+stunde|stündlich|stundenlohn)"
+    r"|(?P<year>/\s*(?:yr|year)\b|per\s+(?:year|annum)|a\s+year|annually|annual|yearly"
+    r"|par\s+an(?:née)?|annuel(?:le)?|anual(?:es)?|por\s+año|jährlich|pro\s+jahr)"
+    r"|(?P<month>/\s*(?:mo|month|mois|mes)\b|per\s+month|a\s+month|monthly|mensual(?:es)?"
+    r"|mensuel(?:le)?|par\s+mois|por\s+mes|monatlich|pro\s+monat)"
+    r"|(?P<week>/\s*(?:wk|week)\b|per\s+week|weekly|semanal|hebdomadaire|wöchentlich)"
+    r"|(?P<day>/\s*day\b|per\s+day|daily|por\s+día|par\s+jour)",
+    re.IGNORECASE,
+)
+_PERIODS = ("hour", "year", "month", "week", "day")
+#: "salary" with no period word is a year's pay
+_SALARY = re.compile(r"\b(?:salary|salario|salaire|gehalt)\b", re.IGNORECASE)
+#: a document naming any of these may mean a non-US dollar by a bare "$"
+_OTHER_DOLLAR_CODES = re.compile(r"\b(?:CAD|AUD|NZD|SGD|HKD|MXN|COP|CLP|ARS|TWD|BRL)\b")
+_OTHER_DOLLAR_PLACES = re.compile(
+    r"\b(?:Canada|Canadian|Australia|Australian|New\s+Zealand|Singapore|Hong\s+Kong|Mexico"
+    r"|México|Colombia|Chile|Argentina|Taiwan|Brazil|Brasil)\b", re.IGNORECASE)
+#: a line above the amount longer than this is a paragraph, not its label
+_LABEL_MAX = 60
+
+
+@dataclass(frozen=True)
+class PayContext:
+    """What the document says around one amount (validator/25, schema 4).
+
+    `label` is the amount's own line, after a short line above it when there
+    is one ("Hourly Pay Range"). `dollar` is what a bare "$" names in this
+    document: USD when the document names no other dollar currency and no
+    country that uses one, else None.
+    """
+
+    label: str
+    dollar: str | None
+
+
+def pay_context(blocks: Sequence[Block], block_id: str) -> PayContext:
+    """The context of the amount whose value is cited in `block_id`."""
+    texts = [b.text for b in blocks]
+    other = any(_OTHER_DOLLAR_CODES.search(t) or _OTHER_DOLLAR_PLACES.search(t)
+                or _PREFIXED_DOLLAR.search(t.replace("US$", "")) for t in texts)
+    index = next((i for i, b in enumerate(blocks) if b.id == block_id), None)
+    label = ""
+    if index is not None:
+        above = texts[index - 1].strip() if index > 0 else ""
+        label = texts[index].strip()
+        if above and len(above) <= _LABEL_MAX:
+            label = f"{above} {label}"
+    return PayContext(label=label, dollar=None if other else "USD")
+
+
+def _periods_in(text: str) -> set[str]:
+    return {next(p for p in _PERIODS if m.group(p)) for m in _PERIOD_25.finditer(text)}
+
+
+def _period_25(period_text: str | None, label: str) -> str | None:
+    """The cited period's first word, else the one period the label names."""
+    if period_text and (m := _PERIOD_25.search(period_text)):
+        return next(p for p in _PERIODS if m.group(p))
+    found = _periods_in(label)
+    if len(found) == 1:
+        return found.pop()
+    if not found and _SALARY.search(label):
+        return "year"
+    return None  # nothing says, or the label names two: null over guess
+
+
+def _code_25(text: str | None) -> str | None:
+    if not text:
+        return None
+    if m := _CODE_25.search(text) or _CODE.search(text):
+        return m.group(1).upper()
+    if m := _PREFIXED_DOLLAR.search(text):
+        return _PREFIX_CODES[m.group(1)]
+    return next((code for sym, code in _SYMBOL_CURRENCY.items() if sym in text), None)
+
+
+def _money_25(value_text: str, comparison_text: str | None, currency_text: str | None,
+              period_text: str | None, context: PayContext) -> dict[str, Any] | None:
+    """validator/25's reading of one cited amount (see SCHEMA_4_VALIDATOR_VERSION)."""
+    value = value_text.strip()
+    range_word = bool(comparison_text and _RANGE_WORD.fullmatch(comparison_text.strip()))
+    op = None if range_word else _comparison(comparison_text)
+    if op == "?":
+        return None
+    currency = _code_25(currency_text) or _code_25(value)
+    value = _PREFIXED_DOLLAR.sub("$", value)
+    value = re.sub(r"\s+", " ", _CODE_25.sub(" ", _CODE.sub(" ", value))).strip()
+    value = _TRAILING_SYMBOL.sub(r"\2\1", value)
+    if range_word and (pair := _MONEY_PAIR.fullmatch(value)):
+        s1, d1, k1, s2, d2, k2 = pair.groups()
+        value = f"{s1}{d1}{k1 or ''} - {s2}{d2}{k2 or ''}"
+    lo: str | None
+    hi: str | None
+    if m := _MONEY_RANGE_25.fullmatch(value):
+        s1, d1, k1, s2, d2, k2 = m.groups()
+        if s1 and s2 and s1 != s2:
+            return None  # mixed symbols is not a range
+        lo, hi = _decimal(s1, d1, k1), _decimal(s2, d2, k2)
+        if lo is None or hi is None:
+            return None
+        if k2 and not k1 and float(lo) < 1000:
+            lo = str(int(float(lo) * 1000))  # "$130 - $150K": trailing K covers both
+        if float(lo) > float(hi) or op is not None:
+            return None  # inverted, or a comparison phrase over a range: ambiguous
+        op = "range"
+        sym = s1 or s2
+    elif (m := _MONEY_ONE.fullmatch(value)) and not range_word:
+        sym, digits, k = m.groups()
+        v = _decimal(sym, digits, k)
+        if v is None:
+            return None
+        if op is None:
+            op, lo, hi = "unstated", v, v
+        elif op in ("gte", "gt"):
+            lo, hi = v, None
+        else:
+            lo, hi = None, v
+    else:
+        return None  # malformed, absent, or "between" one amount: unparsed, kept
+    if currency is None and sym in _SYMBOL_CURRENCY:
+        currency = _SYMBOL_CURRENCY[sym]
+    if currency is None and sym == "$":
+        codes = {m.group(1) for m in _CODE_25.finditer(context.label)}
+        currency = codes.pop() if len(codes) == 1 else context.dollar
+    return {"comparison": op, "min_amount": lo, "max_amount": hi,
+            "currency": currency, "period": _period_25(period_text, context.label)}
+
+
 def derive_money(value_text: str, comparison_text: str | None,
-                 currency_text: str | None, period_text: str | None) -> dict[str, Any] | None:
+                 currency_text: str | None, period_text: str | None, *,
+                 context: PayContext | None = None) -> dict[str, Any] | None:
+    """One cited amount as money, or None when the grammar cannot read it.
+
+    `context` (validator/25, schema 4) selects `_money_25`; without it the
+    grammar is validator/20's, byte for byte.
+    """
+    if context is not None:
+        return _money_25(value_text, comparison_text, currency_text, period_text, context)
     op = _comparison(comparison_text)
     if op == "?":
         return None
