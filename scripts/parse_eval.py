@@ -51,7 +51,7 @@ from typing import Any
 from jobhunter.config import Settings, env_snapshot
 from jobhunter.l2.assemble import AssembleError
 from jobhunter.l2.bundles import get_bundle
-from jobhunter.l2.engines import CodexCli, EngineTransportError
+from jobhunter.l2.engines import ClaudeCli, CodexCli, EngineTransportError
 from jobhunter.l2.schemas import emit_schema, normalize_emit, validate_emit
 from jobhunter.l2.v2.prompt import _render, _split
 from jobhunter.markdown import NORMALIZER_VERSION
@@ -143,7 +143,7 @@ def load_variant(name: str) -> Callable[[str], str]:
     return fn
 
 
-def one_shot(engine: CodexCli, model: str, bundle: Any, parts: tuple[str, str, str],
+def one_shot(engine: CodexCli | ClaudeCli, model: str, bundle: Any, parts: tuple[str, str, str],
              case: dict[str, Any], markdown: str, rep: int) -> dict[str, Any]:
     """One extraction, judged exactly as the runner judges a first attempt."""
     out: dict[str, Any] = {"document_hash": case["document_hash"], "rep": rep,
@@ -158,7 +158,7 @@ def one_shot(engine: CodexCli, model: str, bundle: Any, parts: tuple[str, str, s
         return {**out, "outcome": "transport_error", "errors": [str(exc)[:300]]}
     out.update(seconds=round(time.monotonic() - t0, 1), raw=res.raw_text,
                observed_model=res.observed_model,
-               tokens=[res.input_tokens, res.output_tokens])
+               tokens=[res.input_tokens, res.output_tokens], cost_usd=res.cost_usd)
     return {**out, **judge(bundle, case["document_hash"], markdown, res.raw_text,
                            res.observed_model)}
 
@@ -218,10 +218,11 @@ def rejudge(run_dir: Path) -> Path:
     return out_dir
 
 
-def run(variant: str, k: int, split: str, concurrency: int, limit: int | None) -> Path:
+def run(variant: str, k: int, split: str, concurrency: int, limit: int | None,
+        engine_name: str = "codex-cli", model: str | None = None) -> Path:
     settings = Settings.load(env_snapshot())
     bundle = get_bundle(BUNDLE)
-    model = settings.l2_model_candidates[0]
+    model = model or settings.l2_model_candidates[0]
     template = load_variant(variant)(bundle.template)
     parts = _split(template)
     cases = load_cases(split)[:limit]
@@ -230,29 +231,37 @@ def run(variant: str, k: int, split: str, concurrency: int, limit: int | None) -
         "SELECT document_hash, markdown FROM documents WHERE document_hash = ANY(%s)",
         ([c["document_hash"] for c in cases],)).fetchall()}
     conn.close()
-    engine = CodexCli(reasoning_effort=settings.l2_reasoning_effort,
-                      trust_requested_model=True, strict=settings.l2_schema_strict)
-    run_id = f"{iso(utcnow()).replace(':', '').replace('-', '')}-{variant}-k{k}"
+    engine: CodexCli | ClaudeCli = (
+        ClaudeCli() if engine_name == "claude-cli"
+        else CodexCli(reasoning_effort=settings.l2_reasoning_effort,
+                      trust_requested_model=True, strict=settings.l2_schema_strict))
+    tag = "" if engine_name == "codex-cli" else f"-{model.replace('claude-', '')}"
+    run_id = f"{iso(utcnow()).replace(':', '').replace('-', '')}-{variant}{tag}-k{k}"
     out_dir = RUNS / run_id
     out_dir.mkdir(parents=True)
     (out_dir / "meta.json").write_text(json.dumps({
-        "variant": variant, "k": k, "split": split, "bundle": BUNDLE, "model": model,
+        "variant": variant, "k": k, "split": split, "bundle": BUNDLE,
+        "engine": engine_name, "model": model,
         "effort": settings.l2_reasoning_effort, "cases": len(cases),
         "template_sha": __import__("hashlib").sha256(template.encode()).hexdigest()[:12],
     }, indent=1))
     jobs = [(c, rep) for c in cases for rep in range(k)]
     done = 0
+    cost = 0.0
     with (out_dir / "results.jsonl").open("w", encoding="utf-8") as fh, \
             ThreadPoolExecutor(max_workers=concurrency) as pool:
         futures = [pool.submit(one_shot, engine, model, bundle, parts, c,
                                md[c["document_hash"]], rep) for c, rep in jobs]
         for fut in futures:
-            fh.write(json.dumps(fut.result()) + "\n")
+            result = fut.result()
+            cost += result.get("cost_usd") or 0.0
+            fh.write(json.dumps(result) + "\n")
             fh.flush()
             done += 1
             if done % 25 == 0:
                 print(f"{done}/{len(jobs)}", file=sys.stderr, flush=True)
-    print(json.dumps({"run": str(out_dir.relative_to(ROOT)), "calls": len(jobs)}))
+    print(json.dumps({"run": str(out_dir.relative_to(ROOT)), "calls": len(jobs),
+                      "cost_usd": round(cost, 4)}))
     return out_dir
 
 
@@ -644,6 +653,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     r.add_argument("--split", choices=("train", "test", "all"), default="all")
     r.add_argument("--concurrency", type=int, default=24)
     r.add_argument("--limit", type=int, default=None, help="first N cases only (smoke)")
+    r.add_argument("--engine", choices=("codex-cli", "claude-cli"), default="codex-cli")
+    r.add_argument("--model", default=None, help="default: the configured L2 model")
     s = sub.add_parser("score")
     s.add_argument("run_dir", type=Path)
     rj = sub.add_parser("rejudge")
@@ -655,7 +666,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.cmd == "build-cases":
         build_cases(args.per_stratum, args.seed)
     elif args.cmd == "run":
-        run(args.variant, args.k, args.split, args.concurrency, args.limit)
+        run(args.variant, args.k, args.split, args.concurrency, args.limit,
+            args.engine, args.model)
     elif args.cmd == "rejudge":
         rejudge(args.run_dir)
     elif args.cmd == "score":

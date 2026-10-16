@@ -213,7 +213,9 @@ class ClaudeCli:
     def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
         args = [
             "-p", prompt, "--model", model, "--output-format", "json",
-            "--no-session-persistence", "--tools", "", "--strict-mcp-config",
+            # no setting sources: the owner's hooks and settings stay out of extraction
+            "--no-session-persistence", "--setting-sources", "", "--tools", "",
+            "--strict-mcp-config",
             "--mcp-config", '{"mcpServers":{}}',
             "--json-schema", json.dumps(engine_schema(schema)),
         ]
