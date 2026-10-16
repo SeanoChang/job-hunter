@@ -1,0 +1,173 @@
+{
+ "gid": "g41",
+ "skills": [
+  {
+   "name": "design of experiments",
+   "aliases": [
+    "doe"
+   ],
+   "quote": "Design of Experiments (DOE)"
+  },
+  {
+   "name": "statistical process control",
+   "aliases": [
+    "spc"
+   ],
+   "quote": "Statistical Process Control (SPC)"
+  },
+  {
+   "name": "geometric dimensioning and tolerancing",
+   "aliases": [
+    "gd&t",
+    "gdt"
+   ],
+   "quote": "Geometric Dimensioning and Tolerancing"
+  },
+  {
+   "name": "mechanical design",
+   "aliases": [
+    "mechanical design software"
+   ],
+   "quote": "mechanical design software"
+  },
+  {
+   "name": "solidworks",
+   "aliases": [],
+   "quote": "SolidWorks"
+  },
+  {
+   "name": "autocad",
+   "aliases": [],
+   "quote": "AutoCAD"
+  },
+  {
+   "name": "semiconductor fabrication",
+   "aliases": [
+    "semiconductor fabrication processes"
+   ],
+   "quote": "semiconductor fabrication processes"
+  },
+  {
+   "name": "semiconductor packaging",
+   "aliases": [
+    "packaging technologies",
+    "assembly packaging"
+   ],
+   "quote": "packaging technologies"
+  },
+  {
+   "name": "supply chain management",
+   "aliases": [],
+   "quote": "supply chain management"
+  },
+  {
+   "name": "cnc machining",
+   "aliases": [
+    "cnc"
+   ],
+   "quote": "CNC machining"
+  },
+  {
+   "name": "stamping",
+   "aliases": [],
+   "quote": "stamping"
+  },
+  {
+   "aliases": [
+    "engineering drawings",
+    "technical drawings",
+    "blueprint reading"
+   ],
+   "name": "mechanical drawings",
+   "quote": "mechanical drawings"
+  },
+  {
+   "aliases": [],
+   "name": "continuous improvement",
+   "quote": "continuous improvement"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 3,
+   "max_years": null,
+   "quote": "Bachelor's degree in Mechanical Engineering, Materials Science, Metallurgical Engineering, or a related STEM field with 3+ years of relevant experience."
+  },
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "Master's degree in Mechanical Engineering, Materials Science, Metallurgical Engineering, or a related STEM field with 2+ years of relevant experience."
+  },
+  {
+   "min_years": 0.5,
+   "max_years": null,
+   "quote": "PhD in Mechanical Engineering, Materials Science, Metallurgical Engineering, or a related STEM field with 6+ month of relevant experience."
+  }
+ ],
+ "experience_without_number": [
+  "Experience with high-precision manufacturing methods, including stamping and CNC machining."
+ ],
+ "pay": [
+  {
+   "min": "115110",
+   "max": "162500",
+   "currency": "USD",
+   "period": "year",
+   "quote": "Annual Salary Range for jobs which could be performed in the US: $115,110.00-162,500.00 USD"
+  }
+ ],
+ "sponsorship": "no",
+ "sponsorship_quote": "This position is not eligible for Intel immigration sponsorship.",
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Bachelor's degree in Mechanical Engineering, Materials Science, Metallurgical Engineering, or a related STEM field with 3+ years of relevant experience.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Master's degree in Mechanical Engineering, Materials Science, Metallurgical Engineering, or a related STEM field with 2+ years of relevant experience.",
+   "requirement": "required"
+  },
+  {
+   "quote": "PhD in Mechanical Engineering, Materials Science, Metallurgical Engineering, or a related STEM field with 6+ month of relevant experience.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Proficiency in Statistical Process Control (SPC) and Design of Experiments (DOE) principles.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Familiarity with mechanical drawings and Geometric Dimensioning and Tolerancing",
+   "requirement": "required"
+  },
+  {
+   "quote": "Competency in mechanical design software such as SolidWorks or AutoCAD.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Proven ability to lead technical innovation and manage complex, time-sensitive projects.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Understanding of semiconductor fabrication processes and packaging technologies.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Familiarity with supply chain management in a manufacturing or materials qualification environment.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with high-precision manufacturing methods, including stamping and CNC machining.",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Three alternative degree+experience paths (3y BS / 2y MS / 6 months PhD); 6 months converted to 0.5. The SPC/DOE/GD&T/CAD lines sit under Minimum Qualifications ('Relevant experience should include any of following'), so labeled required even though only one of them is needed. 'packaging technologies' labeled as semiconductor packaging; reviewer may drop it as too generic. Review: added 'mechanical drawings' (paired with GD&T in a minimum-qualification line) and 'continuous improvement' (named practice in responsibilities); 'packaging technologies' kept as semiconductor packaging.",
+ "document_hash": "1d9a72f54590eda8cdb7d7c7790c5f9137fa0d3532c04d4e64a0e8dee71f2ca9",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'mechanical drawings' (quote 'mechanical drawings')",
+  "skills: added 'continuous improvement' (quote 'continuous improvement')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

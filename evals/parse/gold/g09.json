@@ -1,0 +1,202 @@
+{
+ "gid": "g09",
+ "skills": [
+  {
+   "name": "flight testing",
+   "aliases": [
+    "flight test"
+   ],
+   "quote": "Flight Test"
+  },
+  {
+   "name": "test and evaluation",
+   "aliases": [
+    "t&e"
+   ],
+   "quote": "T&E"
+  },
+  {
+   "name": "autonomous systems",
+   "aliases": [
+    "autonomy",
+    "autonomy systems"
+   ],
+   "quote": "autonomous systems"
+  },
+  {
+   "name": "test planning",
+   "aliases": [
+    "test plans",
+    "test plan development"
+   ],
+   "quote": "test plans"
+  },
+  {
+   "name": "data analysis",
+   "aliases": [
+    "test data analysis"
+   ],
+   "quote": "Analyze data"
+  },
+  {
+   "name": "dashboards",
+   "aliases": [
+    "performance dashboards",
+    "data visualization"
+   ],
+   "quote": "performance dashboards"
+  },
+  {
+   "name": "simulation",
+   "aliases": [
+    "simulation environments"
+   ],
+   "quote": "simulation environments"
+  },
+  {
+   "name": "python",
+   "aliases": [],
+   "quote": "Python"
+  },
+  {
+   "name": "c++",
+   "aliases": [
+    "cpp"
+   ],
+   "quote": "C++"
+  },
+  {
+   "name": "ros",
+   "aliases": [
+    "robot operating system"
+   ],
+   "quote": "ROS"
+  },
+  {
+   "name": "robotics",
+   "aliases": [],
+   "quote": "robotics"
+  },
+  {
+   "name": "unmanned aerial systems",
+   "aliases": [
+    "uas",
+    "uav",
+    "drones"
+   ],
+   "quote": "unmanned aerial systems"
+  },
+  {
+   "name": "software qualification testing",
+   "aliases": [
+    "software testing",
+    "qualification testing"
+   ],
+   "quote": "software qualification testing"
+  },
+  {
+   "name": "faa regulations",
+   "aliases": [
+    "faa",
+    "fcc regulations",
+    "aviation regulations"
+   ],
+   "quote": "FAA"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "equivalent experience in autonomous systems testing",
+  "Proven experience coordinating and executing complex test events",
+  "Experience developing metrics and performance dashboards",
+  "Direct experience in the development, testing, and deployment of autonomy systems in a defense or aerospace context",
+  "Hands-on experience with simulation environments and tools used for testing autonomous systems",
+  "experience with programming languages used in autonomy and robotics (e.g., Python, C++, ROS)"
+ ],
+ "pay": [
+  {
+   "min": "86000",
+   "max": "114000",
+   "currency": "USD",
+   "period": "year",
+   "quote": "$86,000—$114,000 USD"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": true,
+ "citizenship_quote": "Must be able to obtain and maintain a U.S. security clearance.",
+ "qualifications": [
+  {
+   "quote": "A Bachelor's degree in engineering, computer science, robotics, or a related technical field from an accredited institution, or equivalent experience in autonomous systems testing.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Demonstrated ability in developing and executing test plans for complex systems within aggressive timelines.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Proven experience coordinating and executing complex test events",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience developing metrics and performance dashboards",
+   "requirement": "required"
+  },
+  {
+   "quote": "Proven track record of working collaboratively with multidisciplinary teams to achieve project milestones and deliverables.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Excellent communication skills, capable of effectively articulating technical challenges and solutions to a diverse audience.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Ability to engage and communicate with military and government customers",
+   "requirement": "required"
+  },
+  {
+   "quote": "Willingness to work flexible hours and travel to various testing locations as required.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Must be able to obtain and maintain a U.S. security clearance.",
+   "requirement": "required"
+  },
+  {
+   "quote": "In this role, you will be subject to pre-employment and randomized substance screening, as required by the Company.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Direct experience in the development, testing, and deployment of autonomy systems in a defense or aerospace context.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Familiarity with FAA, FCC, and other relevant regulations",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Hands-on experience with simulation environments and tools used for testing autonomous systems.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Familiarity with software development practices and experience with programming languages used in autonomy and robotics (e.g., Python, C++, ROS).",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Knowledge of current industry and military standards related to unmanned aerial systems and their operation within national airspace.",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Pay is 'US Salary Range', base salary, so annual. Citizenship true because a U.S. security clearance is required. AI, computer vision, sensor fusion and networking come only from the repeated company boilerplate; a stricter grader may drop them. Lattice OS is the employer's own product. Substance-screening line sits under Required Qualifications but is a condition, not really a qualification. Data analysis, dashboards and test planning are borderline skills. Review: dropped AI, computer vision, sensor fusion and networking because they appear only in the company boilerplate (same call as g12). Added FAA regulations from a preferred qualification.",
+ "document_hash": "f8ae173be6130a258fe334facf59565b31ca4010153bd68225ed2cd77841535b",
+ "reviewed": true,
+ "review_changes": [
+  "skills: removed 'artificial intelligence' (company boilerplate only, not asked of the candidate; matches g12 draft)",
+  "skills: removed 'computer vision' (company boilerplate only, not asked of the candidate; matches g12 draft)",
+  "skills: removed 'sensor fusion' (company boilerplate only, not asked of the candidate; matches g12 draft)",
+  "skills: removed 'networking' (company boilerplate only, not asked of the candidate; matches g12 draft)",
+  "skills: added 'faa regulations' (quote 'FAA')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

@@ -1,0 +1,152 @@
+{
+ "gid": "g02",
+ "skills": [
+  {
+   "aliases": [
+    "ml"
+   ],
+   "name": "machine learning",
+   "quote": "machine learning"
+  },
+  {
+   "aliases": [
+    "statistical analysis"
+   ],
+   "name": "statistics",
+   "quote": "statistics"
+  },
+  {
+   "aliases": [
+    "ir",
+    "retrieval"
+   ],
+   "name": "information retrieval",
+   "quote": "information retrieval"
+  },
+  {
+   "aliases": [
+    "learning to rank",
+    "search ranking"
+   ],
+   "name": "ranking",
+   "quote": "ranking"
+  },
+  {
+   "aliases": [
+    "recommendation systems",
+    "recommender system",
+    "recommendation"
+   ],
+   "name": "recommender systems",
+   "quote": "recommender systems"
+  },
+  {
+   "aliases": [],
+   "name": "python",
+   "quote": "Python"
+  },
+  {
+   "aliases": [
+    "torch"
+   ],
+   "name": "pytorch",
+   "quote": "PyTorch"
+  },
+  {
+   "aliases": [
+    "tf"
+   ],
+   "name": "tensorflow",
+   "quote": "TensorFlow"
+  },
+  {
+   "aliases": [],
+   "name": "jax",
+   "quote": "JAX"
+  },
+  {
+   "aliases": [
+    "ab testing",
+    "a/b tests"
+   ],
+   "name": "a/b testing",
+   "quote": "A/B testing"
+  },
+  {
+   "aliases": [
+    "nlp"
+   ],
+   "name": "natural language processing",
+   "quote": "NLP"
+  },
+  {
+   "aliases": [],
+   "name": "rust",
+   "quote": "Rust"
+  },
+  {
+   "aliases": [
+    "llm",
+    "llms"
+   ],
+   "name": "large language models",
+   "quote": "LLM"
+  },
+  {
+   "aliases": [
+    "rag"
+   ],
+   "name": "retrieval-augmented generation",
+   "quote": "RAG"
+  },
+  {
+   "aliases": [
+    "search engines",
+    "search technologies"
+   ],
+   "name": "search",
+   "quote": "search"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "Experience with Python and common ML frameworks",
+  "Previous experience (internships, research, or significant projects) working on search, recommendation, or NLP",
+  "Experience with Rust"
+ ],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Strong foundation in machine learning and statistics, with coursework or projects related to information retrieval, ranking, or recommender systems.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with Python and common ML frameworks (e.g. PyTorch, TensorFlow, JAX) through academic, open source, or personal projects.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Familiarity with evaluating model quality using offline metrics and/or A/B testing is a plus, but not required.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Previous experience (internships, research, or significant projects) working on search, recommendation, or NLP is a plus, but not required.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Self-driven and curious, with a strong sense of ownership, willingness to learn, and comfort working in a fast-paced environment",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with Rust will be a plus",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Heading is plain 'Qualifications:' so lines without a modal word are unstated (a reviewer could argue required). 'search' as a skill is borderline (domain of search engineering); 'ranking' kept as the learning-to-rank discipline. London role, no pay given. 12-24 weeks is internship length, not experience.",
+ "document_hash": "146d9efec6302708cc50d0f75cc5f0af59fa88c23bfa7a9f55dfa87a0ec85b52",
+ "reviewed": true,
+ "reviewed_by": "owner"
+}

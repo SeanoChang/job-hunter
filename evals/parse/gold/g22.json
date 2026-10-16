@@ -1,0 +1,128 @@
+{
+ "gid": "g22",
+ "skills": [
+  {
+   "name": "performance management",
+   "aliases": [
+    "employee and performance management"
+   ],
+   "quote": "employee and performance management"
+  },
+  {
+   "name": "process improvement",
+   "aliases": [
+    "process improvements"
+   ],
+   "quote": "process improvement"
+  },
+  {
+   "name": "lean",
+   "aliases": [
+    "lean techniques",
+    "lean process",
+    "lean manufacturing"
+   ],
+   "quote": "lean techniques"
+  },
+  {
+   "name": "kaizen",
+   "aliases": [],
+   "quote": "Kaizen"
+  },
+  {
+   "name": "six sigma",
+   "aliases": [],
+   "quote": "Six Sigma"
+  },
+  {
+   "name": "performance metrics",
+   "aliases": [],
+   "quote": "performance metrics"
+  },
+  {
+   "name": "customer service",
+   "aliases": [],
+   "quote": "customer service"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of employee and performance management experience"
+  },
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of Amazon (blue badge/FTE) experience"
+  },
+  {
+   "min_years": 1,
+   "max_years": null,
+   "quote": "1+ years of performance metrics, process improvement or lean techniques experience"
+  }
+ ],
+ "experience_without_number": [
+  "Experience managing a team of 20+ employees",
+  "Experience with process improvements (Lean process, Kaizen, and/or Six Sigma)",
+  "Industry experience in: retail, F&B, military, manufacturing"
+ ],
+ "pay": [
+  {
+   "min": "72500.00",
+   "max": "90900.00",
+   "currency": "USD",
+   "period": "year",
+   "quote": "USA, CA, Oxnard - 72,500.00 - 90,900.00 USD annually"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "2+ years of employee and performance management experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "Bachelor's degree or equivalent, or 2+ years of Amazon (blue badge/FTE) experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "Work a flexible schedule/shift/work area, including weekends, nights, and/or holidays",
+   "requirement": "required"
+  },
+  {
+   "quote": "1+ years of performance metrics, process improvement or lean techniques experience",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience managing a team of 20+ employees",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with process improvements (Lean process, Kaizen, and/or Six Sigma)",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Excellent customer service, communication, and interpersonal skills",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "A Bachelor’s or Master’s degree in Engineering, Operations, Supply Chain/Logistics, or a related field.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Industry experience in: retail, F&B, military, manufacturing, automotive, biotech, electronics, energy, instrumentation, machinery, defense/aerospace, medical, cosmetics, production or distribution environments.",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "'2+ years of Amazon (blue badge/FTE) experience' is an alternative to a degree; kept as an experience entry. Physical requirements (lift 49 lb, stand 12 hours) are listed under responsibilities, so not qualifications. 'Experience managing a team of 20+ employees' has no years; 20+ is team size.",
+ "document_hash": "cf5f4c03bb6fd8f129ec9fede95881cf3dcbca9423b6a37b1b5a67b558fb574c",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'customer service' (quote 'customer service'), consistent with g19"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

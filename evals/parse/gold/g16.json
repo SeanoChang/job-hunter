@@ -1,0 +1,279 @@
+{
+ "gid": "g16",
+ "skills": [
+  {
+   "name": "offensive security",
+   "aliases": [],
+   "quote": "offensive security"
+  },
+  {
+   "name": "penetration testing",
+   "aliases": [
+    "pentesting",
+    "pentest",
+    "pen testing"
+   ],
+   "quote": "penetration testing"
+  },
+  {
+   "name": "red teaming",
+   "aliases": [
+    "red team",
+    "red team operations"
+   ],
+   "quote": "red team"
+  },
+  {
+   "name": "adversary emulation",
+   "aliases": [],
+   "quote": "adversary emulation"
+  },
+  {
+   "name": "purple teaming",
+   "aliases": [
+    "purple-team simulation",
+    "purple team"
+   ],
+   "quote": "purple-team simulation"
+  },
+  {
+   "name": "reconnaissance",
+   "aliases": [
+    "recon"
+   ],
+   "quote": "reconnaissance"
+  },
+  {
+   "name": "exploit development",
+   "aliases": [],
+   "quote": "exploit development"
+  },
+  {
+   "name": "exploit chaining",
+   "aliases": [],
+   "quote": "exploit chaining"
+  },
+  {
+   "name": "attack path analysis",
+   "aliases": [
+    "attack-path analysis"
+   ],
+   "quote": "attack-path analysis"
+  },
+  {
+   "name": "vulnerability triage",
+   "aliases": [],
+   "quote": "vulnerability triage"
+  },
+  {
+   "name": "network security",
+   "aliases": [
+    "network pentesting",
+    "network penetration testing"
+   ],
+   "quote": "network"
+  },
+  {
+   "name": "application security",
+   "aliases": [
+    "appsec",
+    "web application security"
+   ],
+   "quote": "web/application"
+  },
+  {
+   "name": "cloud security",
+   "aliases": [
+    "cloud pentesting"
+   ],
+   "quote": "cloud"
+  },
+  {
+   "name": "mobile security",
+   "aliases": [
+    "mobile attack surfaces"
+   ],
+   "quote": "mobile attack surfaces"
+  },
+  {
+   "name": "aws",
+   "aliases": [
+    "amazon web services"
+   ],
+   "quote": "AWS"
+  },
+  {
+   "name": "gcp",
+   "aliases": [
+    "google cloud platform",
+    "google cloud"
+   ],
+   "quote": "GCP"
+  },
+  {
+   "name": "azure",
+   "aliases": [
+    "microsoft azure"
+   ],
+   "quote": "Azure"
+  },
+  {
+   "name": "mitre att&ck",
+   "aliases": [
+    "mitre attack",
+    "att&ck"
+   ],
+   "quote": "MITRE ATT&CK"
+  },
+  {
+   "name": "command and control",
+   "aliases": [
+    "c2",
+    "c2 tooling",
+    "c2 frameworks"
+   ],
+   "quote": "C2 tooling"
+  },
+  {
+   "name": "vulnerability management",
+   "aliases": [],
+   "quote": "Vulnerability Management"
+  },
+  {
+   "name": "incident response",
+   "aliases": [
+    "ir"
+   ],
+   "quote": "Incident Response"
+  },
+  {
+   "name": "security operations center",
+   "aliases": [
+    "soc"
+   ],
+   "quote": "SOC"
+  },
+  {
+   "name": "detection engineering",
+   "aliases": [],
+   "quote": "detection engineering"
+  },
+  {
+   "name": "oscp",
+   "aliases": [
+    "offensive security certified professional"
+   ],
+   "quote": "OSCP"
+  },
+  {
+   "name": "osce",
+   "aliases": [
+    "offensive security certified expert"
+   ],
+   "quote": "OSCE"
+  },
+  {
+   "name": "osep",
+   "aliases": [
+    "offensive security experienced penetration tester"
+   ],
+   "quote": "OSEP"
+  },
+  {
+   "name": "gpen",
+   "aliases": [
+    "giac penetration tester"
+   ],
+   "quote": "GPEN"
+  },
+  {
+   "name": "gxpn",
+   "aliases": [
+    "giac exploit researcher and advanced penetration tester"
+   ],
+   "quote": "GXPN"
+  },
+  {
+   "name": "crto",
+   "aliases": [
+    "certified red team operator"
+   ],
+   "quote": "CRTO"
+  },
+  {
+   "name": "artificial intelligence",
+   "aliases": [
+    "ai",
+    "ai-assisted"
+   ],
+   "quote": "AI-assisted"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 8,
+   "max_years": null,
+   "quote": "8+ years in offensive security"
+  },
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years directly managing or leading offensive security teams"
+  }
+ ],
+ "experience_without_number": [
+  "demonstrated hands-on experience in both penetration testing and red team/adversary emulation",
+  "Proven experience designing and implementing AI-led or AI-assisted offensive security programs",
+  "Track record of building programs from the ground up or maturing existing ones",
+  "Experience operating in a highly regulated environment and working with auditors/examiners is a strong plus."
+ ],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "8+ years in offensive security, with demonstrated hands-on experience in both penetration testing and red team/adversary emulation — not just one discipline.",
+   "requirement": "required"
+  },
+  {
+   "quote": "2+ years directly managing or leading offensive security teams, ideally within a regulated industry (financial services, fintech, healthcare, or similar).",
+   "requirement": "required"
+  },
+  {
+   "quote": "Proven experience designing and implementing AI-led or AI-assisted offensive security programs — you can speak concretely to what you built, what tooling/models you used, what scaled and what didn't, and how it changed team output.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Deep technical fluency across network, web/application, cloud (AWS/GCP/Azure), and mobile attack surfaces, plus familiarity with adversary emulation frameworks (e.g., MITRE ATT&CK) and C2 tooling.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Track record of building programs from the ground up or maturing existing ones — process, tooling, metrics, and team structure, not just individual engagements.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Strong written and verbal communication skills; comfort presenting findings and program strategy to engineering leaders, risk teams, and executives.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience operating in a highly regulated environment and working with auditors/examiners is a strong plus.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Relevant certifications (OSCP, OSCE, OSEP, GPEN, GXPN, CRTO, or equivalent demonstrated experience) preferred but not required in lieu of strong hands-on track record.",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "The posting says 'The base pay range for this role is listed below' but no range follows, so pay is empty. 'What You'll Need' treated as a required heading ('need'). Network/cloud/mobile security derive from 'network, web/application, cloud ... and mobile attack surfaces' and 'network, application, cloud, and AI pentests'; quotes for network and cloud are single words, which is weak; reviewer may merge them into penetration testing. Review: certifications added as skills (the brief lists certifications as skills); the draft note that excluded them is removed.",
+ "document_hash": "099bb311747abcda8583630cae797669f8b1ce51f4f85daa7bcf1af2b37fad18",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added certifications 'oscp','osce','osep','gpen','gxpn','crto' (quotes from the certifications line; brief counts certifications as skills)",
+  "skills: 'application security' quote 'Application Security' -> 'web/application' (the qualification, not the partner-team name)",
+  "skills: added 'artificial intelligence' alias 'ai' (quote 'AI-assisted'), per g01",
+  "experience_without_number: removed 'or equivalent demonstrated experience' (alternative to certifications, not an experience ask)"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

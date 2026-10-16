@@ -1,0 +1,120 @@
+{
+ "gid": "g06",
+ "skills": [
+  {
+   "name": "workplace health and safety",
+   "aliases": [
+    "whs",
+    "health and safety",
+    "occupational health and safety",
+    "ehs"
+   ],
+   "quote": "Workplace Health & Safety"
+  },
+  {
+   "name": "risk assessment",
+   "aliases": [
+    "risk assessments"
+   ],
+   "quote": "Risk Assessments"
+  },
+  {
+   "name": "job hazard analysis",
+   "aliases": [
+    "jha",
+    "job hazard analyses"
+   ],
+   "quote": "Job Hazard Analyses"
+  },
+  {
+   "name": "accident prevention",
+   "aliases": [
+    "incident prevention"
+   ],
+   "quote": "accident prevention"
+  },
+  {
+   "name": "accident investigation",
+   "aliases": [
+    "incident investigation"
+   ],
+   "quote": "investigations linked to accidents"
+  },
+  {
+   "name": "safety inspections",
+   "aliases": [
+    "inspections",
+    "safety audits"
+   ],
+   "quote": "planned inspections"
+  },
+  {
+   "name": "data analysis",
+   "aliases": [
+    "accident data analysis"
+   ],
+   "quote": "Analyse accident data"
+  },
+  {
+   "name": "safety training",
+   "aliases": [
+    "training programs"
+   ],
+   "quote": "implement training programs"
+  },
+  {
+   "name": "process improvement",
+   "aliases": [
+    "process improvements"
+   ],
+   "quote": "process improvements"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Speak, write, and read fluently in English, and have the ability to take direction in English",
+   "requirement": "required"
+  },
+  {
+   "quote": "Currently in your penultimate or final year and working towards a university degree in Health & Safety, Engineering or similar discipline",
+   "requirement": "required"
+  },
+  {
+   "quote": "Eligible to complete a full-time internship of 3-6 monthS",
+   "requirement": "required"
+  },
+  {
+   "quote": "Strong problem-solving and analytical skills, with the ability to identify process improvements and innovative solutions.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Excellent communication and teamwork skills, able to collaborate effectively with others.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Demonstrated curiosity, proactivity, and willingness to take on challenges in an ambiguous, fast-paced environment.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "You must have excellent analytical, organizational and interpersonal skills, be an effective communicator, have a high sense of (internal) customer service and be able to work with cross-functional teams including Senior Management.",
+   "requirement": "required"
+  }
+ ],
+ "notes": "'3-6 monthS' is internship length, not experience. 'competitive monthly salary' has no amount, so no pay. 'You must have the right to work in the country of employment' does not decide sponsorship. The preferred section is one bullet with three '•'-separated sentences; split into three entries. The 'A Day in the Life' sentence with 'must' counted as a required qualification. 'accident investigation' is borderline (quote is a duty phrase). Review: added safety inspections, data analysis, safety training and process improvement from the duty and preferred lines; all are borderline practice skills.",
+ "document_hash": "aa324bf82c0a844d17c36667c2e0f297d104f4e9d1f11331cef142ba7af7c6e8",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'safety inspections' (quote 'planned inspections')",
+  "skills: added 'data analysis' (quote 'Analyse accident data')",
+  "skills: added 'safety training' (quote 'implement training programs')",
+  "skills: added 'process improvement' (quote 'process improvements')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

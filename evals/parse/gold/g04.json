@@ -1,0 +1,288 @@
+{
+ "gid": "g04",
+ "skills": [
+  {
+   "aliases": [
+    "asics",
+    "asic design"
+   ],
+   "name": "asic",
+   "quote": "ASIC"
+  },
+  {
+   "aliases": [
+    "fpgas"
+   ],
+   "name": "fpga",
+   "quote": "FPGA"
+  },
+  {
+   "aliases": [
+    "rtl design",
+    "register transfer level"
+   ],
+   "name": "rtl",
+   "quote": "RTL"
+  },
+  {
+   "aliases": [
+    "system verilog",
+    "sv"
+   ],
+   "name": "systemverilog",
+   "quote": "SystemVerilog"
+  },
+  {
+   "aliases": [],
+   "name": "verilog",
+   "quote": "Verilog"
+  },
+  {
+   "aliases": [],
+   "name": "vhdl",
+   "quote": "VHDL"
+  },
+  {
+   "aliases": [],
+   "name": "c",
+   "quote": "C"
+  },
+  {
+   "aliases": [
+    "cpp"
+   ],
+   "name": "c++",
+   "quote": "C++"
+  },
+  {
+   "aliases": [],
+   "name": "python",
+   "quote": "Python"
+  },
+  {
+   "aliases": [
+    "ml"
+   ],
+   "name": "machine learning",
+   "quote": "machine learning"
+  },
+  {
+   "aliases": [
+    "high speed networking",
+    "computer networking"
+   ],
+   "name": "networking",
+   "quote": "networking"
+  },
+  {
+   "aliases": [
+    "hpc"
+   ],
+   "name": "high performance computing",
+   "quote": "high performance computing"
+  },
+  {
+   "aliases": [
+    "real-time acceleration"
+   ],
+   "name": "hardware acceleration",
+   "quote": "real-time acceleration"
+  },
+  {
+   "aliases": [],
+   "name": "lowrisc",
+   "quote": "lowRISC"
+  },
+  {
+   "aliases": [
+    "riscv"
+   ],
+   "name": "risc-v",
+   "quote": "RISC-V"
+  },
+  {
+   "aliases": [],
+   "name": "cocotb",
+   "quote": "CocoTB"
+  },
+  {
+   "aliases": [
+    "gpus"
+   ],
+   "name": "gpu",
+   "quote": "GPU"
+  },
+  {
+   "aliases": [
+    "cpus"
+   ],
+   "name": "cpu",
+   "quote": "CPU"
+  },
+  {
+   "aliases": [
+    "microprocessor"
+   ],
+   "name": "microprocessors",
+   "quote": "microprocessors"
+  },
+  {
+   "aliases": [
+    "linux",
+    "kernel programming"
+   ],
+   "name": "linux kernel",
+   "quote": "Linux kernel"
+  },
+  {
+   "aliases": [
+    "driver programming",
+    "driver development"
+   ],
+   "name": "device drivers",
+   "quote": "driver programming"
+  },
+  {
+   "aliases": [],
+   "name": "robotics",
+   "quote": "Robotics"
+  },
+  {
+   "aliases": [
+    "telecom"
+   ],
+   "name": "telecommunications",
+   "quote": "Telecommunications"
+  },
+  {
+   "aliases": [],
+   "name": "raspberry pi",
+   "quote": "Raspberry Pi"
+  },
+  {
+   "aliases": [],
+   "name": "arduino",
+   "quote": "Arduino"
+  },
+  {
+   "aliases": [
+    "sta"
+   ],
+   "name": "static timing analysis",
+   "quote": "Static timing analysis"
+  },
+  {
+   "aliases": [
+    "pnr",
+    "p&r"
+   ],
+   "name": "place and route",
+   "quote": "place and route"
+  },
+  {
+   "aliases": [],
+   "name": "computer architecture",
+   "quote": "computer architecture"
+  },
+  {
+   "aliases": [
+    "digital logic design"
+   ],
+   "name": "digital design",
+   "quote": "digital design"
+  },
+  {
+   "aliases": [
+    "verification",
+    "dv"
+   ],
+   "name": "design verification",
+   "quote": "design verification"
+  },
+  {
+   "aliases": [
+    "vlsi"
+   ],
+   "name": "vlsi design",
+   "quote": "VLSI design"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "Experience with ASIC, FPGA or other hardware/systems design and development",
+  "Experience with RTL (SystemVerilog/Verilog/VHDL)",
+  "Previous internship experience in hardware or low-level software engineering",
+  "Experience with C, C++, or Python"
+ ],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Undergraduate or Graduate concentration in Electrical Engineering, Computer Science, or related areas",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience with ASIC, FPGA or other hardware/systems design and development",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience with RTL (SystemVerilog/Verilog/VHDL)",
+   "requirement": "required"
+  },
+  {
+   "quote": "Previous internship experience in hardware or low-level software engineering",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience with C, C++, or Python",
+   "requirement": "required"
+  },
+  {
+   "quote": "Passion for solving complex problems and ability to draw upon knowledge and experience from a variety of technical areas to produce extremely high-performance solutions",
+   "requirement": "required"
+  },
+  {
+   "quote": "Reliable and predictable availability",
+   "requirement": "required"
+  },
+  {
+   "quote": "lowRISC or RISC-V",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "CocoTB",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Any programming close to the metal with CPU, GPU, microprocessors, etc.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Linux kernel and driver programming",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Robotics, Telecommunications, or High Speed Networking",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Raspberry Pi or Arduino",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Static timing analysis and/or place and route tools",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Excellent marks in courses such as computer architecture, digital design, design verification, VLSI design",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "'Skills you will need' read as required (the heading says 'need'). 'Other helpful and related experience' read as preferred (helpful = optional). 'INTERNATIONAL STUDENTS are encouraged to apply.' does not say the employer sponsors visas, so sponsorship is undeclared; a reviewer could argue 'yes'. lowRISC is an open-silicon project/organization rather than a tool; kept because it is listed as a desired skill. CPU/GPU/microprocessors and 'hardware acceleration' are borderline hardware skills. Bristol (UK) role, no pay.",
+ "document_hash": "fcb50731f22ad187f2ca887bddcbf3a700ad788211762b002ee5093734ea43d6",
+ "reviewed": true,
+ "reviewed_by": "owner"
+}

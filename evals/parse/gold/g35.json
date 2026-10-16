@@ -1,0 +1,214 @@
+{
+ "gid": "g35",
+ "skills": [
+  {
+   "name": "servicenow",
+   "aliases": [
+    "service now"
+   ],
+   "quote": "ServiceNow"
+  },
+  {
+   "name": "zoom",
+   "aliases": [],
+   "quote": "Zoom"
+  },
+  {
+   "name": "slack",
+   "aliases": [],
+   "quote": "Slack"
+  },
+  {
+   "name": "okta",
+   "aliases": [],
+   "quote": "Okta"
+  },
+  {
+   "name": "confluence",
+   "aliases": [],
+   "quote": "Confluence"
+  },
+  {
+   "name": "jira",
+   "aliases": [],
+   "quote": "JIRA"
+  },
+  {
+   "name": "macos",
+   "aliases": [
+    "mac os",
+    "mac os x",
+    "os x"
+   ],
+   "quote": "Mac OS"
+  },
+  {
+   "name": "office 365",
+   "aliases": [
+    "microsoft 365",
+    "o365",
+    "m365"
+   ],
+   "quote": "Office 365"
+  },
+  {
+   "name": "google workspace",
+   "aliases": [
+    "g suite",
+    "gsuite"
+   ],
+   "quote": "Google Workspace"
+  },
+  {
+   "name": "jamf",
+   "aliases": [],
+   "quote": "Jamf"
+  },
+  {
+   "name": "active directory",
+   "aliases": [
+    "ad"
+   ],
+   "quote": "Active Directory"
+  },
+  {
+   "name": "change control",
+   "aliases": [
+    "change management"
+   ],
+   "quote": "change control"
+  },
+  {
+   "name": "it infrastructure",
+   "aliases": [
+    "information technology infrastructure"
+   ],
+   "quote": "information technology infrastructure"
+  },
+  {
+   "name": "network troubleshooting",
+   "aliases": [
+    "network connectivity"
+   ],
+   "quote": "network connectivity"
+  },
+  {
+   "name": "troubleshooting",
+   "aliases": [
+    "technical troubleshooting"
+   ],
+   "quote": "Troubleshoot"
+  },
+  {
+   "name": "help desk",
+   "aliases": [
+    "it support",
+    "service desk"
+   ],
+   "quote": "help desk"
+  },
+  {
+   "name": "project management",
+   "aliases": [
+    "managing projects"
+   ],
+   "quote": "manage projects"
+  },
+  {
+   "name": "a/v support",
+   "aliases": [
+    "audio/visual",
+    "av support",
+    "video conferencing"
+   ],
+   "quote": "A/V"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 5,
+   "max_years": null,
+   "quote": "5+ years of experience supporting information technology infrastructure"
+  },
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of experience providing executive-level support"
+  }
+ ],
+ "experience_without_number": [
+  "Strong experience with Mac OS systems at the user level",
+  "Experience with change control policies and procedures",
+  "Experience administering small-size corporate server rooms",
+  "Experience with the following applications: Zoom, Slack, Okta, Confluence, JIRA, and ServiceNow"
+ ],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "5+ years of experience supporting information technology infrastructure",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "2+ years of experience providing executive-level support",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Strong experience with Mac OS systems at the user level",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experience with change control policies and procedures",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experience administering small-size corporate server rooms",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experience with the following applications: Zoom, Slack, Okta, Confluence, JIRA, and ServiceNow",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Office 365, Google Workspace, Jamf, and Active Directory administration",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Strong troubleshooting and problem-solving skills, with resiliency in the face of continual change and the ability to handle high demands",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Demonstrated ability to manage and prioritize multiple issues with minimal supervision, plus excellent organizational skills, a teamwork approach, and the ability to act independently to solve problems",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Excellent oral and written communication skills with strong interpersonal skills",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Basic ability to manage projects and an understanding of project methodology",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Ability to work a flexible schedule, including overtime and after-hours work",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "An experimental, AI-native mindset: curiosity about applying emerging AI tools to simplify and improve day-to-day support workflows",
+   "requirement": "unstated"
+  }
+ ],
+ "notes": "Heading 'OUR IDEAL SENIOR SUPPORT ENGINEER WILL HAVE' has no modal word, so all lines are unstated. No pay in the text (it points to the careers site). 'it infrastructure' and 'network troubleshooting' are borderline skills; 'Onsite role' is a work-model line, not a qualification. Review: troubleshooting, help desk, project management and A/V support added as IT-support practices; 'WILL HAVE' is not the 'you have' cue, so lines stay unstated.",
+ "document_hash": "36f51665908a65add6616f9c407252e214fd0dd453f7b73e5a90eef2b95ae831",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'troubleshooting' (quote 'Troubleshoot')",
+  "skills: added 'help desk' (quote 'help desk')",
+  "skills: added 'project management' (quote 'manage projects')",
+  "skills: added 'a/v support' (quote 'A/V')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

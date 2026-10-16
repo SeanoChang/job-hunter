@@ -1,0 +1,101 @@
+{
+ "gid": "g24",
+ "skills": [
+  {
+   "name": "data analysis",
+   "aliases": [
+    "analisi dei dati"
+   ],
+   "quote": "analisi dei dati"
+  },
+  {
+   "name": "microsoft office",
+   "aliases": [
+    "ms office"
+   ],
+   "quote": "MS Office"
+  },
+  {
+   "name": "microsoft word",
+   "aliases": [
+    "word"
+   ],
+   "quote": "Word"
+  },
+  {
+   "name": "microsoft excel",
+   "aliases": [
+    "excel"
+   ],
+   "quote": "Excel"
+  },
+  {
+   "name": "microsoft outlook",
+   "aliases": [
+    "outlook"
+   ],
+   "quote": "Outlook"
+  },
+  {
+   "name": "process improvement",
+   "aliases": [
+    "miglioramento dei processi",
+    "continuous improvement"
+   ],
+   "quote": "migliorare i processi"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "Vasta esperienza nell’analisi dei dati in un contesto professionale",
+  "Esperienza nella gestione degli stakeholder",
+  "Esperienza in un contesto operativo"
+ ],
+ "pay": [
+  {
+   "min": "13.13",
+   "max": "13.13",
+   "currency": "EUR",
+   "period": "hour",
+   "quote": "Alessandria, ITA - 13.13 EUR Hourly"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Conoscenza avanzata dell’italiano, scritto e parlato.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Vasta esperienza nell’analisi dei dati in un contesto professionale e nell’utilizzo di tali indicatori per l’individuazione di problemi.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Buona padronanza del pacchetto MS Office (Word, Excel, Outlook) in contesti di uso professionale.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Esperienza nella gestione degli stakeholder e nella creazione e nel mantenimento di rapporti professionali.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Esperienza in un contesto operativo, ad esempio di tipo logistico, vendita al dettaglio, settore alberghiero o hospitality, o customer service.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Buona padronanza della lingua inglese.",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Italian posting. Spoken languages (Italian, English) not listed as skills since the guide's skill definition does not name natural languages; reviewer may want them. 'Vasta esperienza' (extensive experience) has no number. Stakeholder management treated as soft skill, not a skill. Review: added 'process improvement' from responsibilities (named ops practice). 'customer service' in the preferred bullet names an industry context, so not a skill. Stakeholder management kept out as soft.",
+ "document_hash": "b9e0f913f55fc562b1e546260fb2ad0c9aed08546153928a3d35d4d7e0202e3f",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'process improvement' (quote 'migliorare i processi')",
+  "notes: removed claim about 'contratto di 12 mesi', which is not in the posting"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

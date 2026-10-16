@@ -1,0 +1,96 @@
+{
+ "gid": "g05",
+ "skills": [
+  {
+   "name": "level design",
+   "aliases": [
+    "level designer"
+   ],
+   "quote": "level design"
+  },
+  {
+   "name": "unreal engine",
+   "aliases": [
+    "ue",
+    "unreal"
+   ],
+   "quote": "Unreal Engine"
+  },
+  {
+   "name": "game design",
+   "aliases": [
+    "gameplay design"
+   ],
+   "quote": "gameplay"
+  },
+  {
+   "name": "lighting",
+   "aliases": [
+    "game lighting"
+   ],
+   "quote": "lighting"
+  },
+  {
+   "name": "prop placement",
+   "aliases": [
+    "set dressing"
+   ],
+   "quote": "prop placement"
+  },
+  {
+   "name": "playtesting",
+   "aliases": [
+    "playtests",
+    "playtest"
+   ],
+   "quote": "playtests"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "Unreal Engine experience is required",
+  "Direct involvement with prop placement, lighting, mood/atmosphere and design markup"
+ ],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Unreal Engine experience is required",
+   "requirement": "required"
+  },
+  {
+   "quote": "Direct involvement with prop placement, lighting, mood/atmosphere and design markup",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Passion for games with a wide range of game experiences",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Strong interest in Battle Royale and multiplayer games with an understanding of what makes them work",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Learns quickly, follows guidance, and completes assigned tasks within expected timelines",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "A willingness to learn and grow through challenges. Someone who is open to feedback and guidance, tries different approaches when needed, and uses those experiences to build confidence and develop their skills",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Clear and proactive communication with the immediate team. Someone who asks questions when they need additional guidance, communicates task updates, and knows when to reach out to more experienced teammates for support",
+   "requirement": "unstated"
+  }
+ ],
+ "notes": "'game design' (quote 'gameplay', from the team description 'competitive gameplay and system design') and 'prop placement' are borderline skills. Mood/atmosphere, design markup, modular kits left out as too generic. Fortnite is the employer's own product. The 'legally authorized to work' line does not decide sponsorship, so undeclared. Last two qualification bullets each hold two sentences; kept as one entry per bullet. Review: added playtesting (duty 'Attend playtests'); kept 'game design' though its quote is weak.",
+ "document_hash": "13471668c742837b2563805ee5efd75d30b09b559ef856e500af355990e3e869",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'playtesting' (quote 'playtests')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

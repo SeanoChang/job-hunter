@@ -1,0 +1,162 @@
+{
+ "gid": "g31",
+ "skills": [
+  {
+   "name": "test automation",
+   "aliases": [
+    "automated testing",
+    "automated tests"
+   ],
+   "quote": "tests automatisés"
+  },
+  {
+   "name": "manual testing",
+   "aliases": [
+    "manual tests"
+   ],
+   "quote": "tests manuels"
+  },
+  {
+   "name": "python",
+   "aliases": [],
+   "quote": "Python"
+  },
+  {
+   "name": "pytest",
+   "aliases": [],
+   "quote": "pytest"
+  },
+  {
+   "name": "java",
+   "aliases": [],
+   "quote": "Java"
+  },
+  {
+   "name": "rest api",
+   "aliases": [
+    "restful api",
+    "rest",
+    "restful apis"
+   ],
+   "quote": "Restful API"
+  },
+  {
+   "name": "relational databases",
+   "aliases": [
+    "relational database",
+    "rdbms"
+   ],
+   "quote": "bases de données relationnelles"
+  },
+  {
+   "name": "sql",
+   "aliases": [],
+   "quote": "SQL"
+  },
+  {
+   "name": "elasticsearch",
+   "aliases": [],
+   "quote": "elasticsearch"
+  },
+  {
+   "name": "embedded systems",
+   "aliases": [
+    "embedded system"
+   ],
+   "quote": "systèmes embarqués"
+  },
+  {
+   "name": "payment systems",
+   "aliases": [
+    "psp",
+    "payment service providers",
+    "payments",
+    "services de paiement"
+   ],
+   "quote": "services de paiement"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ années d'expérience en ingénierie en tant que développeur de tests automatisés ou autre expérience pertinente"
+  }
+ ],
+ "experience_without_number": [
+  "Expérience avec Python.",
+  "Expérience avec le framework pytest.",
+  "Expérience avec Java est un atout.",
+  "Expérience avec les services de paiement et PSP est un atout.",
+  "Expérience avec Restful API est un atout.",
+  "Expérience avec les bases de données relationnelles et SQL est un atout.",
+  "Expérience avec elasticsearch est un atout.",
+  "Expérience avec les systèmes embarqués est un atout."
+ ],
+ "pay": [
+  {
+   "min": "72000",
+   "max": "90000",
+   "currency": "CAD",
+   "period": "year",
+   "quote": "CAD $72,000 - CAD 90,000"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "BSc ou MSc en génie informatique, informatique, domaine connexe ou expérience professionnelle pertinente",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "2+ années d'expérience en ingénierie en tant que développeur de tests automatisés ou autre expérience pertinente.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Expérience avec Python.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Expérience avec le framework pytest.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Expérience avec Java est un atout.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Expérience avec les services de paiement et PSP est un atout.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Expérience avec Restful API est un atout.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Expérience avec les bases de données relationnelles et SQL est un atout.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Expérience avec elasticsearch est un atout.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Expérience avec les systèmes embarqués est un atout.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Doit être fluent en anglais parlé et écrit et avoir une compétence de travail en français.",
+   "requirement": "required"
+  }
+ ],
+ "notes": "French posting. Pay period not stated explicitly; 'fourchette de salaire de base' of CAD 72k-90k is clearly annual. Heading 'Expérience:' has no modal word, so lines without 'est un atout'/'Doit' are unstated. 'services de paiement et PSP' (payment service providers) treated as a domain, not a skill. Languages (English/French) not counted as skills. Review: payment services / PSP added as a domain skill, consistent with other keys keeping asked-for domains (g02 'search'); borderline.",
+ "document_hash": "f136fd626a1513b2165e8de65d1891c4659164d62aefbe80b79bcbace7aa407d",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'payment systems' (quote 'services de paiement'), asked for in a preferred bullet"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

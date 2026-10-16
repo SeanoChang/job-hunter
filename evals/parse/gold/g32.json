@@ -1,0 +1,85 @@
+{
+ "gid": "g32",
+ "skills": [
+  {
+   "name": "customer service",
+   "aliases": [
+    "customer support",
+    "atención al cliente",
+    "servicio al cliente"
+   ],
+   "quote": "Servicio al Cliente"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "Experiencia de trabajo con un ordenador"
+ ],
+ "pay": [
+  {
+   "min": "1813900",
+   "max": "1813900",
+   "currency": "COP",
+   "period": "month",
+   "quote": "$1,813,900 COP"
+  }
+ ],
+ "sponsorship": "no",
+ "sponsorship_quote": "Tener derecho a trabajar en Colombia sin restricciones",
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Ser mayor de 18 años.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Tener derecho a trabajar en Colombia sin restricciones",
+   "requirement": "required"
+  },
+  {
+   "quote": "Fuertes habilidades de comunicación en español (fluidez escrita y oral) (Español Nativo)",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experiencia de trabajo con un ordenador",
+   "requirement": "required"
+  },
+  {
+   "quote": "Disponibilidad para trabajar en diferentes turnos de lunes a domingo en el horario de 24 horas.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Necesitarás un espacio de trabajo tranquilo y libre de distracciones (espacio de oficina dedicado con un escritorio y una silla)",
+   "requirement": "required"
+  },
+  {
+   "quote": "Desde el punto de vista técnico, la velocidad mínima de la conexión de banda ancha es de 10 mbs de descarga/3 mbs de subida utilizando una conexión a Internet por cable ethernet (no WIFI).",
+   "requirement": "required"
+  },
+  {
+   "quote": "Trabajador, elocuente y orientado al detalle",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Amabilidad y orientación al cliente en cualquier situación",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Capacidad para aprender rápidamente y aceptar el cambio",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Se siente cómodo realizando múltiples tareas en un entorno de gran energía.",
+   "requirement": "unstated"
+  }
+ ],
+ "notes": "Spanish customer-service posting; no technical skills. 'Salario mensual' gives the monthly period. Age 18+ and 40-hour week are not experience. 'Tener derecho a trabajar en Colombia' is work authorization only, so sponsorship undeclared. The second list ('¿Qué puntos fuertes va a aportar?') has no modal word, so unstated. Review: 'sin restricciones' read as must be authorized without sponsorship, so 'no' (arguable). Customer service counted as the job family's named practice.",
+ "document_hash": "50cdf9285fd620d725fdf5b95ae7ca480a37b078f4816c39848c3d5aa6ec2759",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'customer service' (quote 'Servicio al Cliente'), the core practice of the job family",
+  "sponsorship: undeclared -> no, cue 'derecho a trabajar ... sin restricciones' (unrestricted work authorization required)"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

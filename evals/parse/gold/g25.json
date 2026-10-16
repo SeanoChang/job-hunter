@@ -1,0 +1,133 @@
+{
+ "gid": "g25",
+ "skills": [
+  {
+   "name": "pallet jack",
+   "aliases": [
+    "pallet jacks"
+   ],
+   "quote": "pallet jack"
+  },
+  {
+   "name": "hand truck",
+   "aliases": [
+    "hand trucks"
+   ],
+   "quote": "hand truck"
+  },
+  {
+   "name": "google docs",
+   "aliases": [],
+   "quote": "Google Docs"
+  },
+  {
+   "name": "google sheets",
+   "aliases": [],
+   "quote": "Google Sheets"
+  },
+  {
+   "name": "inventory management",
+   "aliases": [
+    "inventory"
+   ],
+   "quote": "maintaining inventory"
+  },
+  {
+   "name": "food handler certification",
+   "aliases": [
+    "food handling certificate",
+    "food handler card",
+    "food safety certification"
+   ],
+   "quote": "food handling certificate"
+  },
+  {
+   "name": "food preparation",
+   "aliases": [
+    "food prep",
+    "light-prep kitchen"
+   ],
+   "quote": "preparing food"
+  },
+  {
+   "name": "order fulfillment",
+   "aliases": [
+    "fulfilling orders",
+    "order picking"
+   ],
+   "quote": "fulfilling orders"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "You have a proven track record of success in food and beverage, warehouse, and/or retail environments."
+ ],
+ "pay": [
+  {
+   "min": "24.35",
+   "max": "24.35",
+   "currency": "USD",
+   "period": "hour",
+   "quote": "$24.35—$24.35 USD"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "You’re self-motivated, positive, and a team player. You work well with others, and you bring a great attitude to your work each and every day. You have high integrity and are excited to delight customers.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You have a proven track record of success in food and beverage, warehouse, and/or retail environments.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You’re able to be on your feet and move heavy products. You are excited and physically able (with or without accommodation) to lift up to 50 lbs., depending on the needs of the specific site, and can operate a pallet jack and hand truck.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You have the ability and desire to obtain and maintain a food handling certificate. (DoorDash will provide this training)",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You have a high school diploma or GED equivalent.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "A college diploma is even better but not required.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "You are at least 18 years of age.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You're organized and proficient in Google Docs and Google Sheets.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You have flexibility in your schedule. Depending upon the scheduling needs of the hiring site, you can be available for a number of different shifts a week.",
+   "requirement": "unstated"
+  }
+ ],
+ "notes": "Pay period not stated ('Base Pay: $24.35—$24.35 USD'); set to hour because a $24.35 rate for a Newark shift-lead role can only be hourly. Heading 'We’re excited about you because...' has no modal word, so lines are 'unstated'; the diploma bullet was split so 'A college diploma is even better but not required.' is preferred. Pallet jack / hand truck included as equipment skills (borderline). 'Inventory management' inferred from 'maintaining inventory' in the role description (borderline). Age 18 is not experience. Review: bullets that open with 'You have' set to required per the brief's 'you have' cue; 'You're'/'You are' bullets (incl. age 18 and lifting) stay unstated though they are de facto requirements. Added the food-handling certificate, food preparation and order fulfillment (latter two from the role description, borderline). Verify: the four 'You have' bullets reverted to unstated; per the owner's ruling 'you have' under 'We're excited about you because...' is not a required cue.",
+ "document_hash": "18600fe7eceb31b4b7925e29b74e3c3bab4914cc44fe697af08e86fb6fae822f",
+ "reviewed": true,
+ "review_changes": [
+  "qualifications: 'You have a proven track record of success in food ...' unstated -> required, cue 'you have'",
+  "qualifications: 'You have the ability and desire to obtain and main...' unstated -> required, cue 'you have'",
+  "qualifications: 'You have a high school diploma or GED equivalent....' unstated -> required, cue 'you have'",
+  "qualifications: 'You have flexibility in your schedule. Depending u...' unstated -> required, cue 'you have'",
+  "skills: added 'food handler certification' (quote 'food handling certificate')",
+  "skills: added 'food preparation' (quote 'preparing food')",
+  "skills: added 'order fulfillment' (quote 'fulfilling orders')",
+  "verify: qualification 'You have a proven track record of success in food ...' required -> unstated; 'you have' is not a required cue (owner override 1)",
+  "verify: qualification 'You have the ability and desire to obtain and main...' required -> unstated; 'you have' is not a required cue (owner override 1)",
+  "verify: qualification 'You have a high school diploma or GED equivalent....' required -> unstated; 'you have' is not a required cue (owner override 1)",
+  "verify: qualification 'You have flexibility in your schedule. Depending u...' required -> unstated; 'you have' is not a required cue (owner override 1)"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

@@ -1,0 +1,83 @@
+{
+ "gid": "g37",
+ "skills": [
+  {
+   "name": "full stack development",
+   "aliases": [
+    "full stack engineering",
+    "full-stack development",
+    "full stack"
+   ],
+   "quote": "full stack engineering"
+  },
+  {
+   "name": "backend development",
+   "aliases": [
+    "back-end development",
+    "back-end services",
+    "backend"
+   ],
+   "quote": "back-end services"
+  },
+  {
+   "name": "payments",
+   "aliases": [
+    "payment processing",
+    "payments technology",
+    "payment methods"
+   ],
+   "quote": "payments technology"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 5,
+   "max_years": null,
+   "quote": "5+ years of full stack engineering experience"
+  }
+ ],
+ "experience_without_number": [
+  "Experience working across geographies",
+  "Experience building extensible, leveraged software solutions that scale to different kinds of user needs",
+  "Previous experience working in payments and on payments technology",
+  "Previous experience using Stripe products"
+ ],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "5+ years of full stack engineering experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "Strong command of verbal and written English language",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience working across geographies",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience building extensible, leveraged software solutions that scale to different kinds of user needs, with the ability to empathize with users and advocate for exceptional user experiences",
+   "requirement": "required"
+  },
+  {
+   "quote": "Previous experience working in payments and on payments technology",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Previous experience using Stripe products",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Very few named technologies. Stripe products are the employer's own products. 'back-end' skill comes from responsibilities ('Build back-end services'). No pay stated (Brazil role). Review: 'payments' added because the preferred qualification asks for payments-technology experience (same call as g02 'search'); borderline.",
+ "document_hash": "3a86681c87512d8dbbc3dc6102e42d5456a33395bd388f6ffd32e1e589a9e247",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'payments' (quote 'payments technology'), asked for in a preferred qualification"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

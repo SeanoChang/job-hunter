@@ -1,0 +1,151 @@
+{
+ "gid": "g43",
+ "skills": [
+  {
+   "name": "data center engineering",
+   "aliases": [
+    "data center operations",
+    "data centre engineering"
+   ],
+   "quote": "data center engineering"
+  },
+  {
+   "name": "risk management",
+   "aliases": [],
+   "quote": "risk management"
+  },
+  {
+   "name": "preventative maintenance",
+   "aliases": [
+    "preventive maintenance"
+   ],
+   "quote": "preventative maintenance"
+  },
+  {
+   "name": "corrective maintenance",
+   "aliases": [],
+   "quote": "corrective"
+  },
+  {
+   "name": "vendor management",
+   "aliases": [],
+   "quote": "vendor management"
+  },
+  {
+   "name": "facility management",
+   "aliases": [
+    "facilities management"
+   ],
+   "quote": "facility management"
+  },
+  {
+   "name": "rack installation",
+   "aliases": [
+    "rack installs",
+    "rack install"
+   ],
+   "quote": "rack installs"
+  },
+  {
+   "name": "network design",
+   "aliases": [],
+   "quote": "network design"
+  },
+  {
+   "name": "low voltage cabling",
+   "aliases": [
+    "structured cabling",
+    "copper cabling",
+    "fiber cabling"
+   ],
+   "quote": "low voltage (copper/ fiber) cabling"
+  },
+  {
+   "name": "fire/life safety systems",
+   "aliases": [
+    "fire life safety",
+    "fire/life safety"
+   ],
+   "quote": "fire/life safety"
+  },
+  {
+   "aliases": [],
+   "name": "troubleshooting",
+   "quote": "troubleshooting"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of relevant work experience"
+  },
+  {
+   "min_years": 4,
+   "max_years": null,
+   "quote": "4+ years of data center engineering experience"
+  }
+ ],
+ "experience_without_number": [
+  "Experience in relevant work",
+  "Experience in data center engineering"
+ ],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "2+ years of relevant work experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience in relevant work",
+   "requirement": "required"
+  },
+  {
+   "quote": "Can bend or twist the body into unusual positions while working",
+   "requirement": "required"
+  },
+  {
+   "quote": "Can use hands to manipulate small wires and objects",
+   "requirement": "required"
+  },
+  {
+   "quote": "Can walk on job sites in uneven terrain",
+   "requirement": "required"
+  },
+  {
+   "quote": "Can work at heights and from ladders",
+   "requirement": "required"
+  },
+  {
+   "quote": "4+ years of data center engineering experience",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Bachelor's degree in Electrical Engineering, Mechanical Engineering, or a related field",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Knowledge of network design and layout as well as low voltage (copper/ fiber) cabling",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience in data center engineering",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Can perform physical tasks all day without becoming overly tired",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "No pay, no location in posting text. 'Shifts can be up to 12-hours' is schedule, not experience. 'corrective and preventative maintenance' split into two skills; corrective maintenance quote is just 'corrective' since the phrase is shared. fire/life safety and rack installation are borderline skills. Physical-ability lines kept as qualifications per guide (abilities). Review: added 'troubleshooting' (facility and rack-level events). KPI/metric reporting and capacity management left out as generic.",
+ "document_hash": "705030711c5277fc48e668d5a0011324c24844cce516b0c6a7ec0e595b64574d",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'troubleshooting' (quote 'troubleshooting')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

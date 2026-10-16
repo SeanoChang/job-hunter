@@ -1,0 +1,131 @@
+{
+ "gid": "g45",
+ "skills": [
+  {
+   "name": "technical sales",
+   "aliases": [],
+   "quote": "technical sales"
+  },
+  {
+   "name": "cybersecurity",
+   "aliases": [
+    "cyber security",
+    "security"
+   ],
+   "quote": "Cyber Security"
+  },
+  {
+   "name": "computer networking",
+   "aliases": [
+    "networking"
+   ],
+   "quote": "computer networking"
+  },
+  {
+   "name": "cloud computing",
+   "aliases": [
+    "cloud solutions",
+    "cloud"
+   ],
+   "quote": "Cloud Solutions"
+  },
+  {
+   "name": "saas",
+   "aliases": [
+    "software as a service"
+   ],
+   "quote": "SaaS"
+  },
+  {
+   "name": "iaas",
+   "aliases": [
+    "infrastructure as a service"
+   ],
+   "quote": "IaaS"
+  },
+  {
+   "name": "paas",
+   "aliases": [
+    "platform as a service"
+   ],
+   "quote": "PaaS"
+  },
+  {
+   "name": "contract negotiation",
+   "aliases": [
+    "contract negotiations",
+    "negotiation"
+   ],
+   "quote": "contract negotiations"
+  },
+  {
+   "name": "pipeline management",
+   "aliases": [
+    "sales pipeline"
+   ],
+   "quote": "sales pipeline"
+  },
+  {
+   "name": "territory planning",
+   "aliases": [
+    "territory plan",
+    "account planning"
+   ],
+   "quote": "account/territory plan"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 5,
+   "max_years": null,
+   "quote": "Minimum 5 years of direct technical sales experience"
+  }
+ ],
+ "experience_without_number": [
+  "Experience selling solutions related to Cyber Security, Networking, Cloud Solutions, SaaS, IaaS, PaaS is a plus"
+ ],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Bachelor's degree or equivalent experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "Minimum 5 years of direct technical sales experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience selling solutions related to Cyber Security, Networking, Cloud Solutions, SaaS, IaaS, PaaS is a plus",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Mid to advanced understanding of computer networking and “how the internet works”",
+   "requirement": "required"
+  },
+  {
+   "quote": "Aptitude for learning complex technical concepts/terms (technical background in engineering, computer science, or IT strongly desired)",
+   "requirement": "required"
+  },
+  {
+   "quote": "Strong interpersonal communication (verbal and written) and organizational skills",
+   "requirement": "required"
+  },
+  {
+   "quote": "Self-motivated; entrepreneurial spirit",
+   "requirement": "required"
+  },
+  {
+   "quote": "Comfortable working in a fast paced, dynamic environment",
+   "requirement": "required"
+  }
+ ],
+ "notes": "Remote role for Toronto (Canada); no pay stated. 'Bachelor's degree or equivalent experience' has no amount, not listed as experience. The aptitude line is under Requirements but its parenthetical technical background is 'strongly desired' (preferred); labeled required for the line as a whole. Export-control paragraph is conditional, so citizenship false. Review: no changes; draft checked against the posting.",
+ "document_hash": "6323f726b07be5915c3311581316be5d1e1b5cb7a23a8723b9fb93204aa865c4",
+ "reviewed": true,
+ "review_changes": [],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

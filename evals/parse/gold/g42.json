@@ -1,0 +1,241 @@
+{
+ "gid": "g42",
+ "skills": [
+  {
+   "name": "javascript",
+   "aliases": [
+    "js"
+   ],
+   "quote": "JavaScript"
+  },
+  {
+   "name": "typescript",
+   "aliases": [
+    "ts"
+   ],
+   "quote": "TypeScript"
+  },
+  {
+   "name": "http",
+   "aliases": [],
+   "quote": "HTTP"
+  },
+  {
+   "name": "api",
+   "aliases": [
+    "apis"
+   ],
+   "quote": "APIs"
+  },
+  {
+   "name": "git",
+   "aliases": [],
+   "quote": "Git"
+  },
+  {
+   "name": "full-stack development",
+   "aliases": [
+    "full stack",
+    "full-stack"
+   ],
+   "quote": "full-stack"
+  },
+  {
+   "name": "web development",
+   "aliases": [
+    "web application",
+    "web app"
+   ],
+   "quote": "web application"
+  },
+  {
+   "name": "serverless computing",
+   "aliases": [
+    "serverless"
+   ],
+   "quote": "serverless"
+  },
+  {
+   "name": "edge computing",
+   "aliases": [
+    "edge"
+   ],
+   "quote": "edge computing"
+  },
+  {
+   "name": "react",
+   "aliases": [
+    "react.js",
+    "reactjs"
+   ],
+   "quote": "React"
+  },
+  {
+   "name": "vue",
+   "aliases": [
+    "vue.js",
+    "vuejs"
+   ],
+   "quote": "Vue"
+  },
+  {
+   "name": "svelte",
+   "aliases": [],
+   "quote": "Svelte"
+  },
+  {
+   "name": "model context protocol",
+   "aliases": [
+    "mcp",
+    "mcps"
+   ],
+   "quote": "MCPs"
+  },
+  {
+   "name": "data modeling",
+   "aliases": [],
+   "quote": "data modeling"
+  },
+  {
+   "name": "system design",
+   "aliases": [
+    "systems design"
+   ],
+   "quote": "systems design"
+  },
+  {
+   "name": "cursor",
+   "aliases": [],
+   "quote": "Cursor"
+  },
+  {
+   "name": "windsurf",
+   "aliases": [],
+   "quote": "Windsurf"
+  },
+  {
+   "name": "opencode",
+   "aliases": [],
+   "quote": "OpenCode"
+  },
+  {
+   "name": "design systems",
+   "aliases": [
+    "design system"
+   ],
+   "quote": "design systems"
+  },
+  {
+   "name": "figma",
+   "aliases": [],
+   "quote": "Figma"
+  },
+  {
+   "name": "interaction design",
+   "aliases": [],
+   "quote": "interaction design"
+  },
+  {
+   "name": "ai agents",
+   "aliases": [
+    "ai agent",
+    "agents"
+   ],
+   "quote": "AI agents"
+  },
+  {
+   "aliases": [
+    "code reviews",
+    "reviewing code"
+   ],
+   "name": "code review",
+   "quote": "review code"
+  },
+  {
+   "aliases": [
+    "sprints",
+    "sprint-based development",
+    "scrum"
+   ],
+   "name": "agile",
+   "quote": "sprint-based team"
+  },
+  {
+   "aliases": [
+    "ai-assisted coding",
+    "ai coding",
+    "ai coding tools"
+   ],
+   "name": "ai-assisted development",
+   "quote": "AI-assisted development tools"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "Experience with shared codebases (Git, meaningful commits).",
+  "Experience with a modern front-end framework (React, Vue, Svelte, etc.)",
+  "Experience using AI-assisted development tools (Cursor, Windsurf, OpenCode).",
+  "Prior sprint-based team experience.",
+  "experience with design systems, Figma, or strong interaction design sense."
+ ],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Pursuing CS, Software Engineering, or related degree (or equivalent experience).",
+   "requirement": "required"
+  },
+  {
+   "quote": "Ability to build and demonstrate a working web application.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Proficient in JavaScript/TypeScript and comfortable with one back-end language/framework.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Solid understanding of end-to-end web app functionality (HTTP, APIs, data persistence, deployment).",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience with shared codebases (Git, meaningful commits).",
+   "requirement": "required"
+  },
+  {
+   "quote": "Strong fundamentals and fast ramp-up ability are essential.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Familiarity with serverless/edge computing.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with a modern front-end framework (React, Vue, Svelte, etc.) and/or MCPs/APIs, data modeling, or systems design (for back-end seat).",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience using AI-assisted development tools (Cursor, Windsurf, OpenCode).",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Prior sprint-based team experience.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "For UI seat: experience with design systems, Figma, or strong interaction design sense.",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Internship Duration 12 weeks is not experience. Export-control paragraph is conditional ('may require access ... any offer of employment may be conditioned'), so citizenship_required false and sponsorship undeclared (export license sponsorship is not visa sponsorship). 'Strong fundamentals and fast ramp-up ability are essential.' sits in About the Role, not a qualification section; included as required because of 'essential' - reviewer may drop it. 'serverless/edge computing' split into two skills. 'AI agents' and 'web development' are borderline disciplines. Review: added code review, agile (sprint-based work, also a preferred qualification) and AI-assisted development (a named tool category in responsibilities and preferred quals, cf. g01 'ai coding').",
+ "document_hash": "ab9b90a8adb00c7132fd520fb1ed3ca02af2890715f6f650f63e0a9c5492853d",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'code review' (quote 'review code')",
+  "skills: added 'agile' (quote 'sprint-based team')",
+  "skills: added 'ai-assisted development' (quote 'AI-assisted development tools')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

@@ -1,0 +1,335 @@
+{
+ "gid": "g11",
+ "skills": [
+  {
+   "name": "materials testing",
+   "aliases": [
+    "material testing"
+   ],
+   "quote": "materials testing"
+  },
+  {
+   "name": "mechanical testing",
+   "aliases": [],
+   "quote": "mechanical testing"
+  },
+  {
+   "name": "tensile testing",
+   "aliases": [
+    "tensile"
+   ],
+   "quote": "tensile"
+  },
+  {
+   "name": "fatigue testing",
+   "aliases": [
+    "fatigue"
+   ],
+   "quote": "fatigue"
+  },
+  {
+   "name": "compression testing",
+   "aliases": [
+    "compression"
+   ],
+   "quote": "compression"
+  },
+  {
+   "name": "thermal testing",
+   "aliases": [],
+   "quote": "thermal testing"
+  },
+  {
+   "name": "materials characterization",
+   "aliases": [
+    "characterization"
+   ],
+   "quote": "characterization instruments"
+  },
+  {
+   "name": "thermogravimetric analysis",
+   "aliases": [
+    "tga"
+   ],
+   "quote": "TGA"
+  },
+  {
+   "name": "thermomechanical analysis",
+   "aliases": [
+    "tma"
+   ],
+   "quote": "TMA"
+  },
+  {
+   "name": "dynamic mechanical analysis",
+   "aliases": [
+    "dma"
+   ],
+   "quote": "DMA"
+  },
+  {
+   "name": "differential scanning calorimetry",
+   "aliases": [
+    "dsc"
+   ],
+   "quote": "DSC"
+  },
+  {
+   "name": "simultaneous thermal analysis",
+   "aliases": [
+    "sdt"
+   ],
+   "quote": "SDT"
+  },
+  {
+   "name": "fourier transform infrared spectroscopy",
+   "aliases": [
+    "ftir"
+   ],
+   "quote": "FTIR"
+  },
+  {
+   "name": "scanning electron microscopy",
+   "aliases": [
+    "sem"
+   ],
+   "quote": "SEM"
+  },
+  {
+   "name": "calibration",
+   "aliases": [],
+   "quote": "calibration"
+  },
+  {
+   "name": "failure analysis",
+   "aliases": [
+    "failure investigation",
+    "failure investigations"
+   ],
+   "quote": "failure investigations"
+  },
+  {
+   "name": "5s",
+   "aliases": [
+    "5s principles"
+   ],
+   "quote": "5S"
+  },
+  {
+   "name": "astm standards",
+   "aliases": [
+    "astm"
+   ],
+   "quote": "ASTM standards"
+  },
+  {
+   "name": "instron",
+   "aliases": [],
+   "quote": "Instron"
+  },
+  {
+   "name": "mts",
+   "aliases": [],
+   "quote": "MTS"
+  },
+  {
+   "name": "microsoft office",
+   "aliases": [
+    "microsoft office suite",
+    "ms office"
+   ],
+   "quote": "Microsoft Office suite"
+  },
+  {
+   "name": "excel",
+   "aliases": [
+    "microsoft excel"
+   ],
+   "quote": "Excel"
+  },
+  {
+   "name": "word",
+   "aliases": [
+    "microsoft word"
+   ],
+   "quote": "Word"
+  },
+  {
+   "name": "powerpoint",
+   "aliases": [
+    "microsoft powerpoint"
+   ],
+   "quote": "PowerPoint"
+  },
+  {
+   "name": "outlook",
+   "aliases": [
+    "microsoft outlook"
+   ],
+   "quote": "Outlook"
+  },
+  {
+   "name": "jira",
+   "aliases": [
+    "atlassian jira"
+   ],
+   "quote": "Atlassian JIRA"
+  },
+  {
+   "name": "lab safety",
+   "aliases": [
+    "laboratory safety"
+   ],
+   "quote": "lab safety"
+  },
+  {
+   "name": "hand tools",
+   "aliases": [],
+   "quote": "hand tools"
+  },
+  {
+   "name": "power tools",
+   "aliases": [],
+   "quote": "power tools"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 1,
+   "max_years": null,
+   "quote": "1+ years of hands-on materials testing experience in a laboratory setting"
+  }
+ ],
+ "experience_without_number": [
+  "Hands-on lab experience is required.",
+  "Experience with thermal instruments (TGA, DMA, DSC, etc.)",
+  "Experience with mechanical test frames (Instron, MTS, etc.)",
+  "experience working on a cross-functional team",
+  "Experience setting up and running tests and experiments",
+  "experience with Microsoft Office suite (Excel, Word, PowerPoint, Outlook), Atlassian JIRA, and work order systems",
+  "Experience using various types of hand tools and/or power tools"
+ ],
+ "pay": [
+  {
+   "min": "26.00",
+   "max": "32.00",
+   "currency": "USD",
+   "period": "hour",
+   "quote": "Materials R&D Tech/Level 1: $26.00 - $32.00/hour"
+  },
+  {
+   "min": "30.00",
+   "max": "38.00",
+   "currency": "USD",
+   "period": "hour",
+   "quote": "Materials R&D Tech/Level 2: $30.00 - $38.00/hour"
+  },
+  {
+   "min": "35.00",
+   "max": "44.00",
+   "currency": "USD",
+   "period": "hour",
+   "quote": "Materials R&D Tech/Level 3: $35.00 - $44.00/hour"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": true,
+ "citizenship_quote": "To conform to U.S. Government export regulations, applicant must be a (i) U.S. citizen or national, (ii) U.S. lawful, permanent resident (aka green card holder), (iii) Refugee under 8 U.S.C. § 1157, or (iv) Asylee under 8 U.S.C. § 1158, or be eligible to obtain the required authorizations from the U.S. Department of State.",
+ "qualifications": [
+  {
+   "quote": "A basic understanding of material science fundamentals is preferred, though not required.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Hands-on lab experience is required.",
+   "requirement": "required"
+  },
+  {
+   "quote": "The ideal candidate is highly skilled in setting up, operating, maintaining, and troubleshooting laboratory equipment.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "High school diploma or equivalency certificate",
+   "requirement": "required"
+  },
+  {
+   "quote": "1+ years of hands-on materials testing experience in a laboratory setting",
+   "requirement": "required"
+  },
+  {
+   "quote": "Knowledge of safe work practices in a lab environment with solvents, acids/bases, thermal protection systems, polymers, etc.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with thermal instruments (TGA, DMA, DSC, etc.)",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with mechanical test frames (Instron, MTS, etc.)",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Understanding of basic materials science fundamentals",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Positive attitude and experience working on a cross-functional team",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience setting up and running tests and experiments",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Maintaining rigorous attention to detail when executing test instructions",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Strong computer skills including experience with Microsoft Office suite (Excel, Word, PowerPoint, Outlook), Atlassian JIRA, and work order systems",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Strong interpersonal and verbal communication skills to work closely with engineering group",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Ability to read and understand test specifications",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Strong organizational skills to keep work area tidy and organize workflow",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Creative approach to problem solving, with willingness to learn and try new things",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience using various types of hand tools and/or power tools",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Able to work off-shifts and available for overtime and weekends if needed",
+   "requirement": "required"
+  },
+  {
+   "quote": "Able to wear appropriate PPE for lab and machine shop environment",
+   "requirement": "required"
+  },
+  {
+   "quote": "Able to lift a minimum of 50 lbs. unassisted.",
+   "requirement": "required"
+  }
+ ],
+ "notes": "ITAR line requires U.S.-person status (citizen/national, LPR, refugee, asylee) with an escape clause for those eligible to obtain State Department authorization; labeled citizenship_required=true because it is a stated, unconditional applicant requirement, but the escape clause makes this debatable. Three pay ranges are per level (Level 1-3), all hourly. 'material science fundamentals' treated as an academic field, not a skill. Instron and MTS are test-frame equipment brands; kept as hardware/tool skills, reviewer may drop them as companies. Tensile/fatigue/compression testing extracted from a parenthetical list under 'mechanical testing'; SDT read as simultaneous thermal analysis (TA Instruments SDT). Review: ITAR line removed from qualifications to match the owner's g03 call (it still drives citizenship). Added lab safety, hand tools, power tools.",
+ "document_hash": "d683e40d6e9d9d9424b7b6475ae7ffe2b5293841858b963e00014297e9d76408",
+ "reviewed": true,
+ "review_changes": [
+  "qualifications: removed ITAR line (work-eligibility condition, not a qualification; matches owner g03)",
+  "skills: added 'lab safety' (quote 'lab safety')",
+  "skills: added 'hand tools' (quote 'hand tools')",
+  "skills: added 'power tools' (quote 'power tools')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

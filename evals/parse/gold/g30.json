@@ -1,0 +1,240 @@
+{
+ "gid": "g30",
+ "skills": [
+  {
+   "name": "quality engineering",
+   "aliases": [
+    "field quality",
+    "ingénierie de la qualité"
+   ],
+   "quote": "ingénierie de la qualité"
+  },
+  {
+   "name": "failure analysis",
+   "aliases": [
+    "analyse de défaillance",
+    "analyses de défaillance"
+   ],
+   "quote": "analyses de défaillance"
+  },
+  {
+   "name": "root cause analysis",
+   "aliases": [
+    "rca",
+    "analyse des causes profondes"
+   ],
+   "quote": "l'analyse des causes profondes"
+  },
+  {
+   "name": "reliability engineering",
+   "aliases": [
+    "reliability",
+    "fiabilité"
+   ],
+   "quote": "fiabilité"
+  },
+  {
+   "name": "electrical troubleshooting",
+   "aliases": [
+    "dépannage électrique"
+   ],
+   "quote": "dépannage électrique"
+  },
+  {
+   "name": "electrical testing",
+   "aliases": [
+    "essais électriques"
+   ],
+   "quote": "essais électriques"
+  },
+  {
+   "name": "multimeter",
+   "aliases": [
+    "multimètre"
+   ],
+   "quote": "multimètre"
+  },
+  {
+   "name": "5 whys",
+   "aliases": [
+    "five whys",
+    "5 pourquoi"
+   ],
+   "quote": "5 pourquoi"
+  },
+  {
+   "name": "ishikawa diagram",
+   "aliases": [
+    "fishbone diagram",
+    "diagramme d'ishikawa"
+   ],
+   "quote": "diagramme d'Ishikawa"
+  },
+  {
+   "name": "8d",
+   "aliases": [
+    "8d problem solving",
+    "eight disciplines"
+   ],
+   "quote": "8D"
+  },
+  {
+   "name": "fmea",
+   "aliases": [
+    "amdec",
+    "failure mode and effects analysis"
+   ],
+   "quote": "AMDEC"
+  },
+  {
+   "name": "sql",
+   "aliases": [],
+   "quote": "SQL"
+  },
+  {
+   "name": "python",
+   "aliases": [],
+   "quote": "Python"
+  },
+  {
+   "name": "mode",
+   "aliases": [
+    "mode analytics"
+   ],
+   "quote": "Mode"
+  },
+  {
+   "name": "hex",
+   "aliases": [],
+   "quote": "Hex"
+  },
+  {
+   "name": "tableau",
+   "aliases": [],
+   "quote": "Tableau"
+  },
+  {
+   "name": "power bi",
+   "aliases": [
+    "powerbi"
+   ],
+   "quote": "Power BI"
+  },
+  {
+   "name": "jira",
+   "aliases": [],
+   "quote": "Jira"
+  },
+  {
+   "name": "wiring diagrams",
+   "aliases": [
+    "schémas de câblage",
+    "wiring schematics"
+   ],
+   "quote": "schémas de câblage"
+  },
+  {
+   "name": "dashboards",
+   "aliases": [
+    "tableaux de bord"
+   ],
+   "quote": "tableaux de bord"
+  },
+  {
+   "name": "data analysis",
+   "aliases": [
+    "analyse de données",
+    "large datasets"
+   ],
+   "quote": "grands ensembles de données"
+  },
+  {
+   "name": "corrective action",
+   "aliases": [
+    "capa",
+    "mesures correctives",
+    "corrective and preventive action"
+   ],
+   "quote": "mesures correctives"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": null,
+   "max_years": 2,
+   "quote": "Les personnes à la maîtrise ayant travaillé entre leurs deux programmes doivent cumuler moins de 2 ans d'expérience à temps plein."
+  }
+ ],
+ "experience_without_number": [
+  "Un stage ou un stage coopératif antérieur en qualité, en fiabilité, en essais ou en analyse de défaillance",
+  "une expérience avec Mode, Hex, Tableau ou Power BI",
+  "Une expérience avec les vélos électriques, les batteries, l'automobile ou d'autres produits électromécaniques"
+ ],
+ "pay": [
+  {
+   "min": "34",
+   "max": "36",
+   "currency": "CAD",
+   "period": "hour",
+   "quote": "34 $ à 36 $/heure CAD"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Être inscrit ou inscrite à un programme de **baccalauréat** ou de **maîtrise** en génie mécanique, électrique, mécatronique ou industriel, ou dans un domaine connexe, dans une **université canadienne, avec une fin d'études prévue entre décembre 2027 et l'été 2028 (obligatoire)**.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Les personnes à la maîtrise ayant travaillé entre leurs deux programmes doivent cumuler moins de 2 ans d'expérience à temps plein.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Maîtrise professionnelle du **français et de l'anglais**, à l'écrit comme à l'oral (obligatoire)",
+   "requirement": "required"
+  },
+  {
+   "quote": "Aisance à manipuler du matériel électromécanique, notamment le démontage, l'inspection et le dépannage électrique de base avec des outils comme un multimètre",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Solides compétences analytiques et aisance à travailler avec de grands ensembles de données imparfaits pour en tirer des conclusions claires",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Connaissance des méthodes structurées de résolution de problèmes (5 pourquoi, diagramme d'Ishikawa, 8D, AMDEC)",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Curiosité, souci du détail et communication écrite claire",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Un stage ou un stage coopératif antérieur en qualité, en fiabilité, en essais ou en analyse de défaillance constitue un atout",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "La connaissance de SQL ou de Python, ainsi qu'une expérience avec Mode, Hex, Tableau ou Power BI, constituent un atout",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "La connaissance de Jira ou d'outils de gestion de billets similaires constitue un atout",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Une expérience avec les vélos électriques, les batteries, l'automobile ou d'autres produits électromécaniques, ou la lecture de schémas de câblage, constitue un atout",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "French internship posting (summer 2027). Experience entry is a cap, not a floor: master's students who worked between programmes 'doivent cumuler moins de 2 ans' (must have under 2 years) full-time experience; recorded as max 2, min null. Reviewer may prefer to drop it since it applies only to a subgroup. Enrollment at a Canadian university is required, but that is not citizenship. First qualification quote keeps the source's ** bold markers. 'Dashboards' borderline (from responsibilities). Spoken languages not listed as skills. Review: kept the under-2-years cap as max 2 / min null (unsure: it is an eligibility ceiling for a subgroup, not a floor). Added data analysis and corrective action.",
+ "document_hash": "d21ac7bfe7aac5721c5c533e22e5180cbd2592af16d7af035804ca3a40d0802a",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'data analysis' (quote 'grands ensembles de données')",
+  "skills: added 'corrective action' (quote 'mesures correctives')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

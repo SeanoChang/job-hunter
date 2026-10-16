@@ -1,0 +1,131 @@
+{
+ "gid": "g38",
+ "skills": [
+  {
+   "name": "full stack development",
+   "aliases": [
+    "full stack",
+    "full-stack development",
+    "full stack software development"
+   ],
+   "quote": "full stack"
+  },
+  {
+   "name": "distributed systems",
+   "aliases": [
+    "distributed system"
+   ],
+   "quote": "distributed systems"
+  },
+  {
+   "name": "design patterns",
+   "aliases": [
+    "design pattern"
+   ],
+   "quote": "design patterns"
+  },
+  {
+   "name": "software development life cycle",
+   "aliases": [
+    "sdlc",
+    "software development lifecycle"
+   ],
+   "quote": "software development life cycle"
+  },
+  {
+   "name": "code review",
+   "aliases": [
+    "code reviews"
+   ],
+   "quote": "code reviews"
+  },
+  {
+   "name": "source control",
+   "aliases": [
+    "source control management",
+    "version control",
+    "scm"
+   ],
+   "quote": "source control management"
+  },
+  {
+   "name": "software architecture",
+   "aliases": [
+    "system design",
+    "architecture"
+   ],
+   "quote": "architecture"
+  },
+  {
+   "name": "performance optimization",
+   "aliases": [
+    "latency optimization",
+    "performance tuning"
+   ],
+   "quote": "optimize system performance"
+  },
+  {
+   "name": "software testing",
+   "aliases": [
+    "testing",
+    "testability"
+   ],
+   "quote": "testing"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 3,
+   "max_years": null,
+   "quote": "3+ years of non-internship professional software development experience"
+  },
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of non-internship design or architecture (design patterns, reliability and scaling) of new and existing systems experience"
+  },
+  {
+   "min_years": 3,
+   "max_years": null,
+   "quote": "3+ years of full software development life cycle, including coding standards, code reviews, source control management, build processes, testing, and operations experience"
+  }
+ ],
+ "experience_without_number": [
+  "Experience programming with at least one software programming language"
+ ],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "3+ years of non-internship professional software development experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "2+ years of non-internship design or architecture (design patterns, reliability and scaling) of new and existing systems experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience programming with at least one software programming language",
+   "requirement": "required"
+  },
+  {
+   "quote": "3+ years of full software development life cycle, including coding standards, code reviews, source control management, build processes, testing, and operations experience",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Bachelor's degree in computer science or equivalent",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "No named language or framework. 'software architecture' quoted from 'design or architecture' is borderline. 'build processes' left out as too generic. No pay and no location stated. Intro prose ('excellent technical design, problem solving...') not counted as qualification lines. Review: 'software testing' (listed in the SDLC preferred qualification) and 'performance optimization' (responsibility) added as named practices.",
+ "document_hash": "c30fa8e1f2a42e50b28448e829c46809ec70be4183b4d7b57f11eca518230f99",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'performance optimization' (quote 'optimize system performance')",
+  "skills: added 'software testing' (quote 'testing')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

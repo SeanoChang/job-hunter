@@ -1,0 +1,181 @@
+{
+ "gid": "g47",
+ "skills": [
+  {
+   "name": "enterprise sales",
+   "aliases": [
+    "b2b sales",
+    "b2b enterprise sales"
+   ],
+   "quote": "B2B enterprise"
+  },
+  {
+   "name": "enterprise architecture",
+   "aliases": [],
+   "quote": "enterprise architecture"
+  },
+  {
+   "name": "pipeline management",
+   "aliases": [
+    "sales pipeline management"
+   ],
+   "quote": "pipeline management"
+  },
+  {
+   "name": "sales forecasting",
+   "aliases": [
+    "forecasting"
+   ],
+   "quote": "forecasting"
+  },
+  {
+   "name": "salesforce",
+   "aliases": [],
+   "quote": "Salesforce"
+  },
+  {
+   "name": "tableau",
+   "aliases": [],
+   "quote": "Tableau"
+  },
+  {
+   "name": "google workspace",
+   "aliases": [
+    "g suite",
+    "g-suite",
+    "gsuite"
+   ],
+   "quote": "G-suite"
+  },
+  {
+   "name": "microsoft office",
+   "aliases": [
+    "msft suite",
+    "microsoft 365",
+    "ms office"
+   ],
+   "quote": "MSFT suite"
+  },
+  {
+   "name": "meddpicc",
+   "aliases": [
+    "meddic"
+   ],
+   "quote": "MEDDPICC"
+  },
+  {
+   "aliases": [
+    "territory plan",
+    "account planning",
+    "account plans"
+   ],
+   "name": "territory planning",
+   "quote": "territory and account plans"
+  },
+  {
+   "aliases": [
+    "contract negotiation",
+    "negotiations"
+   ],
+   "name": "negotiation",
+   "quote": "negotiation"
+  },
+  {
+   "aliases": [
+    "bi"
+   ],
+   "name": "business intelligence",
+   "quote": "business intelligence"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 10,
+   "max_years": null,
+   "quote": "10+ years of expert-level experience selling complex, multi-million dollar technology solutions in a B2B enterprise model"
+  }
+ ],
+ "experience_without_number": [
+  "extensive experience engaging directly and influencing CIOs, CISOs, and CTOs"
+ ],
+ "pay": [
+  {
+   "min": "294000",
+   "max": "380000",
+   "currency": "USD",
+   "period": "year",
+   "quote": "For Illinois based hires: Estimated annual salary of $294,000 - $380,000"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "10+ years of expert-level experience selling complex, multi-million dollar technology solutions in a B2B enterprise model, with an irrefutable track record of consistently exceeding quota and closing transformative platform deals.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Unparalleled in-depth knowledge of Cloudflare's entire product suite and the broader security landscape, coupled with the ability to educate both customers and partners at an expert level.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Mastery in understanding Customer Enterprise Architecture (Business, Data, Applications, Technology) and adept at mapping Cloudflare solutions to complex business models and modern cloud operating environments.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Proven ability to apply and manage executive sponsorship programs, with extensive experience engaging directly and influencing CIOs, CISOs, and CTOs.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Demonstrated success in leading and orchestrating virtual teams comprising VPs and SVPs to manage and close the most strategic customer opportunities.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Recognized authority on digital transformation, with a deep understanding of market trends and the ability to strategically position Cloudflare as a critical partner in driving customer innovation.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Exceptional strategic communication, negotiation, and presentation skills, capable of delivering impactful messaging to the highest levels of customer and internal leadership.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "A visionary leader who consistently makes decisions for the long-term benefit of Cloudflare, even if it means trading off short-term gains.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Proven ability to define team goals and metrics, drive cross-departmental efficiency, and proactively address roadblocks for optimal results.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "A humble yet assertive leader who consistently challenges the status quo and drives positive, innovative change across the organization.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Expert-level proficiency in advanced sales and business intelligence platforms (e.g., Salesforce, Tableau, G-suite, MSFT suite, MEDDPICC, etc.).",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Bachelor's degree required",
+   "requirement": "required"
+  },
+  {
+   "quote": "with an MBA or advanced technical degree highly preferred.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Ability to travel extensively as required to engage with key customers, executive leadership, and internal teams.",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Heading 'Desirable Skills, Knowledge, and Experience' read as optional, so lines are preferred except explicit 'Bachelor's degree required' (split from 'MBA ... highly preferred'). 'executive sponsorship programs' is a sales practice, not visa sponsorship. Export-control paragraph is conditional, so citizenship false. Negotiation/communication treated as soft skills; digital transformation not counted as a skill. Pay is for Illinois hires. Review: added negotiation as a sales-practice skill to match g44 ('contract negotiation'), plus territory planning and business intelligence.",
+ "document_hash": "89f58abe6fd6f1c28ad53a456e369032ba7281d248a3ecb30ea2573f09001f0b",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'territory planning' (quote 'territory and account plans')",
+  "skills: added 'negotiation' (quote 'negotiation')",
+  "skills: added 'business intelligence' (quote 'business intelligence')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

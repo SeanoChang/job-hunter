@@ -1,0 +1,173 @@
+{
+ "gid": "g21",
+ "skills": [
+  {
+   "name": "workforce management",
+   "aliases": [
+    "wfm"
+   ],
+   "quote": "WFM"
+  },
+  {
+   "name": "capacity planning",
+   "aliases": [],
+   "quote": "capacity planning"
+  },
+  {
+   "name": "forecasting",
+   "aliases": [
+    "demand forecasting"
+   ],
+   "quote": "Medium and short-term forecasting"
+  },
+  {
+   "name": "workforce planning",
+   "aliases": [
+    "contact center workforce planning"
+   ],
+   "quote": "contact center workforce planning"
+  },
+  {
+   "name": "data analysis",
+   "aliases": [],
+   "quote": "Data analysis"
+  },
+  {
+   "name": "data mining",
+   "aliases": [],
+   "quote": "data mining"
+  },
+  {
+   "name": "business intelligence",
+   "aliases": [
+    "bi"
+   ],
+   "quote": "business intelligence"
+  },
+  {
+   "name": "data visualization",
+   "aliases": [],
+   "quote": "data visualization"
+  },
+  {
+   "name": "microsoft excel",
+   "aliases": [
+    "excel",
+    "ms excel"
+   ],
+   "quote": "MS Excel"
+  },
+  {
+   "name": "microsoft powerpoint",
+   "aliases": [
+    "powerpoint",
+    "power point"
+   ],
+   "quote": "Power Point"
+  },
+  {
+   "name": "shrinkage planning",
+   "aliases": [
+    "shrinkage"
+   ],
+   "quote": "Shrinkage planning"
+  },
+  {
+   "name": "process improvement",
+   "aliases": [
+    "continuous improvement"
+   ],
+   "quote": "Process improvement"
+  },
+  {
+   "name": "roster planning",
+   "aliases": [
+    "scheduling",
+    "workforce scheduling"
+   ],
+   "quote": "roster planning"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "Experience in capacity planning within/outside contact center environment",
+  "Experience in contact center workforce planning OR other relatable supply and demand forecasting OR contact center manager experience"
+ ],
+ "pay": [],
+ "sponsorship": "yes",
+ "sponsorship_quote": "Visa & relocation will be provided.",
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Experience in capacity planning within/outside contact center environment",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Analytical Ability & Problem Solving Is able to visualize, articulate, conceptualize, or solve both complex and uncomplicated problems using the data available.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Data analysis Use analytical and logical reasoning to examine the data available, including data mining, business intelligence, and data visualization.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Data driven strategy Creates and executes strategy based on data with focus on what is driving our business and defines he tactical elements of the strategy.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Decision making ability Set a course of action purposely chosen from different alternatives to achieve company objectives.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Effective communication (Verbal and written) Delivers, receives, and interprets ideas and information, presents information appropriately to a diverse range of audiences, and influences partner decisions Excel/Power Point Skills",
+   "requirement": "required"
+  },
+  {
+   "quote": "Presentation Clearly conveys information and ideas through a variety of media to individuals or groups in a manner that engages the audience and helps them understand and retain the message.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Process Improvement Organize, evaluate, plan, and implement improvements in our internal and external processes and practices.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Result driven Driving high standards to accomplish challenging goals.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Time / workload management & prioritization Creating a work environment where tasks and responsibilities are accomplished successfully within the time available.",
+   "requirement": "required"
+  },
+  {
+   "quote": "High-level written & verbal language/communication skills.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Intermediate or above computer literacy (MS Excel particularly)",
+   "requirement": "required"
+  },
+  {
+   "quote": "High level problem solving / analytical reasoning skills.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Working knowledge on the basics of WFM functions and terminologies",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience in contact center workforce planning OR other relatable supply and demand forecasting OR contact center manager experience with operational understanding of WFM capacity planning benefits.",
+   "requirement": "required"
+  }
+ ],
+ "notes": "Sponsorship 'yes' from 'Visa & relocation will be provided.' (non-US locations: Bangkok, Pune, Gurgaon, Kuala Lumpur). Competency table rows treated as required qualifications because the heading is 'Competencies Required'; behaviors/values section excluded. 'Excel/Power Point Skills' is run into the communication row in the source text. Review: WFM practices from the activities list (shrinkage planning, roster planning, process improvement) added as job-family methods.",
+ "document_hash": "059388b48e46befe3910064d77f674761520a61e517c05d92b094ae847385179",
+ "reviewed": true,
+ "review_changes": [
+  "skills: 'workforce management' quote 'Workforce Management (WFM)' -> 'WFM' (draft quote not in posting)",
+  "skills: added 'shrinkage planning' (quote 'Shrinkage planning')",
+  "skills: added 'process improvement' (quote 'Process improvement')",
+  "skills: added 'roster planning' (quote 'roster planning')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

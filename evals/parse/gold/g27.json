@@ -1,0 +1,138 @@
+{
+ "gid": "g27",
+ "skills": [
+  {
+   "name": "performance management",
+   "aliases": [
+    "employee and performance management"
+   ],
+   "quote": "employee and performance management"
+  },
+  {
+   "name": "process improvement",
+   "aliases": [
+    "process improvements"
+   ],
+   "quote": "process improvement"
+  },
+  {
+   "name": "lean",
+   "aliases": [
+    "lean techniques",
+    "lean manufacturing"
+   ],
+   "quote": "lean techniques"
+  },
+  {
+   "name": "lean six sigma",
+   "aliases": [
+    "six sigma"
+   ],
+   "quote": "Lean Six Sigma"
+  },
+  {
+   "name": "kaizen",
+   "aliases": [],
+   "quote": "Kaizen"
+  },
+  {
+   "name": "performance metrics",
+   "aliases": [],
+   "quote": "performance metrics"
+  },
+  {
+   "name": "root cause analysis",
+   "aliases": [],
+   "quote": "diagnose root causes"
+  },
+  {
+   "name": "analytics",
+   "aliases": [
+    "advanced analytics"
+   ],
+   "quote": "advanced analytics"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of employee and performance management experience"
+  },
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of Amazon (blue badge/FTE) experience"
+  },
+  {
+   "min_years": 1,
+   "max_years": null,
+   "quote": "1+ years of performance metrics, process improvement or lean techniques experience"
+  }
+ ],
+ "experience_without_number": [
+  "Experience in the management of large teams (50+ members)",
+  "Experience with process improvements (Lean Six Sigma and/or Kaizen)",
+  "Experience in one or more of the following industries",
+  "Experience using strong customer service, communication, and interpersonal skills"
+ ],
+ "pay": [
+  {
+   "min": "75000.00",
+   "max": "105000.00",
+   "currency": "CAD",
+   "period": "year",
+   "quote": "CAN, BC, New Westminster - 75,000.00 - 105,000.00 CAD annually"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "2+ years of employee and performance management experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "Bachelor's degree or equivalent, or 2+ years of Amazon (blue badge/FTE) experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "Work a flexible schedule/shift/work area, including weekends, nights, and/or holidays",
+   "requirement": "required"
+  },
+  {
+   "quote": "1+ years of performance metrics, process improvement or lean techniques experience",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience in the management of large teams (50+ members)",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with process improvements (Lean Six Sigma and/or Kaizen)",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Bachelor's degree in Engineering, Operations, Supply Chain/Logistics, or a related field",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience in one or more of the following industries: shipping/logistics distribution centers, manufacturing environments, hospitality, healthcare, retail, and customer-facing / customer-service environments",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience using strong customer service, communication, and interpersonal skills",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "'2+ years of Amazon (blue badge/FTE) experience' is an alternative to a degree; kept as experience. '50+ members' is team size, not years. Root cause analysis and analytics come from the 'A day in the life' prose (borderline). Physical items are responsibilities, not qualifications. Review: added 'customer service' as a named ops skill (the preferred bullet asks for it as a skill; borderline vs soft skill). Verify: 'customer service' removed as a soft skill (listed with communication and interpersonal skills).",
+ "document_hash": "dd8b6640cea3d203db8830503046a1e6ac31c1dd6dc6c9dbc52564de606fa4d7",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'customer service' (quote 'customer service', preferred bullet asks for strong customer service skills)",
+  "verify: removed skill 'customer service'; the bullet groups it with communication and interpersonal skills, so it is a soft skill here, not a named practice"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

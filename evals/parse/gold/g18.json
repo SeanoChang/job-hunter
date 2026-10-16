@@ -1,0 +1,161 @@
+{
+ "gid": "g18",
+ "skills": [
+  {
+   "name": "talent management",
+   "aliases": [],
+   "quote": "Talent Management"
+  },
+  {
+   "name": "performance management",
+   "aliases": [],
+   "quote": "performance management"
+  },
+  {
+   "name": "talent reviews",
+   "aliases": [
+    "talent review"
+   ],
+   "quote": "talent reviews"
+  },
+  {
+   "name": "succession planning",
+   "aliases": [],
+   "quote": "succession planning"
+  },
+  {
+   "name": "career development",
+   "aliases": [],
+   "quote": "career development"
+  },
+  {
+   "name": "internal mobility",
+   "aliases": [],
+   "quote": "internal mobility"
+  },
+  {
+   "name": "talent development",
+   "aliases": [],
+   "quote": "Talent Development"
+  },
+  {
+   "name": "organizational development",
+   "aliases": [
+    "od"
+   ],
+   "quote": "Organizational Development"
+  },
+  {
+   "name": "program management",
+   "aliases": [
+    "program manager"
+   ],
+   "quote": "program manager"
+  },
+  {
+   "name": "change management",
+   "aliases": [],
+   "quote": "Drive change"
+  },
+  {
+   "name": "facilitation",
+   "aliases": [
+    "facilitator"
+   ],
+   "quote": "facilitator"
+  },
+  {
+   "name": "artificial intelligence",
+   "aliases": [
+    "ai",
+    "ai tools"
+   ],
+   "quote": "AI tools"
+  },
+  {
+   "name": "automation",
+   "aliases": [
+    "automations"
+   ],
+   "quote": "automations"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 10,
+   "max_years": null,
+   "quote": "10+ years of progressive experience in Talent Management, Talent Development, Organizational Development, or a related People discipline."
+  }
+ ],
+ "experience_without_number": [
+  "Experienced leading complex, cross-functional programs from concept through implementation and adoption.",
+  "Experienced building or experimenting with AI tools, workflows, or automations to solve people or business problems"
+ ],
+ "pay": [
+  {
+   "min": "148000",
+   "max": "267500",
+   "currency": "USD",
+   "period": "year",
+   "quote": "New York, NY: $148,000 - $267,500"
+  },
+  {
+   "min": "88500",
+   "max": "159500",
+   "currency": "EUR",
+   "period": "year",
+   "quote": "Dublin, Ireland: € 88,500 - € 159,500"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "10+ years of progressive experience in Talent Management, Talent Development, Organizational Development, or a related People discipline.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Comfortable operating at both strategic and tactical levels - connecting Talent Management priorities to business objectives, shaping functional strategy and direction, and driving hands-on execution.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experienced leading complex, cross-functional programs from concept through implementation and adoption.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "A strong program manager who brings structure, clarity, and momentum to ambiguous and complex problems.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "An effective communicator and facilitator who can influence stakeholders at multiple levels.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Skilled at building trusted partnerships across functions and is sought out for expertise, sound judgment, and practical recommendations.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Comfortable using data and insights to identify opportunities, measure impact, and inform decisions.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experienced building or experimenting with AI tools, workflows, or automations to solve people or business problems, with strong judgment about where AI can create value and where human judgment matters.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Proactively identifies opportunities to improve programs, processes, and ways of working with a focus on scalable, sustainable solutions.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Passionate about creating simple, intuitive talent experiences that help employees grow and managers succeed, balancing strategic thinking with hands-on execution.",
+   "requirement": "unstated"
+  }
+ ],
+ "notes": "HR role; skills are HR disciplines. 'change management' is inferred from 'Drive change' (weak; reviewer may drop). 'artificial intelligence'/'automation' come from building AI tools and automations; borderline as skills. 'facilitation' is borderline soft skill. 'Who You Are' heading has no modal word, so all lines are 'unstated'. Two pay ranges by location (NY USD, Dublin EUR); period inferred as year from 'base salary'. Pay is 'cash compensation' that may include overtime. EEO mention of 'citizenship' is non-discrimination, not a requirement. Review: no changes; 'change management' (from 'Drive change') and 'facilitation' kept as borderline.",
+ "document_hash": "4c27faad7c81b3defd9f28bb40d4233fb408ee73f334e7a183923ebfa33f5dba",
+ "reviewed": true,
+ "review_changes": [],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

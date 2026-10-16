@@ -1,0 +1,119 @@
+{
+ "gid": "g08",
+ "skills": [
+  {
+   "name": "ios",
+   "aliases": [
+    "ios development"
+   ],
+   "quote": "iOS"
+  },
+  {
+   "name": "swift",
+   "aliases": [],
+   "quote": "Swift"
+  },
+  {
+   "name": "watchos",
+   "aliases": [],
+   "quote": "watchOS"
+  },
+  {
+   "name": "uikit",
+   "aliases": [],
+   "quote": "UIKit"
+  },
+  {
+   "name": "auto layout",
+   "aliases": [
+    "autolayout"
+   ],
+   "quote": "Auto Layout"
+  },
+  {
+   "name": "rxswift",
+   "aliases": [],
+   "quote": "RxSwift"
+  },
+  {
+   "name": "core graphics",
+   "aliases": [
+    "coregraphics"
+   ],
+   "quote": "Core Graphics"
+  },
+  {
+   "name": "core animation",
+   "aliases": [
+    "coreanimation"
+   ],
+   "quote": "Core Animation"
+  },
+  {
+   "name": "lottie",
+   "aliases": [],
+   "quote": "Lottie"
+  },
+  {
+   "name": "core data",
+   "aliases": [
+    "coredata"
+   ],
+   "quote": "Core Data"
+  },
+  {
+   "name": "viper",
+   "aliases": [
+    "viper architecture"
+   ],
+   "quote": "VIPER"
+  },
+  {
+   "name": "mobile development",
+   "aliases": [
+    "mobile"
+   ],
+   "quote": "mobile"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "experience working closely with Product Designers"
+ ],
+ "pay": [
+  {
+   "min": "60",
+   "max": "60",
+   "currency": "USD",
+   "period": "hour",
+   "quote": "$60—$60 USD"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Currently enrolled in a full-time, degree-seeking program with an expected graduation date of Winter 2027 or Spring 2028",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Strong product sense and experience working closely with Product Designers",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Deep understanding of UIKit",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Excellent communication skills and a passion for tackling tough technical problems",
+   "requirement": "unstated"
+  }
+ ],
+ "notes": "Pay period is hour from 'The expected hourly range for this role'. The single range is Zone 1 (Menlo Park, New York, Bellevue, Washington DC). 'at least 3 days per week' is in-office attendance, not experience. 'mobile development' is borderline (quote is 'mobile experience'/'mobile teams'). 'What you bring' has no modal word, so unstated. Review: 'What you bring' kept unstated, matching the owner's g01 call on 'What we're looking for'.",
+ "document_hash": "e948f78dfb25af202ea33dd85c30673ce2a7bcffc32295579892b4b989e3990d",
+ "reviewed": true,
+ "review_changes": [],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

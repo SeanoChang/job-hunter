@@ -1,0 +1,318 @@
+{
+ "gid": "g12",
+ "skills": [
+  {
+   "name": "manufacturing engineering",
+   "aliases": [],
+   "quote": "manufacturing engineering"
+  },
+  {
+   "name": "electromechanical assembly",
+   "aliases": [
+    "electromechanical integration",
+    "electromechanical assemblies"
+   ],
+   "quote": "complex electromechanical assemblies"
+  },
+  {
+   "name": "mechanical assembly",
+   "aliases": [],
+   "quote": "mechanical assembly"
+  },
+  {
+   "name": "harness routing",
+   "aliases": [],
+   "quote": "harness routing"
+  },
+  {
+   "name": "avionics installation",
+   "aliases": [
+    "avionics"
+   ],
+   "quote": "avionics installation"
+  },
+  {
+   "name": "functional testing",
+   "aliases": [
+    "functional test"
+   ],
+   "quote": "functional test"
+  },
+  {
+   "name": "mbom",
+   "aliases": [
+    "manufacturing bill of materials",
+    "mboms"
+   ],
+   "quote": "MBOMs"
+  },
+  {
+   "name": "rcca",
+   "aliases": [
+    "root cause and corrective action",
+    "root cause analysis"
+   ],
+   "quote": "RCCA"
+  },
+  {
+   "name": "5 whys",
+   "aliases": [
+    "5-why",
+    "five whys"
+   ],
+   "quote": "5-Why"
+  },
+  {
+   "name": "lean manufacturing",
+   "aliases": [
+    "lean"
+   ],
+   "quote": "Lean manufacturing"
+  },
+  {
+   "name": "5s",
+   "aliases": [],
+   "quote": "5S"
+  },
+  {
+   "name": "standard work",
+   "aliases": [],
+   "quote": "standard work"
+  },
+  {
+   "name": "manufacturing execution system",
+   "aliases": [
+    "mes"
+   ],
+   "quote": "MES (Manufacturing Execution System)"
+  },
+  {
+   "name": "engineering drawings",
+   "aliases": [
+    "drawing reading",
+    "blueprint reading"
+   ],
+   "quote": "read engineering drawings"
+  },
+  {
+   "name": "gd&t",
+   "aliases": [
+    "geometric dimensioning and tolerancing",
+    "gdt"
+   ],
+   "quote": "GD&T"
+  },
+  {
+   "name": "design for manufacturing",
+   "aliases": [
+    "dfm"
+   ],
+   "quote": "DFM"
+  },
+  {
+   "name": "cable harness fabrication",
+   "aliases": [
+    "harness fabrication",
+    "cable fabrication"
+   ],
+   "quote": "cable/harness fabrication"
+  },
+  {
+   "name": "soldering",
+   "aliases": [],
+   "quote": "soldering"
+  },
+  {
+   "name": "pcba fabrication",
+   "aliases": [
+    "pcba",
+    "pcb assembly"
+   ],
+   "quote": "PCBA fabrication"
+  },
+  {
+   "name": "surface mount technology",
+   "aliases": [
+    "smt"
+   ],
+   "quote": "SMT processes"
+  },
+  {
+   "name": "value stream mapping",
+   "aliases": [
+    "vsm"
+   ],
+   "quote": "value stream mapping"
+  },
+  {
+   "name": "fmea",
+   "aliases": [
+    "failure mode and effects analysis"
+   ],
+   "quote": "FMEA"
+  },
+  {
+   "name": "flight controllers",
+   "aliases": [
+    "flight controller"
+   ],
+   "quote": "flight controllers"
+  },
+  {
+   "name": "control systems",
+   "aliases": [],
+   "quote": "control systems"
+  },
+  {
+   "name": "statistical process control",
+   "aliases": [
+    "spc"
+   ],
+   "quote": "statistical process control (SPC)"
+  },
+  {
+   "name": "yield analysis",
+   "aliases": [],
+   "quote": "yield analysis"
+  },
+  {
+   "name": "erp",
+   "aliases": [
+    "enterprise resource planning"
+   ],
+   "quote": "ERP systems"
+  },
+  {
+   "name": "sap",
+   "aliases": [],
+   "quote": "SAP"
+  },
+  {
+   "name": "oracle",
+   "aliases": [
+    "oracle erp"
+   ],
+   "quote": "Oracle"
+  },
+  {
+   "name": "tooling",
+   "aliases": [
+    "manufacturing tooling"
+   ],
+   "quote": "tooling"
+  },
+  {
+   "name": "work instructions",
+   "aliases": [
+    "work instruction"
+   ],
+   "quote": "work instructions"
+  },
+  {
+   "name": "technology transfer",
+   "aliases": [
+    "tech transfer"
+   ],
+   "quote": "technology transfer"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of manufacturing engineering experience in aerospace, defense, or complex hardware production environments."
+  }
+ ],
+ "experience_without_number": [
+  "or equivalent hands-on manufacturing experience",
+  "Hands-on experience physically building hardware",
+  "Manufacturing experience in aerospace, automotive/EV, industrial, or medical device environments.",
+  "Harness or PCBA fabrication experience",
+  "Hands-on experience with R/C and/or autonomous flight vehicles, flight controllers, or related control systems.",
+  "Experience with MES or ERP systems (SAP, Oracle, or similar)."
+ ],
+ "pay": [
+  {
+   "min": "86000",
+   "max": "112000",
+   "currency": "USD",
+   "period": "year",
+   "quote": "$86,000—$112,000 USD"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": true,
+ "citizenship_quote": "Eligible to obtain and maintain an active U.S. Secret security clearance.",
+ "qualifications": [
+  {
+   "quote": "2+ years of manufacturing engineering experience in aerospace, defense, or complex hardware production environments.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Degree in an engineering or technical field preferred, or equivalent hands-on manufacturing experience.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Ability to read engineering drawings and GD&T; foundational understanding of DFM, work instructions, and tooling.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Hands-on experience physically building hardware — mechanical assembly, cable/harness fabrication, soldering, or similar. Personal or extracurricular projects count.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Familiarity with production documentation systems (work instructions, MBOMs) and willingness to learn MES platforms.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Strong attention to detail and a quality-first mindset.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "A genuine hunger to learn and grow, with flexibility for critical pushes.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Eligible to obtain and maintain an active U.S. Secret security clearance.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Manufacturing experience in aerospace, automotive/EV, industrial, or medical device environments.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Exposure to Lean tools such as 5S, value stream mapping, or FMEA.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Harness or PCBA fabrication experience, including familiarity with SMT processes.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Hands-on experience with R/C and/or autonomous flight vehicles, flight controllers, or related control systems.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Familiarity with statistical process control (SPC) techniques and yield analysis.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with MES or ERP systems (SAP, Oracle, or similar).",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Current active U.S. Secret security clearance.",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "'WHAT WE'RE LOOKING FOR' has no modal word, so its lines are 'unstated' (the degree line says 'preferred' itself). It is effectively the required list opposite PREFERRED QUALIFICATIONS; reviewer may prefer 'required'. Citizenship true because eligibility for a Secret clearance is required (a clearance implies U.S. citizenship). Pay period inferred as year from 'US Salary Range' wording. Company boilerplate mentions AI, computer vision, sensor fusion, and Lattice OS (internal product); these describe the company, not the role, so they are excluded. Role also requires relocation to Costa Mesa for up to 2 months of training (not experience). Review: added tooling, work instructions and technology transfer. 'WHAT WE'RE LOOKING FOR' kept unstated per g01; it reads as the required list, so a strict grader could call it required.",
+ "document_hash": "939b915a7f3ad70b830f1c0f4a7fe3aff8da8ff954fa51af884a6795e868799f",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'tooling' (quote 'tooling')",
+  "skills: added 'work instructions' (quote 'work instructions')",
+  "skills: added 'technology transfer' (quote 'technology transfer')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

@@ -1,0 +1,251 @@
+{
+ "gid": "g19",
+ "skills": [
+  {
+   "name": "facilities management",
+   "aliases": [
+    "facilities operations"
+   ],
+   "quote": "Facilities Management"
+  },
+  {
+   "name": "office services",
+   "aliases": [],
+   "quote": "Office Services"
+  },
+  {
+   "name": "hospitality",
+   "aliases": [],
+   "quote": "hospitality"
+  },
+  {
+   "name": "customer service",
+   "aliases": [],
+   "quote": "customer service"
+  },
+  {
+   "name": "vendor management",
+   "aliases": [
+    "vendor relations"
+   ],
+   "quote": "vendor relations"
+  },
+  {
+   "name": "event coordination",
+   "aliases": [
+    "event planning"
+   ],
+   "quote": "Coordinates all aspects of onsite conferencing and meeting"
+  },
+  {
+   "name": "ff&e maintenance",
+   "aliases": [
+    "ff&e"
+   ],
+   "quote": "FF&E maintenance"
+  },
+  {
+   "name": "mep systems",
+   "aliases": [
+    "mep",
+    "mechanical electrical plumbing"
+   ],
+   "quote": "MEP systems"
+  },
+  {
+   "name": "building codes",
+   "aliases": [
+    "fire codes",
+    "building and fire codes"
+   ],
+   "quote": "building and fire codes"
+  },
+  {
+   "name": "fire/life/safety",
+   "aliases": [
+    "fire life safety",
+    "fls"
+   ],
+   "quote": "Fire/Life/Safety plans"
+  },
+  {
+   "name": "environmental health and safety",
+   "aliases": [
+    "ehs",
+    "environmental health & safety"
+   ],
+   "quote": "Environmental Health & Safety standards"
+  },
+  {
+   "name": "audio/visual conferencing systems",
+   "aliases": [
+    "a/v",
+    "av",
+    "audio visual"
+   ],
+   "quote": "Audio/Visual conferencing systems"
+  },
+  {
+   "name": "service level agreements",
+   "aliases": [
+    "sla",
+    "slas"
+   ],
+   "quote": "service level agreements"
+  },
+  {
+   "name": "inventory management",
+   "aliases": [],
+   "quote": "Maintains accurate inventory levels"
+  },
+  {
+   "name": "procurement",
+   "aliases": [],
+   "quote": "procures office supplies"
+  },
+  {
+   "name": "budgeting",
+   "aliases": [
+    "opex budgeting"
+   ],
+   "quote": "OpEx budgeting"
+  },
+  {
+   "name": "forecasting",
+   "aliases": [],
+   "quote": "forecasts monthly expenses"
+  },
+  {
+   "name": "google workspace",
+   "aliases": [
+    "google",
+    "g suite"
+   ],
+   "quote": "Google"
+  },
+  {
+   "name": "microsoft office",
+   "aliases": [
+    "microsoft office suite",
+    "ms office"
+   ],
+   "quote": "Microsoft Office Suite"
+  },
+  {
+   "name": "cybersecurity",
+   "aliases": [
+    "cyber security"
+   ],
+   "quote": "cyber security"
+  },
+  {
+   "name": "artificial intelligence",
+   "aliases": [
+    "ai",
+    "ai technologies"
+   ],
+   "quote": "AI technologies"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 5,
+   "max_years": null,
+   "quote": "Minimum of 5 years professional experience."
+  }
+ ],
+ "experience_without_number": [
+  "Facilities Management and/or Office Services experience.",
+  "Previous hotel/hospitality front-of-house experience is also welcomed.",
+  "Basic knowledge of or experience in cyber security.",
+  "Proven experience utilizing AI technologies"
+ ],
+ "pay": [
+  {
+   "min": "27",
+   "max": "43",
+   "currency": "USD",
+   "period": "hour",
+   "quote": "$27 - $43 per hour"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "the Workplace Services Coordinator must have a passion for hospitality and customer service, ensuring every in-office experience is functional, productive, and memorable for our fellow CrowdStrikers.",
+   "requirement": "required"
+  },
+  {
+   "quote": "The individual must have the ability to work independently on various projects from conception to completion, adhere to pivotal business and operational timelines, and work through a variety of activities and confidential matters with discretion.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Minimum of 5 years professional experience.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Facilities Management and/or Office Services experience. Previous hotel/hospitality front-of-house experience is also welcomed.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Exceptional written and verbal communication skills including ability to communicate with all levels of staff, clients, and external professionals.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Ability to interact with people at all levels including senior management.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Basic understanding of local building and fire codes, Fire/Life/Safety plans, and Environmental Health & Safety standards.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Basic understanding of commercial MEP systems and functionalities.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Basic understanding of Audio/Visual conferencing systems.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Demonstrated ability to work independently and prioritize multiple, high-priority tasks.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Unimpeachable judgment and discretion in handling confidential information.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Flexibility to perform job tasks outside of job description when necessary.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Keen attention to detail with the ability to juggle multiple priorities.",
+   "requirement": "required"
+  },
+  {
+   "quote": "High level of integrity and ethics with the ability to maintain confidentiality.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Strong working knowledge of Google and Microsoft Office Suite.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Basic knowledge of or experience in cyber security.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Proven experience utilizing AI technologies to enhance decision-making, streamline workflows and processes, improve efficiency and drive business outcomes.",
+   "requirement": "required"
+  }
+ ],
+ "notes": "'What You'll Need' treated as a required heading. The two 'must have' sentences in About the Role are labeled required qualifications. The hospitality front-of-house line is 'also welcomed' (arguably preferred) but shares a bullet with the required facilities line, so the bullet is 'required'. Company boilerplate mentions distributed systems; excluded as not about this role. Several skills are inferred from duties (event coordination, inventory management, procurement, budgeting, forecasting) and use weak quotes; reviewer may drop. 'Google' quote is ambiguous (likely Google Workspace). E-Verify participation is not a sponsorship statement. Review: no changes; duty-derived skills kept because they are named practices of the job family.",
+ "document_hash": "fc1fe3ec1a8e87c2462cd0805728c4085f1f3699e809352fd25a2531e62354c2",
+ "reviewed": true,
+ "review_changes": [],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

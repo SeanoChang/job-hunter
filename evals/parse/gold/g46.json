@@ -1,0 +1,172 @@
+{
+ "gid": "g46",
+ "skills": [
+  {
+   "name": "cybersecurity",
+   "aliases": [
+    "cybersecurity sales",
+    "security"
+   ],
+   "quote": "cybersecurity"
+  },
+  {
+   "name": "identity security",
+   "aliases": [
+    "agentic identity security",
+    "identity and access management",
+    "iam"
+   ],
+   "quote": "Identity Security"
+  },
+  {
+   "name": "secrets management",
+   "aliases": [],
+   "quote": "Secrets Management"
+  },
+  {
+   "name": "workload identity management",
+   "aliases": [
+    "wim"
+   ],
+   "quote": "Workload Identity Management (WIM)"
+  },
+  {
+   "name": "devops security",
+   "aliases": [
+    "devsecops"
+   ],
+   "quote": "DevOps Security"
+  },
+  {
+   "name": "devops",
+   "aliases": [],
+   "quote": "DevOps"
+  },
+  {
+   "name": "governance, risk, and compliance",
+   "aliases": [
+    "grc",
+    "governance risk and compliance"
+   ],
+   "quote": "Governance, Risk, and Compliance"
+  },
+  {
+   "name": "field sales",
+   "aliases": [],
+   "quote": "field sales"
+  },
+  {
+   "name": "solution selling",
+   "aliases": [
+    "solution sales",
+    "complex solution sales"
+   ],
+   "quote": "complex solution sales"
+  },
+  {
+   "name": "platform selling",
+   "aliases": [
+    "platform sales"
+   ],
+   "quote": "platform selling"
+  },
+  {
+   "name": "channel sales",
+   "aliases": [
+    "channel partners",
+    "channel go-to-market"
+   ],
+   "quote": "channel partners"
+  },
+  {
+   "aliases": [
+    "gtm",
+    "go to market",
+    "go-to-market"
+   ],
+   "name": "go-to-market strategy",
+   "quote": "go-to-market strategy"
+  },
+  {
+   "aliases": [
+    "upsell",
+    "upsell sales"
+   ],
+   "name": "upselling",
+   "quote": "upsell"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 5,
+   "max_years": null,
+   "quote": "5+ years of field sales experience focusing on key customer accounts and delivering value to Enterprise level accounts."
+  }
+ ],
+ "experience_without_number": [
+  "Experience as an overlay sales specialist is a bonus.",
+  "Extensive platform selling experience in complex sales with multiple buying centers.",
+  "experience presenting to, CIOs and CISOs",
+  "Experience working with channel partners",
+  "Experience operating in a continuous adoption, expansion, and upsell sales motion within a matrixed sales organisation is preferred"
+ ],
+ "pay": [],
+ "sponsorship": "no",
+ "sponsorship_quote": "Please note that we will not sponsor applicants for work visas for this position.",
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "5+ years of field sales experience focusing on key customer accounts and delivering value to Enterprise level accounts.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experience as an overlay sales specialist is a bonus.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Extensive platform selling experience in complex sales with multiple buying centers.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "In depth knowledge on Identity Security, Secrets Management, Workload Identity Management (WIM), and DevOps Security best practices and technologies and other vendors and products in that space.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "An emphasis on vendors and technologies in use across large enterprises for both on-premises and cloud is preferred.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Established trusted relationships with, and experience presenting to, CIOs and CISOs with the ability to influence and drive strategic conversations.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Expertise in applying complex solution sales methodologies to drive results.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experience working with channel partners and a deep understanding of a channel-centric go-to-market strategy.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Demonstrated ability to thrive in a fast-paced, high-growth startup environment while collaborating effectively with sales engineers and cross-functional teams.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experience operating in a continuous adoption, expansion, and upsell sales motion within a matrixed sales organisation is preferred",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Travel as needed to meet with customers and attend key business events.",
+   "requirement": "unstated"
+  }
+ ],
+ "notes": "Plain 'Qualifications' heading with no modal word, so lines are unstated unless they say bonus/preferred; two bullets split into separate sentences because the second sentence carries 'bonus'/'preferred'. Iberia region, remote; no pay stated. Sponsorship 'no' from the explicit closing sentence. Review: added go-to-market strategy and upselling (named sales practices in qualifications).",
+ "document_hash": "c71931a42e377ec15d6fa9d1a8a90043c403c37d5f9e1ad5d170d309a36996f7",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'go-to-market strategy' (quote 'go-to-market strategy')",
+  "skills: added 'upselling' (quote 'upsell')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

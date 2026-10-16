@@ -1,0 +1,133 @@
+{
+ "gid": "g13",
+ "skills": [
+  {
+   "name": "software development",
+   "aliases": [
+    "software engineering"
+   ],
+   "quote": "software development"
+  },
+  {
+   "name": "java",
+   "aliases": [],
+   "quote": "Java"
+  },
+  {
+   "name": "c++",
+   "aliases": [
+    "cpp"
+   ],
+   "quote": "C++"
+  },
+  {
+   "name": "software architecture",
+   "aliases": [
+    "architecture",
+    "system architecture"
+   ],
+   "quote": "architecture and design"
+  },
+  {
+   "name": "design patterns",
+   "aliases": [
+    "design pattern"
+   ],
+   "quote": "design patterns"
+  },
+  {
+   "name": "reliability",
+   "aliases": [
+    "reliability engineering"
+   ],
+   "quote": "reliability"
+  },
+  {
+   "name": "scalability",
+   "aliases": [
+    "scaling"
+   ],
+   "quote": "scaling"
+  },
+  {
+   "name": "supply chain",
+   "aliases": [
+    "supply chain management"
+   ],
+   "quote": "supply chain"
+  },
+  {
+   "name": "machine learning",
+   "aliases": [
+    "ml"
+   ],
+   "quote": "Machine Learning"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 10,
+   "max_years": null,
+   "quote": "10+ years of professional software development experience"
+  },
+  {
+   "min_years": 8,
+   "max_years": null,
+   "quote": "8+ years of programming experience with at least one modern language such as Java, C++"
+  },
+  {
+   "min_years": 8,
+   "max_years": null,
+   "quote": "8+ years contributing to the architecture and design (architecture, design patterns, reliability and scaling) of new and current systems"
+  },
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years hands-on experience as a senior Principal Engineer leading multiple software engineering"
+  }
+ ],
+ "experience_without_number": [
+  "Experience shipping successful large-scale supply chain projects",
+  "Experience partnering with Research Science or Machine Learning experts to drive optimizations using the latest techniques."
+ ],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "10+ years of professional software development experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "8+ years of programming experience with at least one modern language such as Java, C++",
+   "requirement": "required"
+  },
+  {
+   "quote": "8+ years contributing to the architecture and design (architecture, design patterns, reliability and scaling) of new and current systems",
+   "requirement": "required"
+  },
+  {
+   "quote": "Advanced degree in Computer Science or a related field",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "2+ years hands-on experience as a senior Principal Engineer leading multiple software engineering",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience shipping successful large-scale supply chain projects",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience partnering with Research Science or Machine Learning experts to drive optimizations using the latest techniques.",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "No pay range is stated in this posting. The 2+ years line is under Preferred, so it is a preferred experience amount. The text names internal programs and systems (AFN, CIS, ATS, AmazonDay, Roar, Redirect to Locker); these are internal products and are not skills. 'reliability' and 'scaling' come from the parenthetical in a basic qualification; borderline as skills, kept as disciplines (scalability), reviewer may drop. Review: no changes; transportation/logistics domain terms left out as business context.",
+ "document_hash": "de80044d7e8a14ae3f68946a7f79019027d02cfa3edf93590234e76f2fc4ed56",
+ "reviewed": true,
+ "review_changes": [],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

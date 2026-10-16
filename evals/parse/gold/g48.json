@@ -1,0 +1,20 @@
+{
+ "gid": "g48",
+ "skills": [],
+ "experience": [],
+ "experience_without_number": [],
+ "pay": [],
+ "sponsorship": "no",
+ "sponsorship_quote": "OKX will be prioritising applicants who have a current right to work in Hong Kong, and do not require OKX's sponsorship of a visa.",
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [],
+ "notes": "Posting is an unfilled template: the About/What You'll Be Doing/What We Look For/Nice-To-Haves sections are empty. Skills come only from the title 'Senior Java Backend Engineer'; reviewer may drop them. Sponsorship: OKX 'prioritises' candidates who do not need visa sponsorship but does not say it will not sponsor, so undeclared (closest sentence quoted). No pay, experience, or qualification lines. Review: removed the title-derived Java/backend skills because the posting body never names them and their quotes are not substrings. Sponsorship kept undeclared: 'prioritising' applicants without sponsorship needs does not say OKX will not sponsor. Sponsorship set to no (2026-10-16): prioritising applicants who need no sponsorship is a hedged no, as in g14 and g50.",
+ "document_hash": "1aff86ee5c86379e9771733de064073a672859258c1db5265b925c48ec7c1454",
+ "reviewed": true,
+ "review_changes": [
+  "skills: removed 'java' (word not in the posting text; title only, quote not a substring)",
+  "skills: removed 'backend development' (word not in the posting text; title only, quote not a substring)"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

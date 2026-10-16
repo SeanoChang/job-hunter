@@ -1,0 +1,253 @@
+{
+ "gid": "g23",
+ "skills": [
+  {
+   "name": "html",
+   "aliases": [],
+   "quote": "HTML"
+  },
+  {
+   "name": "javascript",
+   "aliases": [
+    "js"
+   ],
+   "quote": "JavaScript"
+  },
+  {
+   "name": "typescript",
+   "aliases": [
+    "ts"
+   ],
+   "quote": "TypeScript"
+  },
+  {
+   "name": "css",
+   "aliases": [],
+   "quote": "CSS"
+  },
+  {
+   "name": "react",
+   "aliases": [
+    "react.js",
+    "reactjs"
+   ],
+   "quote": "React"
+  },
+  {
+   "name": "frontend architecture",
+   "aliases": [
+    "frontend development",
+    "front-end"
+   ],
+   "quote": "modern frontend architecture"
+  },
+  {
+   "name": "state management",
+   "aliases": [],
+   "quote": "state management"
+  },
+  {
+   "name": "performance optimization",
+   "aliases": [],
+   "quote": "performance optimization"
+  },
+  {
+   "name": "ui/ux design",
+   "aliases": [
+    "ui/ux",
+    "ux",
+    "ui"
+   ],
+   "quote": "UI/UX"
+  },
+  {
+   "name": "graphql",
+   "aliases": [],
+   "quote": "GraphQL"
+  },
+  {
+   "name": "rest",
+   "aliases": [
+    "rest api",
+    "restful apis",
+    "restful"
+   ],
+   "quote": "RESTful APIs"
+  },
+  {
+   "name": "java",
+   "aliases": [],
+   "quote": "Java"
+  },
+  {
+   "name": "object-oriented programming",
+   "aliases": [
+    "oo",
+    "oop"
+   ],
+   "quote": "OO languages"
+  },
+  {
+   "name": "data modeling",
+   "aliases": [
+    "data models"
+   ],
+   "quote": "data models"
+  },
+  {
+   "name": "workflow orchestration",
+   "aliases": [
+    "durable workflow orchestration"
+   ],
+   "quote": "durable workflow orchestration"
+  },
+  {
+   "name": "event-driven architecture",
+   "aliases": [
+    "event-driven architectures"
+   ],
+   "quote": "event-driven architectures"
+  },
+  {
+   "name": "distributed systems",
+   "aliases": [],
+   "quote": "distributed systems"
+  },
+  {
+   "name": "agentic workflows",
+   "aliases": [
+    "ai agents",
+    "agents"
+   ],
+   "quote": "agentic workflows"
+  },
+  {
+   "name": "large language models",
+   "aliases": [
+    "llm",
+    "llms"
+   ],
+   "quote": "LLMs"
+  },
+  {
+   "name": "artificial intelligence",
+   "aliases": [
+    "ai",
+    "applied ai"
+   ],
+   "quote": "applied AI"
+  },
+  {
+   "name": "localization",
+   "aliases": [],
+   "quote": "localization"
+  },
+  {
+   "name": "component design",
+   "aliases": [
+    "component-based design",
+    "ui components"
+   ],
+   "quote": "component design"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "Deep experience building complex, high-quality user interfaces",
+  "Experience designing and consuming GraphQL and/or RESTful APIs",
+  "A proven track record of building resilient, high-scale, low-latency services in production",
+  "Experience applying AI in production systems",
+  "Experience with durable workflow orchestration, event-driven architectures, distributed systems, and resilient automation is highly valued"
+ ],
+ "pay": [
+  {
+   "min": "250000.00",
+   "max": "413000.00",
+   "currency": "USD",
+   "period": "year",
+   "quote": "The range for this role is $250,000.00 - $413,000.00."
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Deep experience building complex, high-quality user interfaces with HTML, JavaScript/TypeScript, and CSS, with expert-level proficiency in React and modern frontend architecture (component design, state management, performance optimization)",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "A strong eye for UI/UX craft. You build interfaces that are clear, predictable, and hold up reliably for enterprise users who rely on them daily",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experience designing and consuming GraphQL and/or RESTful APIs to power rich client experiences, and comfortable working across the stack, including services built in Java or similar OO languages",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "A proven track record of building resilient, high-scale, low-latency services in production, and translating business requirements into technical designs and data models",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Work cross-functionally with design, product, and engineering partners to build, test, deploy, and launch UIs that operationalize our localization workflows at scale",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You’re a self-starter who takes initiative and drives work forward without needing significant direction",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "You proactively use AI tools to accelerate your workflow, learn faster, and amplify your impact",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "You communicate clearly and are comfortable navigating ambiguity. You ask the right questions, seek out the right context, and make good judgment calls without complete information",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "You are product-minded. You're curious about the \"why\" behind what you're building, and you bring your own ideas and opinions to the table rather than just implementing a spec as given",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "You take a thoughtful, practical approach to problem-solving that considers tradeoffs and avoids over-engineering",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "You take an interest in how people actually use what you build, and look for ways to get early feedback and validate your work rather than shipping and moving on",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "You evangelize new ideas and exemplify technical leadership with a bias for action.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "You appreciate the complexity of engaging with a global challenge, and are passionate about crafting interfaces that feel native, no matter the language or locale",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "You are a resourceful engineer who can independently identify the root cause of issues and implement dependable, maintainable solutions across the entire stack",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience applying AI in production systems, e.g., integrating LLMs into user-facing or internal tools and able to identify where applied AI can meaningfully improve workflows",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with durable workflow orchestration, event-driven architectures, distributed systems, and resilient automation is highly valued.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "We're especially excited to meet people who have built AI-native products and agentic workflows.",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Heading 'Qualifications' carries no modal word, so those lines are 'unstated'. 'What Sets You Apart' read as preferred (differentiators); 'Bonus Points' preferred. The 'highly valued' sentence is in the intro prose; included as preferred. Pay period not stated explicitly, but the text says compensation is 'solely of an annual salary', so period=year; no location given, USD inferred from '$' and Netflix US context. Review: added the 'especially excited' intro sentence as a preferred qualification, to match the already-included 'highly valued' intro sentence; added 'component design' from the React bullet. 'localization' kept as a domain skill (borderline, like g02 'search').",
+ "document_hash": "b3aa7945f5864f0cfc8c84dc09bd5b9a1d1e251f2ef4101bd1b869eddb95b29e",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'component design' (quote 'component design')",
+  "qualifications: added intro sentence 'We're especially excited to meet people who have built AI-native products and agentic workflows.' as preferred"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

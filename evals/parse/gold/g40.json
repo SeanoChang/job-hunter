@@ -1,0 +1,129 @@
+{
+ "gid": "g40",
+ "skills": [
+  {
+   "name": "meddpicc",
+   "aliases": [
+    "meddpic",
+    "meddic"
+   ],
+   "quote": "MEDDPIC"
+  },
+  {
+   "name": "command of the message",
+   "aliases": [],
+   "quote": "Command of the Message"
+  },
+  {
+   "name": "challenger sale",
+   "aliases": [
+    "challenger"
+   ],
+   "quote": "Challenger Sale"
+  },
+  {
+   "name": "saas sales",
+   "aliases": [
+    "saas"
+   ],
+   "quote": "SaaS sales"
+  },
+  {
+   "name": "sales forecasting",
+   "aliases": [
+    "forecasting",
+    "sales forecast"
+   ],
+   "quote": "forecast"
+  },
+  {
+   "name": "sales management",
+   "aliases": [
+    "sales team management"
+   ],
+   "quote": "sales management"
+  },
+  {
+   "name": "territory management",
+   "aliases": [
+    "territory planning",
+    "territory development"
+   ],
+   "quote": "building a new territory"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 5,
+   "max_years": null,
+   "quote": "5+ years of closing sales experience"
+  },
+  {
+   "min_years": 1,
+   "max_years": null,
+   "quote": "1+ year experience managing, hiring and training Account Executives to achieve performance goals"
+  }
+ ],
+ "experience_without_number": [
+  "Experience building a new territory and driving net-new business while growing and retaining an existing customer base",
+  "Experience with Command of the Message or Challenger Sale preferred",
+  "Preferred experience selling into multiple segments (SMB, Mid-Market, Enterprise)",
+  "Prior success in SaaS sales"
+ ],
+ "pay": [
+  {
+   "min": "170500",
+   "max": "255500",
+   "currency": "USD",
+   "period": "year",
+   "quote": "$170,500—$255,500 USD"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "5+ years of closing sales experience",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "1+ year experience managing, hiring and training Account Executives to achieve performance goals",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Deep understanding of MEDDPIC with the ability to coach and reinforce it with SMB sellers",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experience building a new territory and driving net-new business while growing and retaining an existing customer base",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experience with Command of the Message or Challenger Sale preferred",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Preferred experience selling into multiple segments (SMB, Mid-Market, Enterprise)",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Excellent communication, business acumen, organizational and time management skills",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Prior success in SaaS sales or proven ability to learn new technology quickly",
+   "requirement": "unstated"
+  }
+ ],
+ "notes": "Sales-manager role; skills are sales methodologies (MEDDPIC as written, canonical MEDDPICC). Pay period not printed next to the range ('New York City Pay Range'); an annual base/OTE is the only sensible reading at this magnitude, so period year. Pay may be OTE rather than base for this commissionable role. Heading 'WHO YOU ARE' has no modal word, so unstated except lines saying 'preferred'. Review: forecasting, sales management and territory management added as sales-family practices; pay period kept 'year' per the g03 owner call (magnitude + base salary/OTE).",
+ "document_hash": "d66cce17ed1b338c030606cf32d0b2986e134a034b4ca921753516ea4f3a682c",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'sales forecasting' (quote 'forecast')",
+  "skills: added 'sales management' (quote 'sales management')",
+  "skills: added 'territory management' (quote 'building a new territory')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

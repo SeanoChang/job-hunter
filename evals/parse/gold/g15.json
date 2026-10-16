@@ -1,0 +1,132 @@
+{
+ "gid": "g15",
+ "skills": [
+  {
+   "name": "python",
+   "aliases": [],
+   "quote": "Python"
+  },
+  {
+   "name": "django",
+   "aliases": [],
+   "quote": "Django"
+  },
+  {
+   "name": "react",
+   "aliases": [
+    "react.js",
+    "reactjs"
+   ],
+   "quote": "React"
+  },
+  {
+   "name": "postgresql",
+   "aliases": [
+    "postgres"
+   ],
+   "quote": "Postgres"
+  },
+  {
+   "name": "apache kafka",
+   "aliases": [
+    "kafka"
+   ],
+   "quote": "Kafka"
+  },
+  {
+   "name": "java",
+   "aliases": [],
+   "quote": "Java"
+  },
+  {
+   "name": "grpc",
+   "aliases": [],
+   "quote": "gRPC"
+  },
+  {
+   "name": "aws",
+   "aliases": [
+    "amazon web services"
+   ],
+   "quote": "AWS"
+  },
+  {
+   "name": "kyc",
+   "aliases": [
+    "know your customer"
+   ],
+   "quote": "KYC (Know Your Customer)"
+  },
+  {
+   "name": "software engineering",
+   "aliases": [],
+   "quote": "software engineering"
+  },
+  {
+   "name": "code review",
+   "aliases": [
+    "pr reviews",
+    "pr review"
+   ],
+   "quote": "PR reviews"
+  },
+  {
+   "name": "ai-assisted development",
+   "aliases": [
+    "ai coding",
+    "ai-assisted engineering",
+    "ai tools"
+   ],
+   "quote": "AI-assisted engineering tools"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 8,
+   "max_years": null,
+   "quote": "We recommend 8+ years of professional software engineering experience for this level."
+  }
+ ],
+ "experience_without_number": [
+  "You have experience with (or a desire to learn) our core technologies: Python, Django, React, Postgres, and Kafka"
+ ],
+ "pay": [
+  {
+   "min": "181050",
+   "max": "213000",
+   "currency": "CAD",
+   "period": "year",
+   "quote": "$181,050 CAD - $213,000 CAD for Toronto, Ontario, Canada and Waterloo, Ontario, Canada"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "You have experience with (or a desire to learn) our core technologies: Python, Django, React, Postgres, and Kafka",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You can break down complex user stories into actionable tasks and execute them with minimal guidance.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You understand the \"why\" behind your code and can articulate technical trade-offs to stakeholders.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "We recommend 8+ years of professional software engineering experience for this level.",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Qualification quotes omit the bold lead-in labels (The Tech Stack, Execution, ...) so they match the raw text; the Tech Stack quote stops at Kafka because the raw text has Kafka**.** followed by the Java/gRPC/AWS sentence. The 8+ years is phrased as a recommendation, so it is arguably 'preferred' rather than 'unstated'; heading 'About You' has no modal word. Java/gRPC/AWS are stack mentions ('We also utilize'), not candidate requirements, but kept as skills. Pay is 'minimum cash compensation (salary + commission if applicable)', CAD, for Toronto/Waterloo; period inferred as year from 'salary'. E-Verify mention is not a sponsorship statement. KYC kept as a domain discipline; reviewer may drop it. Review: the 'You have experience with (or a desire to learn)' line kept unstated, because 'or a desire to learn' cancels the 'you have' required cue. 'We recommend' read as preferred.",
+ "document_hash": "86b4b13e50a3a5794562df88596c2c0cb91efb2f7ea318801bea9da3741c6834",
+ "reviewed": true,
+ "review_changes": [
+  "qualifications[3]: unstated -> preferred, cue 'We recommend'",
+  "skills: added 'ai-assisted development' (quote 'AI-assisted engineering tools'), per g01 'ai coding'"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

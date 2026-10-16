@@ -1,0 +1,215 @@
+{
+ "gid": "g01",
+ "skills": [
+  {
+   "aliases": [
+    "ml"
+   ],
+   "name": "machine learning",
+   "quote": "machine learning"
+  },
+  {
+   "aliases": [
+    "ai"
+   ],
+   "name": "artificial intelligence",
+   "quote": "AI"
+  },
+  {
+   "aliases": [
+    "animation"
+   ],
+   "name": "character animation",
+   "quote": "character animation"
+  },
+  {
+   "aliases": [
+    "ue",
+    "unreal"
+   ],
+   "name": "unreal engine",
+   "quote": "Unreal Engine"
+  },
+  {
+   "aliases": [
+    "llm",
+    "llms",
+    "large language model"
+   ],
+   "name": "large language models",
+   "quote": "LLMs"
+  },
+  {
+   "aliases": [
+    "rl"
+   ],
+   "name": "reinforcement learning",
+   "quote": "Reinforcement learning"
+  },
+  {
+   "aliases": [
+    "3d tracking",
+    "human tracking"
+   ],
+   "name": "object tracking",
+   "quote": "3D human and object tracking"
+  },
+  {
+   "aliases": [
+    "speech recognition",
+    "speech systems"
+   ],
+   "name": "speech processing",
+   "quote": "speech processing"
+  },
+  {
+   "aliases": [
+    "audio"
+   ],
+   "name": "audio processing",
+   "quote": "audio processing"
+  },
+  {
+   "aliases": [
+    "diffusion model",
+    "diffusion"
+   ],
+   "name": "diffusion models",
+   "quote": "diffusion models"
+  },
+  {
+   "aliases": [
+    "distillation",
+    "knowledge distillation"
+   ],
+   "name": "model distillation",
+   "quote": "Model distillation"
+  },
+  {
+   "aliases": [
+    "dl"
+   ],
+   "name": "deep learning",
+   "quote": "deep learning"
+  },
+  {
+   "aliases": [
+    "cv",
+    "vision"
+   ],
+   "name": "computer vision",
+   "quote": "computer vision"
+  },
+  {
+   "aliases": [
+    "nlp"
+   ],
+   "name": "natural language processing",
+   "quote": "natural language processing"
+  },
+  {
+   "aliases": [
+    "transformer"
+   ],
+   "name": "transformers",
+   "quote": "Transformers"
+  },
+  {
+   "aliases": [
+    "post training",
+    "llm post-training"
+   ],
+   "name": "post-training",
+   "quote": "post-training"
+  },
+  {
+   "aliases": [
+    "sft",
+    "fine-tuning"
+   ],
+   "name": "supervised fine-tuning",
+   "quote": "SFT"
+  },
+  {
+   "aliases": [
+    "preference optimization",
+    "rlhf",
+    "dpo"
+   ],
+   "name": "preference training",
+   "quote": "preference training"
+  },
+  {
+   "aliases": [
+    "gamedev"
+   ],
+   "name": "game development",
+   "quote": "game development"
+  },
+  {
+   "aliases": [
+    "cpp"
+   ],
+   "name": "c++",
+   "quote": "C++"
+  },
+  {
+   "aliases": [
+    "csharp",
+    "c sharp"
+   ],
+   "name": "c#",
+   "quote": "C#"
+  },
+  {
+   "aliases": [],
+   "name": "ai coding",
+   "quote": "Excellent AI coding and experimental programming skills"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "Experience implementing deep learning algorithms for problems in computer vision, natural language processing, or speech/audio processing",
+  "Experience with post-training foundation models",
+  "game development experience in either C++ or C#"
+ ],
+ "pay": [],
+ "sponsorship": "no",
+ "sponsorship_quote": "Visa sponsorship or support is unavailable for this role",
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "An ongoing or recently completed (within the last 12 months) PhD in Computer Science, Mathematics, AI or a related field",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "A record of publication in top conferences/journals",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience implementing deep learning algorithms for problems in computer vision, natural language processing, or speech/audio processing",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Hands-on knowledge of state-of-the-art ML methods, such as Transformers, diffusion models, and reinforcement learning",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with post-training foundation models, including SFT, preference training, and reinforcement learning",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Excellent AI coding and experimental programming skills",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Desirable: game development experience in either C++ or C#",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Research-topic list (embodied agents, vision-language-action, content moderation, spam detection, recommendation, translation, AI alignment, digital humans) left out as research areas rather than resume skills; a lenient grader could add some. 'within 12 months of graduation' is time since PhD, not experience. The work-authorization line ('You must hold an existing right to work...') is a hard requirement but not listed as a qualification. Quals under 'What we're looking for' have no modal word, so unstated.",
+ "document_hash": "852df2aa306bed15b65bb2d811781df54180a39d7596baf33f4c49a26892fb0a",
+ "reviewed": true,
+ "reviewed_by": "owner"
+}

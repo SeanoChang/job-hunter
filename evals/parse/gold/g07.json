@@ -1,0 +1,415 @@
+{
+ "gid": "g07",
+ "skills": [
+  {
+   "name": "rfic design",
+   "aliases": [
+    "rf ic design",
+    "rfic",
+    "rf ic"
+   ],
+   "quote": "RF/Analog IC"
+  },
+  {
+   "name": "analog ic design",
+   "aliases": [
+    "analog ic",
+    "analog design",
+    "analog integrated circuit design"
+   ],
+   "quote": "Analog or digital CMOS integrated circuit design"
+  },
+  {
+   "name": "digital ic design",
+   "aliases": [
+    "digital design",
+    "digital integrated circuit design"
+   ],
+   "quote": "Analog or digital CMOS integrated circuit design"
+  },
+  {
+   "name": "rtl design",
+   "aliases": [
+    "rtl",
+    "rtl implementation"
+   ],
+   "quote": "RTL design"
+  },
+  {
+   "name": "design verification",
+   "aliases": [
+    "verification",
+    "dv"
+   ],
+   "quote": "design verification"
+  },
+  {
+   "name": "physical design",
+   "aliases": [
+    "pd"
+   ],
+   "quote": "physical design"
+  },
+  {
+   "name": "design for test",
+   "aliases": [
+    "dft",
+    "design for testability"
+   ],
+   "quote": "DFT"
+  },
+  {
+   "name": "post-silicon validation",
+   "aliases": [
+    "silicon validation",
+    "validation"
+   ],
+   "quote": "post-silicon validation"
+  },
+  {
+   "name": "asic",
+   "aliases": [
+    "asics",
+    "asic design"
+   ],
+   "quote": "ASIC"
+  },
+  {
+   "name": "fpga",
+   "aliases": [
+    "fpgas"
+   ],
+   "quote": "FPGA"
+  },
+  {
+   "name": "soc",
+   "aliases": [
+    "socs",
+    "system on chip"
+   ],
+   "quote": "SOC"
+  },
+  {
+   "name": "mmic",
+   "aliases": [],
+   "quote": "MMIC"
+  },
+  {
+   "name": "emulation",
+   "aliases": [
+    "hardware emulation"
+   ],
+   "quote": "emulation"
+  },
+  {
+   "name": "embedded software",
+   "aliases": [
+    "embedded"
+   ],
+   "quote": "embedded software"
+  },
+  {
+   "name": "c",
+   "aliases": [],
+   "quote": "C"
+  },
+  {
+   "name": "c++",
+   "aliases": [
+    "cpp"
+   ],
+   "quote": "C++"
+  },
+  {
+   "name": "python",
+   "aliases": [],
+   "quote": "Python"
+  },
+  {
+   "name": "rf circuit design",
+   "aliases": [
+    "microwave circuits",
+    "rf circuits",
+    "rf design"
+   ],
+   "quote": "RF/microwave circuits"
+  },
+  {
+   "name": "cmos",
+   "aliases": [
+    "cmos processes"
+   ],
+   "quote": "CMOS"
+  },
+  {
+   "name": "sige",
+   "aliases": [
+    "silicon germanium"
+   ],
+   "quote": "SiGe"
+  },
+  {
+   "name": "floor planning",
+   "aliases": [
+    "floorplanning",
+    "floorplan"
+   ],
+   "quote": "floor planning"
+  },
+  {
+   "name": "ic layout",
+   "aliases": [
+    "layout"
+   ],
+   "quote": "layout"
+  },
+  {
+   "name": "digital signal processing",
+   "aliases": [
+    "dsp"
+   ],
+   "quote": "Digital Signal Processing"
+  },
+  {
+   "name": "systemverilog",
+   "aliases": [
+    "system verilog",
+    "sv"
+   ],
+   "quote": "SystemVerilog"
+  },
+  {
+   "name": "digital communications",
+   "aliases": [
+    "digital communication systems"
+   ],
+   "quote": "digital communication"
+  },
+  {
+   "name": "matlab",
+   "aliases": [],
+   "quote": "MATLAB"
+  },
+  {
+   "name": "logic synthesis",
+   "aliases": [
+    "synthesis"
+   ],
+   "quote": "synthesis"
+  },
+  {
+   "name": "place and route",
+   "aliases": [
+    "pnr",
+    "p&r"
+   ],
+   "quote": "place and route"
+  },
+  {
+   "name": "timing analysis",
+   "aliases": [
+    "static timing analysis",
+    "sta"
+   ],
+   "quote": "timing/noise analysis"
+  },
+  {
+   "name": "physical verification",
+   "aliases": [
+    "pv"
+   ],
+   "quote": "physical verification"
+  },
+  {
+   "name": "electromigration",
+   "aliases": [
+    "em"
+   ],
+   "quote": "electromigration"
+  },
+  {
+   "name": "logic equivalence checking",
+   "aliases": [
+    "lec",
+    "logic equivalency"
+   ],
+   "quote": "logic equivalency"
+  },
+  {
+   "name": "tapeout",
+   "aliases": [
+    "tapeouts",
+    "silicon tapeout"
+   ],
+   "quote": "tapeouts"
+  },
+  {
+   "name": "computer architecture",
+   "aliases": [],
+   "quote": "computer architecture"
+  },
+  {
+   "name": "verilog",
+   "aliases": [],
+   "quote": "Verilog"
+  },
+  {
+   "name": "vhdl",
+   "aliases": [],
+   "quote": "VHDL"
+  },
+  {
+   "name": "scripting",
+   "aliases": [
+    "scripting languages"
+   ],
+   "quote": "Scripting languages"
+  },
+  {
+   "name": "object-oriented programming",
+   "aliases": [
+    "oop"
+   ],
+   "quote": "Object-oriented programming"
+  },
+  {
+   "name": "ads",
+   "aliases": [
+    "advanced design system",
+    "keysight ads"
+   ],
+   "quote": "ADS"
+  },
+  {
+   "name": "spectre",
+   "aliases": [
+    "cadence spectre"
+   ],
+   "quote": "Spectre"
+  },
+  {
+   "name": "hfss",
+   "aliases": [
+    "ansys hfss"
+   ],
+   "quote": "HFSS"
+  },
+  {
+   "name": "momentum",
+   "aliases": [
+    "keysight momentum"
+   ],
+   "quote": "Momentum"
+  },
+  {
+   "name": "chip bring-up",
+   "aliases": [
+    "bring-up",
+    "silicon bring-up"
+   ],
+   "quote": "chip bring-up"
+  },
+  {
+   "name": "circuit simulation",
+   "aliases": [
+    "simulation"
+   ],
+   "quote": "Simulation tools"
+  },
+  {
+   "name": "signoff",
+   "aliases": [
+    "signoff checks",
+    "sign-off"
+   ],
+   "quote": "signoff checks"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "Experience working with ASIC, SOC, FPGA, RFIC, or MMIC",
+  "Experience in one or more of the following areas",
+  "RTL design, chip bring-up, verification, and/or post-silicon validation experience"
+ ],
+ "pay": [
+  {
+   "min": "135000",
+   "max": "175000",
+   "currency": "USD",
+   "period": "year",
+   "quote": "Level 1: $135,000.00 - $175,000.00"
+  },
+  {
+   "min": "155000",
+   "max": "210000",
+   "currency": "USD",
+   "period": "year",
+   "quote": "Level 2: $155,000.00 - $210,000.00"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": true,
+ "citizenship_quote": "To conform to U.S. Government export regulations, applicant must be a (i) U.S. citizen or national, (ii) U.S. lawful, permanent resident (aka green card holder), (iii) Refugee under 8 U.S.C. § 1157, or (iv) Asylee under 8 U.S.C. § 1158, or be eligible to obtain the required authorizations from the U.S. Department of State.",
+ "qualifications": [
+  {
+   "quote": "Graduating with a bachelor’s degree, master’s degree or PhD in 2026 or 2027",
+   "requirement": "required"
+  },
+  {
+   "quote": "Bachelor’s degree in an engineering discipline, mathematics or physics",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience working with ASIC, SOC, FPGA, RFIC, or MMIC",
+   "requirement": "required"
+  },
+  {
+   "quote": "Understanding of computer architecture",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience in one or more of the following areas:",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Analog or digital CMOS integrated circuit design and/or physical design",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "SystemVerilog, Verilog, VHDL or C/C++",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Scripting languages, e.g. Python for automation",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Object-oriented programming",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Simulation tools such as ADS, Spectre, HFSS or Momentum",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "RTL design, chip bring-up, verification, and/or post-silicon validation experience",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Digital signal processing",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Ability to work extended hours and weekends as necessary to meet critical project milestones",
+   "requirement": "required"
+  }
+ ],
+ "notes": "Pay period not stated literally; 'base salary' and magnitude imply annual; USD from $ and US locations. Citizenship true per ITAR U.S.-person requirement (escape clause 'or be eligible to obtain the required authorizations' makes it arguable). 'Hands-on self-starter...' sits under Responsibilities, so not counted as a qualification. 'Experience in one or more of the following areas:' kept as its own preferred entry plus one entry per sub-bullet. Borderline skills: sige, cmos (process technologies), scripting, circuit simulation, momentum. Starlink is the employer's own product. Review: added 'signoff' (physical-design signoff checks); voltage drop and error correction left out as sub-steps.",
+ "document_hash": "a2ef3d531121777c11e281c94d61b44d936ad82fdb34c5dc516f824b164f0907",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'signoff' (quote 'signoff checks')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

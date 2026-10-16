@@ -1,0 +1,223 @@
+{
+ "gid": "g14",
+ "skills": [
+  {
+   "name": "data engineering",
+   "aliases": [
+    "de"
+   ],
+   "quote": "data engineering"
+  },
+  {
+   "name": "machine learning",
+   "aliases": [
+    "ml"
+   ],
+   "quote": "machine learning"
+  },
+  {
+   "name": "stream processing",
+   "aliases": [
+    "real-time stream processing",
+    "streaming"
+   ],
+   "quote": "real-time stream processing"
+  },
+  {
+   "name": "batch processing",
+   "aliases": [],
+   "quote": "batch processing"
+  },
+  {
+   "name": "apache flink",
+   "aliases": [
+    "flink"
+   ],
+   "quote": "Flink"
+  },
+  {
+   "name": "apache spark",
+   "aliases": [
+    "spark"
+   ],
+   "quote": "Spark"
+  },
+  {
+   "name": "apache kafka",
+   "aliases": [
+    "kafka"
+   ],
+   "quote": "Kafka"
+  },
+  {
+   "name": "apache druid",
+   "aliases": [
+    "druid"
+   ],
+   "quote": "Druid"
+  },
+  {
+   "name": "feature stores",
+   "aliases": [
+    "feature store"
+   ],
+   "quote": "feature stores"
+  },
+  {
+   "name": "machine learning infrastructure",
+   "aliases": [
+    "ml infrastructure"
+   ],
+   "quote": "machine learning infrastructure"
+  },
+  {
+   "name": "data pipelines",
+   "aliases": [
+    "data pipeline",
+    "data processing pipelines",
+    "feature pipelines"
+   ],
+   "quote": "data processing pipelines"
+  },
+  {
+   "name": "schema design",
+   "aliases": [
+    "logging schemas",
+    "logging schema design",
+    "table design"
+   ],
+   "quote": "schema design"
+  },
+  {
+   "name": "logging",
+   "aliases": [
+    "client logging"
+   ],
+   "quote": "client logging"
+  },
+  {
+   "name": "recommendation systems",
+   "aliases": [
+    "recommendation",
+    "recommender systems"
+   ],
+   "quote": "recommendation"
+  },
+  {
+   "name": "search",
+   "aliases": [
+    "search systems"
+   ],
+   "quote": "search"
+  },
+  {
+   "name": "personalization",
+   "aliases": [],
+   "quote": "personalization"
+  },
+  {
+   "name": "advertising",
+   "aliases": [
+    "ad systems"
+   ],
+   "quote": "advertising"
+  },
+  {
+   "name": "real-time feature serving",
+   "aliases": [
+    "feature serving"
+   ],
+   "quote": "real-time feature serving"
+  },
+  {
+   "name": "observability",
+   "aliases": [],
+   "quote": "observability"
+  },
+  {
+   "name": "experimentation",
+   "aliases": [
+    "a/b testing"
+   ],
+   "quote": "experimentation data"
+  },
+  {
+   "name": "data analysis",
+   "aliases": [],
+   "quote": "data analysis"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 8,
+   "max_years": null,
+   "quote": "8+ years of experience as a product-focused data systems engineer"
+  }
+ ],
+ "experience_without_number": [
+  "Experience designing efficient logging schemas and optimizing data processing pipelines.",
+  "Experience with real-time stream processing and batch processing"
+ ],
+ "pay": [
+  {
+   "min": "295250",
+   "max": "354040",
+   "currency": "USD",
+   "period": "year",
+   "quote": "Annual Salary Range\n\n$295,250—$354,040 USD"
+  }
+ ],
+ "sponsorship": "no",
+ "sponsorship_quote": "For US based roles only, please note the Company may not be able to employ candidates for this role who have United States work authorization related to certain U.S. visa categories, or support future H-1B sponsorship at this time.",
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "8+ years of experience as a product-focused data systems engineer (preferably working with search, recommendation, advertising or personalization systems).",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experience designing efficient logging schemas and optimizing data processing pipelines.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experience with real-time stream processing and batch processing (using technologies such as Flink, Spark, Kafka, Druid)",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Familiarity with feature stores and other machine learning infrastructure.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You have initiated and facilitated challenging technical solutions. Your technical expertise influences product direction. You nurture a culture of technical excellence.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You're a generalist and you are comfortable with several languages and technologies already; you are adaptable in any situation. You are resourceful, and take a creative and strategic approach to solving hard problems.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Excited to investigate large, ambiguous problems, and quantify the problems and the solutions.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You always start with the needs of the user, whether they are Roblox users or internal engineers before architecting a solution.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You lift up your peers and find ways to make the team stronger.",
+   "requirement": "unstated"
+  }
+ ],
+ "notes": "Sponsorship sentence is hedged ('may not be able to ... support future H-1B sponsorship at this time'); labeled 'no' as the most defensible reading because it declines sponsorship, but it is not a firm 'will not'. Pay quote spans a heading and the amount on separate lines; the amount alone is '$295,250—$354,040 USD'. The pay applies to San Mateo HQ roles. 'You Have' / 'You Are' headings carry no modal word, so all lines are 'unstated'; the 'You Are' quotes omit the bold lead-in labels (e.g. A Technical Leader) so they match the raw text exactly. Search/recommendation/advertising/personalization appear in a 'preferably' parenthetical. Roblox ML Platform, Robux are internal products, excluded. Review: 'You Have' and 'You Are' lines are unstated (owner ruling: 'you have' is not a required cue). 'data science' dropped (partner team).",
+ "document_hash": "e401848db034e06f32b01f1ba547473cb34f5f0c8c5590cf89aa46ab828818e5",
+ "reviewed": true,
+ "review_changes": [
+  "qualifications[0-3]: unstated -> required, cue 'You Have' heading",
+  "skills: removed 'data science' (names a partner team, not a skill asked)",
+  "skills: added 'data analysis' (quote 'data analysis')",
+  "skills: 'schema design' alias 'table design' added",
+  "verify: qualifications[0-3]: required -> unstated reverted; 'You Have' heading is not a required cue (owner override 1)"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

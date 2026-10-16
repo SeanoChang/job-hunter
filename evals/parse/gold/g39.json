@@ -1,0 +1,107 @@
+{
+ "gid": "g39",
+ "skills": [
+  {
+   "name": "crm",
+   "aliases": [
+    "customer relationship management",
+    "crm systems"
+   ],
+   "quote": "CRM"
+  },
+  {
+   "name": "ticketing systems",
+   "aliases": [
+    "ticketing system",
+    "help desk ticketing"
+   ],
+   "quote": "ticketing systems"
+  },
+  {
+   "name": "customer support",
+   "aliases": [
+    "customer service",
+    "customer care"
+   ],
+   "quote": "customer support"
+  },
+  {
+   "name": "contact center",
+   "aliases": [
+    "call center",
+    "contact centre"
+   ],
+   "quote": "contact center"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "Prior working experience in customer support, contact center, or service roles",
+  "Experience in travel, e-commerce, hospitality, or BPO is a plus",
+  "Experience working with international customers or partners"
+ ],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Strong customer focus and a genuine desire to help others",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Excellent spoken and written English & Hindi skills",
+   "requirement": "required"
+  },
+  {
+   "quote": "Ability to stay calm, accurate, and professional under pressure",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Good problem-solving skills, using guidelines and data to make decisions effectively",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Flexibility to adapt to new tools, processes, and feedback",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Ability to manage time and priorities in a fast-paced, high-volume environment",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Reliability, integrity, and a positive, collaborative attitude",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Prior working experience in customer support, contact center, or service roles",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience in travel, e-commerce, hospitality, or BPO is a plus",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience working with international customers or partners",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Familiarity with contact center, CRM, or ticketing systems",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Additional language skills beyond the core required languages for the role if any",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Entry-level customer support. Heading 'Core Skills and Competencies' has no modal word, so unstated, though English & Hindi are later called 'the core required languages'. Spoken languages not counted as skills. 'ticketing systems' is borderline (generic noun vs tool category). No pay stated; 24/7 shifts are schedule, not experience. Review: English & Hindi line made required because the posting later calls them 'the core required languages'. Customer support and contact center added as job-family practices (consistent with g32).",
+ "document_hash": "ea1a93f1e79c858afabaa3f0d3d9f2458c0555b46b617fc832a7075ec7dc0f16",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'customer support' (quote 'customer support'), named in a nice-to-have qualification and the core practice of the job",
+  "skills: added 'contact center' (quote 'contact center')",
+  "qualifications[1]: unstated -> required, cue 'the core required languages for the role'"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

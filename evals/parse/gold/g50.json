@@ -1,0 +1,171 @@
+{
+ "gid": "g50",
+ "skills": [
+  {
+   "name": "project management",
+   "aliases": [],
+   "quote": "project management"
+  },
+  {
+   "name": "calendar management",
+   "aliases": [
+    "calendaring",
+    "scheduling"
+   ],
+   "quote": "calendaring"
+  },
+  {
+   "name": "slack",
+   "aliases": [],
+   "quote": "Slack"
+  },
+  {
+   "name": "google workspace",
+   "aliases": [
+    "g suite",
+    "g-suite",
+    "gsuite"
+   ],
+   "quote": "G-Suite"
+  },
+  {
+   "name": "document management",
+   "aliases": [],
+   "quote": "document management"
+  },
+  {
+   "name": "travel coordination",
+   "aliases": [
+    "travel arrangements",
+    "travel management"
+   ],
+   "quote": "travel arrangements"
+  },
+  {
+   "name": "expense reporting",
+   "aliases": [
+    "expense reports"
+   ],
+   "quote": "expense reports"
+  },
+  {
+   "aliases": [
+    "executive assistance",
+    "executive assistant",
+    "administrative support"
+   ],
+   "name": "executive support",
+   "quote": "executive support"
+  },
+  {
+   "aliases": [
+    "event coordination",
+    "event management"
+   ],
+   "name": "event planning",
+   "quote": "Plan and execute impactful team events"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 8,
+   "max_years": null,
+   "quote": "with 8+ years in a direct executive support role."
+  }
+ ],
+ "experience_without_number": [
+  "Proven experience managing projects effectively and meeting deadlines",
+  "Experienced in supporting C suite executives in a highly matrix environment.",
+  "Experienced in handling confidential information with the utmost discretion and integrity."
+ ],
+ "pay": [
+  {
+   "min": "76.96",
+   "max": "92.53",
+   "currency": "USD",
+   "period": "hour",
+   "quote": "$76.96—$92.53 USD"
+  }
+ ],
+ "sponsorship": "no",
+ "sponsorship_quote": "For US based roles only, please note the Company may not be able to employ candidates for this role who have United States work authorization related to certain U.S. visa categories, or support future H-1B sponsorship at this time.",
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "A Bachelor's degree or equivalent practical experience, with 8+ years in a direct executive support role.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Exceptional attention to detail, a proactive and driven approach, and the ability to initiate and complete projects with limited information or resources, finding creative solutions to challenges.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Proven experience managing projects effectively and meeting deadlines, utilizing various communication and project management tools.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "A strong team-oriented mindset, always willing to assist colleagues and contribute to shared success.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Excellent judgment and a meticulous approach to your work.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Ability to work flexible hours as needed to support international leaders and teams.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Highly organized and proficient in calendaring (adept at handling frequent changes and complex scheduling), communication (e.g., Slack, G-Suite), and document management tools.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experienced in supporting C suite executives in a highly matrix environment.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Professional, calm, collected, and highly adaptable in high-pressure situations, demonstrating flexibility and the ability to pivot quickly when crises or unexpected ad-hoc requests arise.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Experienced in handling confidential information with the utmost discretion and integrity.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Passionate about technology, with an ability to quickly learn, create, and share new ideas to improve efficiency and processes.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Responsive and reliable, consistently following through on requests and tasks.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "A strong relationship builder, able to establish rapport with individuals across all levels of the organization and serve as a dependable representative for your executives and team.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Ability to forge relationships across teams and with peers.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "A high-performing, self-motivated operator with a collaborative spirit.",
+   "requirement": "unstated"
+  }
+ ],
+ "notes": "Sponsorship marked 'no' from a hedged sentence ('may not be able to ... support future H-1B sponsorship at this time'); a stricter reading would be undeclared. Pay period 'hour' comes from the 'Hourly Pay Range' label on the line above the amount. 'You Have'/'You Are' headings carry no modal word, so all lines unstated. Travel coordination and expense reporting come from responsibilities and are borderline skills. Review: 'You Have:' is a listed required cue ('you have'), so its six lines are required; 'You Are:' lines stay unstated. Added executive support and event planning. Verify: 'You Have:' lines reverted to unstated per the owner's g01 ruling.",
+ "document_hash": "87b4232bc53b85609942b71214cf8287a0f1f01840dbbb8e5a05cde77073487f",
+ "reviewed": true,
+ "review_changes": [
+  "qualifications[0]: unstated -> required, cue heading 'You Have:'",
+  "qualifications[1]: unstated -> required, cue heading 'You Have:'",
+  "qualifications[2]: unstated -> required, cue heading 'You Have:'",
+  "qualifications[3]: unstated -> required, cue heading 'You Have:'",
+  "qualifications[4]: unstated -> required, cue heading 'You Have:'",
+  "qualifications[5]: unstated -> required, cue heading 'You Have:'",
+  "skills: added 'executive support' (quote 'executive support')",
+  "skills: added 'event planning' (quote 'Plan and execute impactful team events')",
+  "verify: qualifications[0]-[5]: reverted required -> unstated; 'You Have:' is not a required cue (override 1)"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

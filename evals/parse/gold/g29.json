@@ -1,0 +1,152 @@
+{
+ "gid": "g29",
+ "skills": [
+  {
+   "name": "product management",
+   "aliases": [
+    "gestion de produits",
+    "hardware product management"
+   ],
+   "quote": "gestion de produits"
+  },
+  {
+   "name": "product design",
+   "aliases": [
+    "conception de produits"
+   ],
+   "quote": "conception de produits"
+  },
+  {
+   "name": "hardware product development",
+   "aliases": [
+    "hardware development",
+    "développement matériel"
+   ],
+   "quote": "développement matériel"
+  },
+  {
+   "name": "industrial design",
+   "aliases": [
+    "design industriel"
+   ],
+   "quote": "design industriel"
+  },
+  {
+   "name": "market research",
+   "aliases": [
+    "études de marché"
+   ],
+   "quote": "études de marché"
+  },
+  {
+   "name": "usability testing",
+   "aliases": [
+    "usability studies",
+    "études d'utilisabilité"
+   ],
+   "quote": "études d'utilisabilité"
+  },
+  {
+   "name": "data analysis",
+   "aliases": [
+    "analyse des données"
+   ],
+   "quote": "l'analyse des données"
+  },
+  {
+   "name": "product roadmapping",
+   "aliases": [
+    "roadmap",
+    "feuille de route"
+   ],
+   "quote": "feuille de route"
+  },
+  {
+   "name": "kpis",
+   "aliases": [
+    "performance metrics",
+    "indicateurs de performance",
+    "key performance indicators"
+   ],
+   "quote": "indicateurs de performance"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 5,
+   "max_years": 6,
+   "quote": "5 à 6 ans d'expérience en gestion de produits, conception de produits ou expérience équivalente en conseil"
+  }
+ ],
+ "experience_without_number": [
+  "une expérience professionnelle pertinente",
+  "L'expérience en matière de développement et de déploiement de produits matériels de bout en bout est un atout",
+  "Une expérience en matière d'optimisation post-lancement"
+ ],
+ "pay": [
+  {
+   "min": "112000",
+   "max": "140000",
+   "currency": "CAD",
+   "period": "year",
+   "quote": "CAD $112,000 - CAD $140,000"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "5 à 6 ans d'expérience en gestion de produits, conception de produits ou expérience équivalente en conseil",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "N'ayant pas peur de poser des questions, peu importe ce que les autres en penseront.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Passion pour la micromobilité et ce que nous essayons de réaliser en matière de transport urbain durable",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Un baccalauréat dans un domaine quantitatif ou une expérience professionnelle pertinente est préférable.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "L'expérience en matière de développement et de déploiement de produits matériels de bout en bout est un atout, mais n'est pas obligatoire.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Capacité naturelle à faire avancer les choses. Vous gérez l'ambiguïté, la complexité et les interdépendances des projets de manière organisée et structurée. Vous êtes capable de définir et d'analyser les indicateurs de performance qui permettent de mesurer le succès des produits.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Un excellent jugement et une grande réflexion sur la dynamique d'un écosystème de produits",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Excellentes compétences en communication et intuition pour la stratégie de communication à tous les niveaux : au sein des équipes, au sein de l'entreprise, auprès des utilisateurs, de la presse et des autres publics.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Une expérience en matière d'optimisation post-lancement, notamment dans le développement de stratégies de test et d'amélioration des produits, est un atout, mais n'est pas indispensable.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Capacité à concevoir, gérer et prioriser plusieurs projets pour les parties prenantes",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Soucieux du détail et doté d'excellentes compétences organisationnelles, vous êtes capable de gérer plusieurs projets, échéances et demandes avec une grande aisance.",
+   "requirement": "unstated"
+  }
+ ],
+ "notes": "French posting. The hardware end-to-end bullet appears twice verbatim in the source; listed once. Heading 'Expérience:' has no modal word, so unmarked lines are 'unstated'; 'est préférable' and 'est un atout' lines are preferred. Pay period not stated literally; 'fourchette de salaire de base' (base salary range) at CAD 112k-140k is clearly annual, so period=year. Product roadmapping and industrial design come from responsibilities/team prose (borderline). Review: added KPIs/performance metrics (defining and analysing product success metrics appears in responsibilities and a qualification).",
+ "document_hash": "39255cb83a2ea78a14f791e4f6056ec4258911d359e1a21de689ecadedd38487",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'kpis' (quote 'indicateurs de performance')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

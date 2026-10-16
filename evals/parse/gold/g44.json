@@ -1,0 +1,215 @@
+{
+ "gid": "g44",
+ "skills": [
+  {
+   "name": "cloud networking",
+   "aliases": [],
+   "quote": "Cloud Networking"
+  },
+  {
+   "name": "network security",
+   "aliases": [
+    "security",
+    "cybersecurity"
+   ],
+   "quote": "Security"
+  },
+  {
+   "name": "edge computing",
+   "aliases": [
+    "edge"
+   ],
+   "quote": "Edge Computing"
+  },
+  {
+   "name": "enterprise sales",
+   "aliases": [
+    "b2b sales",
+    "b2b enterprise sales"
+   ],
+   "quote": "B2B enterprise"
+  },
+  {
+   "name": "pipeline management",
+   "aliases": [
+    "sales pipeline management"
+   ],
+   "quote": "pipeline management"
+  },
+  {
+   "name": "sales forecasting",
+   "aliases": [
+    "forecasting"
+   ],
+   "quote": "forecasting"
+  },
+  {
+   "name": "contract negotiation",
+   "aliases": [
+    "negotiation"
+   ],
+   "quote": "contract negotiations"
+  },
+  {
+   "name": "salesforce",
+   "aliases": [],
+   "quote": "Salesforce"
+  },
+  {
+   "name": "tableau",
+   "aliases": [],
+   "quote": "Tableau"
+  },
+  {
+   "name": "google workspace",
+   "aliases": [
+    "g suite",
+    "g-suite",
+    "gsuite"
+   ],
+   "quote": "G-suite"
+  },
+  {
+   "name": "microsoft office",
+   "aliases": [
+    "msft suite",
+    "microsoft 365",
+    "ms office"
+   ],
+   "quote": "MSFT suite"
+  },
+  {
+   "name": "meddpicc",
+   "aliases": [
+    "meddpicc framework",
+    "meddic"
+   ],
+   "quote": "MEDDPICC"
+  },
+  {
+   "aliases": [
+    "territory plan",
+    "account planning",
+    "account plans"
+   ],
+   "name": "territory planning",
+   "quote": "territory and account plans"
+  },
+  {
+   "aliases": [],
+   "name": "competitive selling",
+   "quote": "competitive selling"
+  },
+  {
+   "aliases": [
+    "bi"
+   ],
+   "name": "business intelligence",
+   "quote": "business intelligence"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 8,
+   "max_years": null,
+   "quote": "8+ years of advanced experience selling complex technology solutions in a B2B enterprise model"
+  }
+ ],
+ "experience_without_number": [],
+ "pay": [
+  {
+   "min": "169000",
+   "max": "232000",
+   "currency": "EUR",
+   "period": "year",
+   "quote": "Estimated annual salary is between €169,000 - €232,000."
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "8+ years of advanced experience selling complex technology solutions in a B2B enterprise model",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Deep expertise and fluency in Cloud Networking, Security, and Edge Computing technologies",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Proven ability to deeply understand complex customer IT architectures",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Demonstrated success leading and influencing virtual cross-functional teams",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Exceptional strategic communication and presentation skills",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Advanced negotiation skills",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "unparalleled proficiency in discovery, positioning, competitive selling, negotiation, closing, and expansion strategies within enterprise accounts.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Authority on digital transformation trends",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Strong coaching and mentorship abilities",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Highly self-motivated, entrepreneurial, and resilient",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "(e.g., Salesforce, Tableau, G-suite, MSFT suite, MEDDPICC framework application).",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Bachelor's degree required",
+   "requirement": "required"
+  },
+  {
+   "quote": "with a technical background (e.g., engineering, computer science, MIS) highly preferred.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Ability to travel",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Language Skills:French and English fluent",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Markdown bold markers (**) stripped from quotes; text otherwise exact. Heading 'Examples of Desirable Skills, Knowledge, and Experience' read as optional, so lines are preferred except the explicit 'Bachelor's degree required' (split from its 'highly preferred' technical-background clause). The 8+ years and French/English lines might be treated as effectively required by a reviewer. Pay range is for France hires and includes on-target incentive compensation (OTE); kept as the stated annual salary. Export-control paragraph is conditional, so citizenship false. 'Security' labeled network security (Cloudflare context). Digital transformation not counted as a skill. Review: qualification quotes with **bold** markers were trimmed to the bold lead-in (the trailing clause for [6] sales acumen and [10] BI platforms, where the content sits after the bold) so every quote is an exact substring. Added territory planning, competitive selling and business intelligence as named sales practices/tools.",
+ "document_hash": "25ee3ed1432939183a35cdacdd12fa8c982f2359e5932b2bf201e20a77f74a5b",
+ "reviewed": true,
+ "review_changes": [
+  "qualifications[0]: quote trimmed to an exact substring (markdown bold split it): '8+ years of advanced experience selling complex technology solutions i'",
+  "qualifications[1]: quote trimmed to an exact substring (markdown bold split it): 'Deep expertise and fluency in Cloud Networking, Security, and Edge Com'",
+  "qualifications[2]: quote trimmed to an exact substring (markdown bold split it): 'Proven ability to deeply understand complex customer IT architectures'",
+  "qualifications[3]: quote trimmed to an exact substring (markdown bold split it): 'Demonstrated success leading and influencing virtual cross-functional '",
+  "qualifications[4]: quote trimmed to an exact substring (markdown bold split it): 'Exceptional strategic communication and presentation skills'",
+  "qualifications[5]: quote trimmed to an exact substring (markdown bold split it): 'Advanced negotiation skills'",
+  "qualifications[6]: quote trimmed to an exact substring (markdown bold split it): 'unparalleled proficiency in discovery, positioning, competitive sellin'",
+  "qualifications[7]: quote trimmed to an exact substring (markdown bold split it): 'Authority on digital transformation trends'",
+  "qualifications[8]: quote trimmed to an exact substring (markdown bold split it): 'Strong coaching and mentorship abilities'",
+  "qualifications[9]: quote trimmed to an exact substring (markdown bold split it): 'Highly self-motivated, entrepreneurial, and resilient'",
+  "qualifications[10]: quote trimmed to an exact substring (markdown bold split it): '(e.g., Salesforce, Tableau, G-suite, MSFT suite, MEDDPICC framework ap'",
+  "qualifications[13]: quote trimmed to an exact substring (markdown bold split it): 'Ability to travel'",
+  "skills: added 'territory planning' (quote 'territory and account plans')",
+  "skills: added 'competitive selling' (quote 'competitive selling')",
+  "skills: added 'business intelligence' (quote 'business intelligence')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

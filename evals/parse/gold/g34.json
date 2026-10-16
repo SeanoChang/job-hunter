@@ -1,0 +1,127 @@
+{
+ "gid": "g34",
+ "skills": [
+  {
+   "name": "machine learning",
+   "aliases": [
+    "ml"
+   ],
+   "quote": "ML"
+  },
+  {
+   "name": "python",
+   "aliases": [],
+   "quote": "Python"
+  },
+  {
+   "name": "jax",
+   "aliases": [],
+   "quote": "JAX"
+  },
+  {
+   "name": "pytorch",
+   "aliases": [
+    "torch"
+   ],
+   "quote": "Pytorch"
+  },
+  {
+   "name": "statistics",
+   "aliases": [],
+   "quote": "statistics"
+  },
+  {
+   "name": "neural networks",
+   "aliases": [
+    "neural network"
+   ],
+   "quote": "neural networks"
+  },
+  {
+   "name": "c++",
+   "aliases": [
+    "cpp"
+   ],
+   "quote": "C++"
+  },
+  {
+   "name": "data pipelines",
+   "aliases": [
+    "data pipeline",
+    "data processing pipelines"
+   ],
+   "quote": "data pipelines"
+  },
+  {
+   "name": "robotics",
+   "aliases": [],
+   "quote": "robotics"
+  },
+  {
+   "name": "deep learning",
+   "aliases": [
+    "dl"
+   ],
+   "quote": "deep learning"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "Prior experience with robotics or prediction problems."
+ ],
+ "pay": [
+  {
+   "min": "85",
+   "max": "85",
+   "currency": "USD",
+   "period": "hour",
+   "quote": "$85—$85 USD"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Currently enrolled in a PhD program.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "ML coding in Python (e.g JAX or Pytorch).",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Strong knowledge of foundational statistics & math.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Familiarity with neural networks.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Familiarity with C++, especially in the context of data processing pipelines.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Prior experience with robotics or prediction problems.",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "'You have:' has no modal word, so unstated per the guide; a reader would likely read it as required because it contrasts with 'We prefer:'. 'deep learning', 'perception' and 'autonomous driving' come from team/company description, not requirements. 'math' left out as an academic field. Pay is 'Hourly PhD Pay'. Review: the brief lists 'you have' as a required cue, so the 'You have:' lines are required. Verify: owner ruling overrides the brief; 'You have:' lines are unstated. Boilerplate skills perception/autonomous driving dropped; deep learning kept as used by the model-training work.",
+ "document_hash": "3aa95a0b5f8cb1709114f7ea6f97eca4d537b9af9166eb28b4c1e99ad229497a",
+ "reviewed": true,
+ "review_changes": [
+  "qualifications[0]: unstated -> required, cue 'You have:' heading",
+  "qualifications[1]: unstated -> required, cue 'You have:' heading",
+  "qualifications[2]: unstated -> required, cue 'You have:' heading",
+  "qualifications[3]: unstated -> required, cue 'You have:' heading",
+  "skills: pytorch aliases added 'torch'",
+  "verify: qualifications[0]: required -> unstated (override 1: 'You have:' is not a required cue)",
+  "verify: qualifications[1]: required -> unstated (override 1: 'You have:' is not a required cue)",
+  "verify: qualifications[2]: required -> unstated (override 1: 'You have:' is not a required cue)",
+  "verify: qualifications[3]: required -> unstated (override 1: 'You have:' is not a required cue)",
+  "verify: skills: removed 'perception' and 'autonomous driving' (override 2: company/team about-us text, not asked of the candidate or used in the role)"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

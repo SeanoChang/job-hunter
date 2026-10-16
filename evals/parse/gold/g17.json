@@ -1,0 +1,327 @@
+{
+ "gid": "g17",
+ "skills": [
+  {
+   "name": "antenna design",
+   "aliases": [
+    "antennas",
+    "antenna engineering"
+   ],
+   "quote": "antennas"
+  },
+  {
+   "name": "phased array antennas",
+   "aliases": [
+    "phased array",
+    "phased arrays"
+   ],
+   "quote": "phased array antennas"
+  },
+  {
+   "name": "feed systems",
+   "aliases": [
+    "antenna feeds"
+   ],
+   "quote": "feed systems"
+  },
+  {
+   "name": "radio frequency",
+   "aliases": [
+    "rf",
+    "rf engineering"
+   ],
+   "quote": "radio frequency (RF)"
+  },
+  {
+   "name": "rf front ends",
+   "aliases": [
+    "rf front end",
+    "rf front-end"
+   ],
+   "quote": "radio frequency (RF) front ends"
+  },
+  {
+   "name": "digital beamforming",
+   "aliases": [
+    "beamforming"
+   ],
+   "quote": "digital beamforming"
+  },
+  {
+   "name": "validation testing",
+   "aliases": [
+    "validation"
+   ],
+   "quote": "validation testing"
+  },
+  {
+   "name": "electromagnetic simulation",
+   "aliases": [
+    "em simulation",
+    "3d em simulation"
+   ],
+   "quote": "3D electromagnetic (EM) simulation"
+  },
+  {
+   "name": "cst",
+   "aliases": [
+    "cst studio suite",
+    "cst microwave studio"
+   ],
+   "quote": "CST"
+  },
+  {
+   "name": "hfss",
+   "aliases": [
+    "ansys hfss"
+   ],
+   "quote": "HFSS"
+  },
+  {
+   "name": "feko",
+   "aliases": [],
+   "quote": "FEKO"
+  },
+  {
+   "name": "empro",
+   "aliases": [],
+   "quote": "EMPro"
+  },
+  {
+   "name": "ticra",
+   "aliases": [
+    "ticra tools",
+    "grasp"
+   ],
+   "quote": "TICRA"
+  },
+  {
+   "name": "xfdtd",
+   "aliases": [],
+   "quote": "XFDTD"
+  },
+  {
+   "name": "impedance matching",
+   "aliases": [],
+   "quote": "impedance matching"
+  },
+  {
+   "name": "linear antennas",
+   "aliases": [],
+   "quote": "linear"
+  },
+  {
+   "name": "aperture antennas",
+   "aliases": [],
+   "quote": "aperture antennas"
+  },
+  {
+   "name": "smith chart",
+   "aliases": [],
+   "quote": "smith chart"
+  },
+  {
+   "name": "intermodulation distortion",
+   "aliases": [
+    "imd",
+    "iip2"
+   ],
+   "quote": "IMD"
+  },
+  {
+   "name": "microwave network analysis",
+   "aliases": [
+    "network analysis"
+   ],
+   "quote": "microwave network analysis"
+  },
+  {
+   "name": "rf filter design",
+   "aliases": [
+    "filter design"
+   ],
+   "quote": "RF filter design"
+  },
+  {
+   "name": "python",
+   "aliases": [],
+   "quote": "Python"
+  },
+  {
+   "name": "c#",
+   "aliases": [
+    "csharp"
+   ],
+   "quote": "C#"
+  },
+  {
+   "name": "c++",
+   "aliases": [
+    "cpp"
+   ],
+   "quote": "C++"
+  },
+  {
+   "name": "matlab",
+   "aliases": [],
+   "quote": "MATLAB"
+  },
+  {
+   "name": "antenna measurement",
+   "aliases": [
+    "antenna measurements"
+   ],
+   "quote": "antenna measurement techniques"
+  },
+  {
+   "name": "anechoic chambers",
+   "aliases": [
+    "anechoic chamber",
+    "reverb chambers",
+    "reverberation chamber"
+   ],
+   "quote": "anechoic/reverb chambers"
+  },
+  {
+   "name": "near-field measurements",
+   "aliases": [
+    "near field em measurements",
+    "near-field measurement"
+   ],
+   "quote": "near field EM measurements"
+  },
+  {
+   "name": "rf circuit simulation",
+   "aliases": [],
+   "quote": "RF circuit simulation"
+  },
+  {
+   "name": "awr",
+   "aliases": [
+    "awr microwave office"
+   ],
+   "quote": "AWR"
+  },
+  {
+   "name": "ads",
+   "aliases": [
+    "advanced design system",
+    "keysight ads"
+   ],
+   "quote": "ADS"
+  },
+  {
+   "name": "genesys",
+   "aliases": [
+    "keysight genesys"
+   ],
+   "quote": "Genesys"
+  },
+  {
+   "name": "antenna prototyping",
+   "aliases": [],
+   "quote": "antenna prototyping"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of research or development experience in the areas of RF and antennas (internship and thesis work acceptable)"
+  },
+  {
+   "min_years": 1,
+   "max_years": null,
+   "quote": "1+ years of experience using one of the 3D electromagnetic (EM) simulation tools: CST, HFSS, FEKO, EMPro, TICRA or XFDTD"
+  },
+  {
+   "min_years": 1,
+   "max_years": null,
+   "quote": "1+ years of programming experience in Python, C#, C++, or MATLAB"
+  }
+ ],
+ "experience_without_number": [
+  "Experience with basic RF concepts such as impedance matching, linear and aperture antennas, smith chart, power handling metrics (IIP2, IMD), microwave network analysis, RF filter design"
+ ],
+ "pay": [
+  {
+   "min": "125000.00",
+   "max": "150000.00",
+   "currency": "USD",
+   "period": "year",
+   "quote": "Level 1: $125,000.00 - $150,000.00"
+  },
+  {
+   "min": "145000.00",
+   "max": "175000.00",
+   "currency": "USD",
+   "period": "year",
+   "quote": "Level 2: $145,000.00 - $175,000.00"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": true,
+ "citizenship_quote": "To conform to U.S. Government export regulations, applicant must be a (i) U.S. citizen or national, (ii) U.S. lawful, permanent resident (aka green card holder), (iii) Refugee under 8 U.S.C. § 1157, or (iv) Asylee under 8 U.S.C. § 1158, or be eligible to obtain the required authorizations from the U.S. Department of State.",
+ "qualifications": [
+  {
+   "quote": "Bachelor’s degree in an engineering discipline",
+   "requirement": "required"
+  },
+  {
+   "quote": "2+ years of research or development experience in the areas of RF and antennas (internship and thesis work acceptable)",
+   "requirement": "required"
+  },
+  {
+   "quote": "1+ years of experience using one of the 3D electromagnetic (EM) simulation tools: CST, HFSS, FEKO, EMPro, TICRA or XFDTD",
+   "requirement": "required"
+  },
+  {
+   "quote": "Master’s degree or PhD in electrical engineering with some research/thesis work on RF or antennas",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with basic RF concepts such as impedance matching, linear and aperture antennas, smith chart, power handling metrics (IIP2, IMD), microwave network analysis, RF filter design",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "1+ years of programming experience in Python, C#, C++, or MATLAB",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Familiarity with antenna measurement techniques and tools such as anechoic/reverb chambers, near field EM measurements",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Familiarity with one of the mainstream RF circuit simulation tools: AWR, ADS, Genesys",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Familiarity with antenna prototyping tools and techniques",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Ability to work in a fast paced, autonomously driven, and demanding work environment",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Excellent written and verbal communication skills",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Passion for advancing the commercial space industry and human spaceflight",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Ability to work extended hours or weekends as needed for mission critical deadlines",
+   "requirement": "required"
+  }
+ ],
+ "notes": "ITAR line: U.S.-person status required with an escape clause for those who can obtain State Department authorization; labeled citizenship_required=true, debatable because of the escape clause. Pay is two per-level ranges with no stated period; period inferred as year because amounts are salary-scale and the next sentence says 'base salary'. Currency USD inferred from '$' and a U.S. (Redmond, WA) location. The 2+ years line counts internship/thesis work, but it is still a stated amount of prior experience. The 1+ years programming line is preferred. 'linear antennas' quote is just 'linear' because the text says 'linear and aperture antennas'. Review: ITAR line dropped from qualifications to match owner-reviewed g03.",
+ "document_hash": "a6c78dc8fe21c3ceb3ee8d1c646f8cfe4abfd94c09d63daf2f1bbec5ed6d6db9",
+ "reviewed": true,
+ "review_changes": [
+  "qualifications: removed the ITAR line (captured by citizenship_required; owner's g03 on the same SpaceX template leaves it out)"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

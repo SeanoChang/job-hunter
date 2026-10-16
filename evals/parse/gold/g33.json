@@ -1,0 +1,185 @@
+{
+ "gid": "g33",
+ "skills": [
+  {
+   "name": "silicon photonics",
+   "aliases": [],
+   "quote": "silicon photonics"
+  },
+  {
+   "name": "optical interconnect",
+   "aliases": [
+    "optical interconnects",
+    "optical compute interconnect"
+   ],
+   "quote": "optical interconnect"
+  },
+  {
+   "name": "co-packaged optics",
+   "aliases": [
+    "cpo",
+    "co packaged optics"
+   ],
+   "quote": "co-packaged optics"
+  },
+  {
+   "name": "data center networking",
+   "aliases": [
+    "datacenter networking",
+    "high-speed data center networking"
+   ],
+   "quote": "high-speed data center networking"
+  },
+  {
+   "name": "optical transceivers",
+   "aliases": [
+    "optical transceiver"
+   ],
+   "quote": "optical transceivers"
+  },
+  {
+   "name": "business development",
+   "aliases": [
+    "bd",
+    "biz dev"
+   ],
+   "quote": "business development"
+  },
+  {
+   "name": "go-to-market strategy",
+   "aliases": [
+    "gtm",
+    "go-to-market",
+    "gtm strategy"
+   ],
+   "quote": "go-to-market strategy"
+  },
+  {
+   "name": "strategic sales",
+   "aliases": [
+    "enterprise sales"
+   ],
+   "quote": "strategic sales"
+  },
+  {
+   "name": "contract negotiation",
+   "aliases": [
+    "negotiation",
+    "commercial negotiation"
+   ],
+   "quote": "negotiate commercial agreements"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 12,
+   "max_years": null,
+   "quote": "12+ years of experience in the semiconductor, optical, networking, or data center industry"
+  },
+  {
+   "min_years": 8,
+   "max_years": null,
+   "quote": "8+ years in business development, strategic sales, or go-to-market leadership roles"
+  }
+ ],
+ "experience_without_number": [
+  "Proven record of winning and growing business for complex semiconductor, optical, or data center products.",
+  "Skilled negotiator with experience structuring multi-year commercial and partnership agreements.",
+  "Demonstrated track record of closing design wins or commercial agreements with major technology customers.",
+  "Direct experience selling or developing silicon photonics, optical transceivers, co-packaged optics, or optical engines.",
+  "Experience bringing a new technology category to market and building its commercial model."
+ ],
+ "pay": [
+  {
+   "min": "221810",
+   "max": "313140",
+   "currency": "USD",
+   "period": "year",
+   "quote": "$221,810.00-313,140.00 USD"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Proven record of winning and growing business for complex semiconductor, optical, or data center products.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Strong technical fluency in silicon photonics, optical interconnect, or high-speed data center networking.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Established relationships with hyperscale, cloud, or OEM decision-makers.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Skilled negotiator with experience structuring multi-year commercial and partnership agreements.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Strategic thinker who can turn market insight into a focused go-to-market plan and execute against it.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Clear, confident communicator with executives, both inside Intel and with customers.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Comfortable leading in an emerging market where business models and standards are still forming.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Bachelor's degree in Electrical Engineering, Physics, Optics, Computer Engineering, Business, or a related field.",
+   "requirement": "required"
+  },
+  {
+   "quote": "12+ years of experience in the semiconductor, optical, networking, or data center industry.",
+   "requirement": "required"
+  },
+  {
+   "quote": "8+ years in business development, strategic sales, or go-to-market leadership roles.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Demonstrated track record of closing design wins or commercial agreements with major technology customers.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Ability to work from Santa Clara, California or another approved Intel U.S. site, with travel as required.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Master's degree, MBA, or PhD in a relevant engineering, physical science, or business discipline.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Direct experience selling or developing silicon photonics, optical transceivers, co-packaged optics, or optical engines.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Existing relationships with hyperscaler or cloud infrastructure, networking, or AI system teams.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience bringing a new technology category to market and building its commercial model.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Familiarity with optical and networking standards bodies and industry consortia.",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Business-development role. 'Optical engines' left out as a product category, not a skill; 'business development'/'go-to-market' treated as non-technical functions, not skills. The 'Position of Trust' extended background investigation is not a security clearance or a citizenship rule, so citizenship_required is false. Pay is labeled 'Annual Salary Range'. Review: business development, go-to-market strategy, strategic sales and contract negotiation added as named practices of the BD job family (the brief counts job-family practices).",
+ "document_hash": "c9b601b3d44622f5b4c47a717996983202d664d19b5ca5685fd55e02d1e5b7cd",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'business development' (quote 'business development')",
+  "skills: added 'go-to-market strategy' (quote 'go-to-market strategy')",
+  "skills: added 'strategic sales' (quote 'strategic sales')",
+  "skills: added 'contract negotiation' (quote 'negotiate commercial agreements')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

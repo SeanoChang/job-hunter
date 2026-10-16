@@ -1,0 +1,149 @@
+{
+ "gid": "g49",
+ "skills": [
+  {
+   "name": "saas sales",
+   "aliases": [
+    "software as a service",
+    "saas"
+   ],
+   "quote": "sold software as a service"
+  },
+  {
+   "name": "education sales",
+   "aliases": [
+    "research sales",
+    "higher education sales"
+   ],
+   "quote": "Education or research sales"
+  },
+  {
+   "name": "product-led growth",
+   "aliases": [
+    "plg"
+   ],
+   "quote": "PLG"
+  },
+  {
+   "name": "agentic workflows",
+   "aliases": [
+    "ai agents",
+    "agentic ai"
+   ],
+   "quote": "agentic workflows"
+  },
+  {
+   "aliases": [
+    "sales management"
+   ],
+   "name": "sales leadership",
+   "quote": "Sales leadership"
+  },
+  {
+   "aliases": [
+    "gtm",
+    "go to market",
+    "go-to-market"
+   ],
+   "name": "go-to-market strategy",
+   "quote": "go to market"
+  },
+  {
+   "aliases": [
+    "account planning",
+    "account plans"
+   ],
+   "name": "territory planning",
+   "quote": "account plans"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "You have sold software as a service into universities, research institutes, or academic medical centers",
+  "experience selling to universities, research institutes, or school systems in more than one region",
+  "Experience with research funding",
+  "Experience working with academic consortia, national labs, or research networks."
+ ],
+ "pay": [
+  {
+   "min": "380000",
+   "max": "450000",
+   "currency": "USD",
+   "period": "year",
+   "quote": "$380,000—$450,000 USD"
+  }
+ ],
+ "sponsorship": "yes",
+ "sponsorship_quote": "We do sponsor visas!",
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Education or research sales. You have sold software as a service into universities, research institutes, or academic medical centers, and you have personally closed complex institutional agreements involving procurement, security review, and multiple decision makers.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Science or education background. You have trained or worked in a scientific field, or spent a meaningful part of your career selling to or building for scientists or educators, and you can hold a credible conversation with these audiences.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Sales leadership. You have led a sales business end to end and been the accountable owner for its results, whether as a team lead, a player coach, or the sole owner of a strategic book.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Global education landscape: experience selling to universities, research institutes, or school systems in more than one region, an understanding of how funding and procurement differ from country to country, and comfort working across time zones with regional teams.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with research funding: grants, indirect costs, and how a fixed annual budget shapes what an institution can buy.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Track record landing an institution wide agreement at a research intensive university, and expanding from a single department to a campus or system.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Familiarity with how AI is already used in research settings and K12 classrooms, and a point of view on where it should go next.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience working with academic consortia, national labs, or research networks.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "An impact, education, research, or mission driven go to market background, and genuine interest in these institutions' constraints.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "A daily working habit with Claude, and agentic workflows you have built for yourself.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "You have sat in a faculty meeting or a research office and know why the obvious commercial playbook does not work there.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "You are comfortable being the only person accountable for a book while depending on teams you do not manage.",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Bachelor’s degree or an equivalent combination of education, training, and/or experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "A field relevant to the role as demonstrated through coursework, training, or professional experience",
+   "requirement": "required"
+  }
+ ],
+ "notes": "Pay is an OTE range (base + commission target) stated as 'Annual Salary'. 'Minimum years of experience' line gives no number, so no experience entry. 'You might thrive here if' bullets are mostly motivations; only the two that describe background/ability are kept, as unstated - reviewer may drop them. Claude is the employer's own product, not a skill. Logistics quotes have markdown bold stripped. Sponsorship yes but hedged ('aren't able to ... for every role'). Review: Logistics quotes trimmed to the text after the bold label so they are exact substrings. Added sales leadership (a minimum-qualification heading), go-to-market and account planning.",
+ "document_hash": "af643904eb23a18dd306500723ef66348854d6f4a690c7777bcd3f3b74a989b8",
+ "reviewed": true,
+ "review_changes": [
+  "qualifications[12]: quote trimmed to an exact substring (markdown bold split it): 'Bachelor’s degree or an equivalent combination of education, training,'",
+  "qualifications[13]: quote trimmed to an exact substring (markdown bold split it): 'A field relevant to the role as demonstrated through coursework, train'",
+  "skills: added 'sales leadership' (quote 'Sales leadership')",
+  "skills: added 'go-to-market strategy' (quote 'go to market')",
+  "skills: added 'territory planning' (quote 'account plans')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

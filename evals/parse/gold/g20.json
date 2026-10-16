@@ -1,0 +1,159 @@
+{
+ "gid": "g20",
+ "skills": [
+  {
+   "name": "pharmacy operations",
+   "aliases": [],
+   "quote": "pharmacy operations"
+  },
+  {
+   "name": "prescription filling",
+   "aliases": [
+    "filling prescriptions"
+   ],
+   "quote": "filling prescription items"
+  },
+  {
+   "name": "medication dispensing",
+   "aliases": [
+    "dispensing"
+   ],
+   "quote": "Package medications for dispensing"
+  },
+  {
+   "name": "medication packaging",
+   "aliases": [],
+   "quote": "pre-sort and package medications"
+  },
+  {
+   "name": "inventory management",
+   "aliases": [
+    "inventory replenishment"
+   ],
+   "quote": "refilling inventory"
+  },
+  {
+   "name": "quality control",
+   "aliases": [
+    "qc"
+   ],
+   "quote": "quality control"
+  },
+  {
+   "name": "medication identification",
+   "aliases": [],
+   "quote": "recognizing and identifying patient medications"
+  },
+  {
+   "name": "pharmacy technician certification",
+   "aliases": [
+    "ptcb",
+    "nha",
+    "cpht",
+    "national pharmacy technician certification"
+   ],
+   "quote": "National Pharmacy Technician Certification (PTCB or NHA)"
+  },
+  {
+   "name": "pharmacy technician license",
+   "aliases": [
+    "pharmacy technician licence"
+   ],
+   "quote": "Pharmacy Technician license"
+  },
+  {
+   "name": "shipping and receiving",
+   "aliases": [
+    "shipping",
+    "receiving"
+   ],
+   "quote": "receiving, shipping, counting, and packing"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 0.5,
+   "max_years": null,
+   "quote": "6+ months of working with computer and web based tools experience"
+  }
+ ],
+ "experience_without_number": [
+  "Experience recognizing and identifying patient medications",
+  "Experience working in fast paced environments"
+ ],
+ "pay": [
+  {
+   "min": "23.50",
+   "max": "23.50",
+   "currency": "USD",
+   "period": "hour",
+   "quote": "USA, TX, SAN ANTONIO - 23.50 - 23.50 USD hourly"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "active and unrestricted Pharmacy Technician license (or equivalent trainee/assistant license) in state of employment",
+   "requirement": "required"
+  },
+  {
+   "quote": "National Pharmacy Technician Certification (PTCB or NHA)",
+   "requirement": "required"
+  },
+  {
+   "quote": "High school diploma or equivalent",
+   "requirement": "required"
+  },
+  {
+   "quote": "6+ months of working with computer and web based tools experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "Valid and active driver's license",
+   "requirement": "required"
+  },
+  {
+   "quote": "Must be at least 21 years old",
+   "requirement": "required"
+  },
+  {
+   "quote": "Ability to communicate effectively with coworkers and supervisor",
+   "requirement": "required"
+  },
+  {
+   "quote": "Ability to read and understand English language labeling on product cartons and prescription labels",
+   "requirement": "required"
+  },
+  {
+   "quote": "Clean driving record that passes Amazon’s Motor Vehicle Record (MVR) Checks (to be rechecked annually).",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience recognizing and identifying patient medications",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience working in fast paced environments, and managing workload even during times of stress, or escalated activity",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Demonstrated organization skills and attention to detail",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Demonstrated ability to work as an effective team member",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Pay is a single hourly amount for San Antonio, TX, and includes the highest shift differential. 6+ months converted to 0.5 years. 'Must be at least 21' is age, and 'Driving for long periods of time (8+hrs)' and shift lengths are schedule, so neither is experience. The Physical Requirements lines (lifting up to 49 lbs, standing, driving 8+hrs) are not labeled as qualifications; reviewer may add them as required. Skills are thin for this role; most are duty-derived. Review: the license and PTCB/NHA certification are now skills, because the brief lists certifications as skills.",
+ "document_hash": "0a499b6ab6db1704dc862d019c12f78479b768ccc5f991c4df85abda361fa77b",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'pharmacy technician certification' (quote 'National Pharmacy Technician Certification (PTCB or NHA)') and 'pharmacy technician license' (brief counts certifications as skills)",
+  "skills: added 'shipping and receiving' (quote 'receiving, shipping, counting, and packing')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

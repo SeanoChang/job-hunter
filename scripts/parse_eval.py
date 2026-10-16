@@ -360,6 +360,166 @@ def s_authorization(rs: list[dict[str, Any]]) -> float | None:
     return _pairwise([{v} for v in vals])
 
 
+# --- accuracy against the answer key ------------------------------------------
+# The metrics above say whether a parse is well-formed and repeatable; a
+# parse can be both and still wrong. These score each sample against a
+# hand-reviewed answer key (evals/parse/gold/<gid>.json), per document, as the
+# mean over the document's valid samples. A document without a key scores
+# None and drops out of the mean, so a run on all 168 cases still reports
+# accuracy on the 50 that have one.
+
+GOLD = EVAL / "gold"
+_KEYS: dict[str, dict[str, Any]] | None = None
+
+
+def gold_for(document_hash: str) -> dict[str, Any] | None:
+    global _KEYS
+    if _KEYS is None:
+        _KEYS = {}
+        for path in sorted(GOLD.glob("g*.json")):
+            g = json.loads(path.read_text(encoding="utf-8"))
+            _KEYS[g["document_hash"]] = g
+    return _KEYS.get(document_hash)
+
+
+def _norm(name: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^\w+#./ ]", " ", name.lower())).strip()
+
+
+def _f1(pred: list[Any], gold: list[Any], match: Callable[[Any, Any], bool]) -> float:
+    """Greedy one-to-one F1; both empty is a correct 'nothing here'."""
+    if not pred and not gold:
+        return 1.0
+    left = list(gold)
+    hit = 0
+    for p in pred:
+        for g in left:
+            if match(p, g):
+                left.remove(g)
+                hit += 1
+                break
+    return 2 * hit / (len(pred) + len(gold))
+
+
+def _per_sample(rs: list[dict[str, Any]],
+                fn: Callable[[dict[str, Any], dict[str, Any]], float | None]) -> float | None:
+    gold = gold_for(rs[0]["document_hash"]) if rs else None
+    if gold is None:
+        return None
+    xs = [x for p in _profiles(rs) if (x := fn(p, gold)) is not None]
+    return statistics.fmean(xs) if xs else None
+
+
+def _skill_sets(p: dict[str, Any], gold: dict[str, Any]) -> tuple[set[str], list[set[str]]]:
+    pred = {_norm(m.get("normalized_key") or m["surface"]) for m in p["mentions"]
+            if m["type"] == "skill"}
+    keys = [{_norm(s["name"]), *(_norm(a) for a in s.get("aliases") or [])}
+            for s in gold["skills"]]
+    return pred, keys
+
+
+def a_skill_precision(rs: list[dict[str, Any]]) -> float | None:
+    def one(p: dict[str, Any], gold: dict[str, Any]) -> float | None:
+        pred, keys = _skill_sets(p, gold)
+        return _rate(sum(any(s in k for k in keys) for s in pred), len(pred))
+    return _per_sample(rs, one)
+
+
+def a_skill_recall(rs: list[dict[str, Any]]) -> float | None:
+    def one(p: dict[str, Any], gold: dict[str, Any]) -> float | None:
+        pred, keys = _skill_sets(p, gold)
+        return _rate(sum(bool(k & pred) for k in keys), len(keys))
+    return _per_sample(rs, one)
+
+
+_YEARS = {"year": 1.0, "month": 1 / 12, "week": 1 / 52}
+
+
+def _years(q: dict[str, Any]) -> tuple[float | None, float | None] | None:
+    scale = _YEARS.get(q.get("unit") or "year")
+    if scale is None:
+        return None
+    lo, hi = q.get("min_value"), q.get("max_value")
+    lo = None if lo is None else round(float(lo) * scale, 2)
+    hi = None if hi is None else round(float(hi) * scale, 2)
+    if q.get("comparison") == "gte":
+        hi = None
+    elif q.get("comparison") == "lte":
+        lo = None
+    return lo, hi
+
+
+def _same_span(p: tuple[float | None, float | None], g: dict[str, Any]) -> bool:
+    """Same floor, and the same ceiling unless either side states a bare number."""
+    glo, ghi = g.get("min_years"), g.get("max_years")
+    glo = None if glo is None else round(float(glo), 2)
+    ghi = None if ghi is None else round(float(ghi), 2)
+    if p[0] != glo:
+        return False
+    return p[1] == ghi or ghi is None or p[1] in (None, p[0])
+
+
+def a_experience(rs: list[dict[str, Any]]) -> float | None:
+    """F1 of parsed experience spans against the key's stated years."""
+    def one(p: dict[str, Any], gold: dict[str, Any]) -> float:
+        pred = [y for f in _facts(p, "experience") if f["derived"]["state"] == "parsed"
+                and f["derived"].get("quantity") and (y := _years(f["derived"]["quantity"]))]
+        return _f1(list(dict.fromkeys(pred)), gold["experience"], _same_span)
+    return _per_sample(rs, one)
+
+
+def _same_pay(m: dict[str, Any], g: dict[str, Any]) -> bool:
+    def num(x: Any) -> float | None:
+        return None if x in (None, "") else float(str(x).replace(",", ""))
+    return (num(m.get("min_amount")) == num(g.get("min"))
+            and num(m.get("max_amount")) == num(g.get("max"))
+            and (m.get("currency") or None) == (g.get("currency") or None)
+            and (m.get("period") or None) == (g.get("period") or None))
+
+
+def a_pay(rs: list[dict[str, Any]]) -> float | None:
+    """F1 of parsed pay (amounts, currency and period all right) against the key."""
+    def one(p: dict[str, Any], gold: dict[str, Any]) -> float:
+        pred = [f["derived"]["money"] for f in _facts(p, "compensation")
+                if f["derived"].get("money")]
+        uniq = list({json.dumps(m, sort_keys=True): m for m in pred}.values())
+        return _f1(uniq, gold["pay"], _same_pay)
+    return _per_sample(rs, one)
+
+
+def a_sponsorship(rs: list[dict[str, Any]]) -> float | None:
+    return _per_sample(rs, lambda p, g: float(
+        p["authorization"]["sponsorship"] == g["sponsorship"]))
+
+
+def a_citizenship(rs: list[dict[str, Any]]) -> float | None:
+    return _per_sample(rs, lambda p, g: float(
+        bool(p["authorization"]["citizenship_required"]) == bool(g["citizenship_required"])))
+
+
+def _overlaps(a: str, b: str) -> bool:
+    a, b = _norm(a), _norm(b)
+    return bool(a) and bool(b) and (a in b or b in a)
+
+
+def a_requirement(rs: list[dict[str, Any]]) -> float | None:
+    """Of the key's qualifications a claim quotes, the share labeled the same."""
+    def one(p: dict[str, Any], gold: dict[str, Any]) -> float | None:
+        claims = [c for a in p["demand_profile"]["areas"] if a["kind"] == "qualification"
+                  for c in a["claims"]]
+        hit = tot = 0
+        for q in gold["qualifications"]:
+            c = next((c for c in claims if _overlaps(c["quote"]["text"], q["quote"])), None)
+            if c is None:
+                continue
+            tot += 1
+            # 2026-10-11 ruling: a qualification nothing marks is preferred
+            gold_label = "preferred" if q["requirement"] == "unstated" else q["requirement"]
+            hit += (c.get("requirement") or "unstated") == gold_label
+        return _rate(hit, tot)
+    return _per_sample(rs, one)
+
+
 QUALITY: dict[str, Callable[[list[dict[str, Any]]], float | None]] = {
     "valid_first_shot": q_valid,
     "experience_parsed": q_experience_parsed,
@@ -374,7 +534,16 @@ STABILITY: dict[str, Callable[[list[dict[str, Any]]], float | None]] = {
     "stab_facts": s_facts,
     "stab_authorization": s_authorization,
 }
-METRICS = {**QUALITY, **STABILITY}
+ACCURACY: dict[str, Callable[[list[dict[str, Any]]], float | None]] = {
+    "acc_skill_precision": a_skill_precision,
+    "acc_skill_recall": a_skill_recall,
+    "acc_experience": a_experience,
+    "acc_pay": a_pay,
+    "acc_sponsorship": a_sponsorship,
+    "acc_citizenship": a_citizenship,
+    "acc_requirement": a_requirement,
+}
+METRICS = {**QUALITY, **ACCURACY, **STABILITY}
 
 
 def per_doc(run_dir: Path) -> dict[str, dict[str, Any]]:

@@ -1,0 +1,160 @@
+{
+ "gid": "g03",
+ "skills": [
+  {
+   "aliases": [
+    "real-time systems",
+    "realtime software",
+    "real time"
+   ],
+   "name": "real-time software",
+   "quote": "real-time software"
+  },
+  {
+   "aliases": [],
+   "name": "c",
+   "quote": "C"
+  },
+  {
+   "aliases": [
+    "cpp"
+   ],
+   "name": "c++",
+   "quote": "C++"
+  },
+  {
+   "aliases": [],
+   "name": "python",
+   "quote": "Python"
+  },
+  {
+   "aliases": [
+    "csharp"
+   ],
+   "name": "c#",
+   "quote": "C#"
+  },
+  {
+   "aliases": [
+    "oop",
+    "object oriented language",
+    "object-oriented languages"
+   ],
+   "name": "object-oriented programming",
+   "quote": "object oriented language"
+  },
+  {
+   "aliases": [
+    "network protocols",
+    "networking"
+   ],
+   "name": "networking protocols",
+   "quote": "networking protocols"
+  },
+  {
+   "aliases": [],
+   "name": "udp",
+   "quote": "UDP"
+  },
+  {
+   "aliases": [
+    "tcp",
+    "ip"
+   ],
+   "name": "tcp/ip",
+   "quote": "TCP/IP"
+  },
+  {
+   "aliases": [
+    "distributed system"
+   ],
+   "name": "distributed systems",
+   "quote": "distributed systems"
+  },
+  {
+   "aliases": [
+    "cybersecurity",
+    "software security"
+   ],
+   "name": "security",
+   "quote": "security"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "Professional development experience in C, C++, Python, C# or another object oriented language (internship experience is applicable)",
+  "Strong professional/project experience writing software in a production environment",
+  "Experience with networking protocols (UDP, TCP/IP, etc) and distributed systems",
+  "Experience in security issues associated with distributed systems and internet services"
+ ],
+ "pay": [
+  {
+   "currency": "USD",
+   "max": "160000",
+   "min": "125000",
+   "period": "year",
+   "quote": "Level 1: $125,000.00 - $160,000.00"
+  },
+  {
+   "currency": "USD",
+   "max": "195000",
+   "min": "145000",
+   "period": "year",
+   "quote": "Level 2: $145,000.00 - $195,000.00"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": true,
+ "citizenship_quote": "To conform to U.S. Government export regulations, applicant must be a (i) U.S. citizen or national, (ii) U.S. lawful, permanent resident (aka green card holder), (iii) Refugee under 8 U.S.C. § 1157, or (iv) Asylee under 8 U.S.C. § 1158, or be eligible to obtain the required authorizations from the U.S. Department of State.",
+ "qualifications": [
+  {
+   "quote": "Bachelor’s degree in computer science, engineering, math, or other STEM discipline.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Professional development experience in C, C++, Python, C# or another object oriented language (internship experience is applicable).",
+   "requirement": "required"
+  },
+  {
+   "quote": "Graduating in the class of 2026 or 2027.",
+   "requirement": "required"
+  },
+  {
+   "quote": "Strong professional/project experience writing software in a production environment.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Developed, debugged and deployed software that has been used in real world applications/projects.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Creative approach to problem solving, exceptional analytical skills and engineering fundamentals.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Excellent communication skills both written and verbal.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Ability to work effectively in a dynamic environment with changing needs and requirements.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience with networking protocols (UDP, TCP/IP, etc) and distributed systems.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience in security issues associated with distributed systems and internet services.",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Must be willing to work extended hours and weekends as needed.",
+   "requirement": "required"
+  }
+ ],
+ "notes": "Pay period not stated literally; 'base salary' and the magnitude imply annual. Currency USD inferred from $ and US (ITAR) context. Citizenship: ITAR requires U.S. person status (citizen/national/PR/refugee/asylee); the 'or be eligible to obtain the required authorizations' escape clause makes this arguable, but U.S.-person status is the unconditional default, so true. 'security' as a skill is borderline (quote is 'security issues').",
+ "document_hash": "b6f2aeb9fbb81f372e5097d7d0430aa502eed1d7313f0668c0a6e5df4f5e3584",
+ "reviewed": true,
+ "reviewed_by": "owner"
+}

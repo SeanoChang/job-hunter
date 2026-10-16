@@ -1,0 +1,293 @@
+{
+ "gid": "g36",
+ "skills": [
+  {
+   "name": "facilities maintenance",
+   "aliases": [
+    "electrical facilities maintenance",
+    "mechanical facilities maintenance",
+    "facility maintenance"
+   ],
+   "quote": "facilities maintenance"
+  },
+  {
+   "name": "preventative maintenance",
+   "aliases": [
+    "preventive maintenance",
+    "pm"
+   ],
+   "quote": "preventative maintenance"
+  },
+  {
+   "name": "building management systems",
+   "aliases": [
+    "bms",
+    "building management system",
+    "building automation systems",
+    "bas"
+   ],
+   "quote": "Building Management Systems (BMS)"
+  },
+  {
+   "name": "electrical power management system",
+   "aliases": [
+    "epms"
+   ],
+   "quote": "Electrical Power Management System (EPMS)"
+  },
+  {
+   "name": "root cause analysis",
+   "aliases": [
+    "rca"
+   ],
+   "quote": "root cause analysis"
+  },
+  {
+   "name": "microsoft office",
+   "aliases": [
+    "ms office"
+   ],
+   "quote": "Microsoft Office"
+  },
+  {
+   "name": "technical writing",
+   "aliases": [],
+   "quote": "Technical writing"
+  },
+  {
+   "name": "change management",
+   "aliases": [],
+   "quote": "change management"
+  },
+  {
+   "name": "engineering drawings",
+   "aliases": [
+    "engineering drawing",
+    "blueprint reading"
+   ],
+   "quote": "engineering drawings"
+  },
+  {
+   "name": "diesel generators",
+   "aliases": [
+    "diesel generator",
+    "generators"
+   ],
+   "quote": "diesel generators"
+  },
+  {
+   "name": "switchgear",
+   "aliases": [
+    "switch gear"
+   ],
+   "quote": "switchgear"
+  },
+  {
+   "name": "ups",
+   "aliases": [
+    "uninterruptible power supply",
+    "upss"
+   ],
+   "quote": "UPSs"
+  },
+  {
+   "name": "pdu",
+   "aliases": [
+    "pdus",
+    "power distribution unit"
+   ],
+   "quote": "PDUs"
+  },
+  {
+   "name": "three phase electrical systems",
+   "aliases": [
+    "3 phase electrical systems",
+    "three-phase power"
+   ],
+   "quote": "three phase electrical systems"
+  },
+  {
+   "name": "chillers",
+   "aliases": [
+    "centrifugal chillers",
+    "chiller"
+   ],
+   "quote": "centrifugal chillers"
+  },
+  {
+   "name": "cooling towers",
+   "aliases": [
+    "cooling tower"
+   ],
+   "quote": "cooling towers"
+  },
+  {
+   "name": "air handlers",
+   "aliases": [
+    "air handling units",
+    "ahu"
+   ],
+   "quote": "air handlers"
+  },
+  {
+   "name": "crac",
+   "aliases": [
+    "computer room air conditioning",
+    "crah",
+    "crahu"
+   ],
+   "quote": "CRAC"
+  },
+  {
+   "name": "troubleshooting",
+   "aliases": [
+    "equipment troubleshooting"
+   ],
+   "quote": "troubleshooting"
+  },
+  {
+   "name": "rack installation",
+   "aliases": [
+    "rack installs",
+    "rack decommissioning"
+   ],
+   "quote": "rack installs"
+  },
+  {
+   "name": "wet cell batteries",
+   "aliases": [
+    "batteries",
+    "battery systems"
+   ],
+   "quote": "wet cell batteries"
+  },
+  {
+   "name": "fire/life safety systems",
+   "aliases": [
+    "fire life safety",
+    "fire alarm systems"
+   ],
+   "quote": "fire/life safety equipment"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of electrical and mechanical facilities maintenance"
+  },
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of electrical facilities maintenance"
+  },
+  {
+   "min_years": 1,
+   "max_years": null,
+   "quote": "1+ years of mechanical facilities maintenance experience"
+  },
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of Microsoft Office products and applications experience"
+  },
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of data center engineering experience"
+  },
+  {
+   "min_years": 4,
+   "max_years": null,
+   "quote": "4+ years of military experience"
+  }
+ ],
+ "experience_without_number": [
+  "Experience reading and writing procedures, technical documents, and engineering drawings"
+ ],
+ "pay": [
+  {
+   "min": "37.64",
+   "max": "65.91",
+   "currency": "USD",
+   "period": "hour",
+   "quote": "37.64 - 65.91 USD hourly"
+  }
+ ],
+ "sponsorship": "no",
+ "sponsorship_quote": "NOTE: Amazon does not sponsor for immigration, including for H-1B, TN, and other non-immigrant visas, for this role.",
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Willingness and demonstrated ability to work in the following physical conditions with reasonable accommodations:",
+   "requirement": "required"
+  },
+  {
+   "quote": "Regularly lift and/or move up to 39 pounds independently",
+   "requirement": "required"
+  },
+  {
+   "quote": "Participate in group lifts for 40+ pounds",
+   "requirement": "required"
+  },
+  {
+   "quote": "Maintain balance and perform construction tasks while on a ladder",
+   "requirement": "required"
+  },
+  {
+   "quote": "Regularly walk, use hands and fingers, handle or feel, reach with hands and arms, stoop, kneel, crouch or crawl, climb stairs, twist, bend, work above shoulders, grasp, carry, push and pull objects into position",
+   "requirement": "required"
+  },
+  {
+   "quote": "Work in an environment requiring provided ear protection",
+   "requirement": "required"
+  },
+  {
+   "quote": "Ability to travel to or commute between data center locations as needed",
+   "requirement": "required"
+  },
+  {
+   "quote": "Willingness to temporarily work at alternative sites during training periods or until assigned facility is operational",
+   "requirement": "required"
+  },
+  {
+   "quote": "Candidates must be able to travel (over 50 miles) or commute (less than 50 miles) to active data center sites as required by business needs.",
+   "requirement": "required"
+  },
+  {
+   "quote": "2+ years of electrical and mechanical facilities maintenance, or 2+ years of electrical facilities maintenance and 1+ years of mechanical facilities maintenance experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "2+ years of Microsoft Office products and applications experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "Work flexible schedule including weekends, nights, and holidays",
+   "requirement": "required"
+  },
+  {
+   "quote": "2+ years of data center engineering experience",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Experience reading and writing procedures, technical documents, and engineering drawings",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "vocational/technical training or an associate degree or above, or 4+ years of military experience",
+   "requirement": "preferred"
+  }
+ ],
+ "notes": "Experience: the first basic qualification is an OR of two paths (2+ years combined, or 2+ electrical plus 1+ mechanical); I listed all three amounts. '4+ years of military experience' is an alternative to a degree, but it is still prior experience in years. Physical and Essential Requirements lines counted as required qualifications; 'Travel frequency will vary...' left out because it is not a requirement on the candidate. Hardware list (generators, switchgear, UPS, PDU, chillers, etc.) counted as skills per the 'hardware' rule. Pay is for Herndon, VA only. Review: added troubleshooting, rack installation, wet cell batteries and fire/life safety as named equipment/practices; pumps, motors and fuel systems left out as too generic.",
+ "document_hash": "865060d980e93a716afe78c307759aad56396a111a2106d838a0fa21b81193d5",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'troubleshooting' (quote 'troubleshooting')",
+  "skills: added 'rack installation' (quote 'rack installs')",
+  "skills: added 'wet cell batteries' (quote 'wet cell batteries')",
+  "skills: added 'fire/life safety systems' (quote 'fire/life safety equipment')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

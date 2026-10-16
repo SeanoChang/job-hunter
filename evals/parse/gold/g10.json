@@ -1,0 +1,256 @@
+{
+ "gid": "g10",
+ "skills": [
+  {
+   "name": "container orchestration",
+   "aliases": [
+    "orchestration"
+   ],
+   "quote": "container orchestration"
+  },
+  {
+   "name": "containers",
+   "aliases": [
+    "containerization",
+    "container"
+   ],
+   "quote": "containers"
+  },
+  {
+   "name": "cloud computing",
+   "aliases": [
+    "cloud"
+   ],
+   "quote": "cloud"
+  },
+  {
+   "name": "serverless",
+   "aliases": [
+    "serverless computing"
+   ],
+   "quote": "Serverless"
+  },
+  {
+   "name": "distributed systems",
+   "aliases": [
+    "distributed system",
+    "distributed software"
+   ],
+   "quote": "distributed systems"
+  },
+  {
+   "name": "linux",
+   "aliases": [],
+   "quote": "Linux"
+  },
+  {
+   "name": "design patterns",
+   "aliases": [
+    "design pattern"
+   ],
+   "quote": "design patterns"
+  },
+  {
+   "name": "software architecture",
+   "aliases": [
+    "architecture",
+    "system design"
+   ],
+   "quote": "architecture"
+  },
+  {
+   "name": "multithreading",
+   "aliases": [
+    "multi-threading",
+    "multi-threaded",
+    "concurrency"
+   ],
+   "quote": "multi-threaded"
+  },
+  {
+   "name": "embedded software",
+   "aliases": [
+    "embedded"
+   ],
+   "quote": "embedded"
+  },
+  {
+   "name": "c#",
+   "aliases": [
+    "csharp"
+   ],
+   "quote": "C#"
+  },
+  {
+   "name": "c++",
+   "aliases": [
+    "cpp"
+   ],
+   "quote": "C++"
+  },
+  {
+   "name": "java",
+   "aliases": [],
+   "quote": "Java"
+  },
+  {
+   "name": "perl",
+   "aliases": [],
+   "quote": "Perl"
+  },
+  {
+   "name": "object-oriented design",
+   "aliases": [
+    "ood",
+    "object oriented design"
+   ],
+   "quote": "Object Oriented Design"
+  },
+  {
+   "name": "software development life cycle",
+   "aliases": [
+    "sdlc"
+   ],
+   "quote": "software development life cycle"
+  },
+  {
+   "name": "code review",
+   "aliases": [
+    "code reviews"
+   ],
+   "quote": "code reviews"
+  },
+  {
+   "name": "source control",
+   "aliases": [
+    "version control",
+    "source control management"
+   ],
+   "quote": "source control management"
+  },
+  {
+   "name": "software testing",
+   "aliases": [
+    "testing"
+   ],
+   "quote": "testing"
+  },
+  {
+   "name": "on-call",
+   "aliases": [
+    "on call",
+    "operational support"
+   ],
+   "quote": "on-call"
+  },
+  {
+   "name": "data analysis",
+   "aliases": [
+    "analyzing data"
+   ],
+   "quote": "analyzing large amounts of data"
+  }
+ ],
+ "experience": [
+  {
+   "min_years": 3,
+   "max_years": null,
+   "quote": "3+ years of non-internship professional software development experience"
+  },
+  {
+   "min_years": 2,
+   "max_years": null,
+   "quote": "2+ years of non-internship design or architecture (design patterns, reliability and scaling) of new and existing systems experience"
+  },
+  {
+   "min_years": 1,
+   "max_years": null,
+   "quote": "1+ years of software development engineer or related occupational experience"
+  },
+  {
+   "min_years": 1,
+   "max_years": null,
+   "quote": "1+ years of designing and developing large-scale, multi-tiered, multi-threaded, embedded or distributed software applications, tools, systems, and services using: C#, C++, Java, or Perl experience"
+  },
+  {
+   "min_years": 1,
+   "max_years": null,
+   "quote": "1+ years of Object Oriented Design experience"
+  },
+  {
+   "min_years": 3,
+   "max_years": null,
+   "quote": "3+ years of full software development life cycle, including coding standards, code reviews, source control management, build processes, testing, and operations experience"
+  }
+ ],
+ "experience_without_number": [
+  "Experience programming with at least one software programming language"
+ ],
+ "pay": [
+  {
+   "min": "143700",
+   "max": "194400",
+   "currency": "USD",
+   "period": "year",
+   "quote": "143,700.00 - 194,400.00 USD annually"
+  }
+ ],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "3+ years of non-internship professional software development experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "2+ years of non-internship design or architecture (design patterns, reliability and scaling) of new and existing systems experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "1+ years of software development engineer or related occupational experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "1+ years of designing and developing large-scale, multi-tiered, multi-threaded, embedded or distributed software applications, tools, systems, and services using: C#, C++, Java, or Perl experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "1+ years of Object Oriented Design experience",
+   "requirement": "required"
+  },
+  {
+   "quote": "Bachelor's degree or foreign equivalent in Computer Science, Engineering, Mathematics, or a related field",
+   "requirement": "required"
+  },
+  {
+   "quote": "Experience programming with at least one software programming language",
+   "requirement": "required"
+  },
+  {
+   "quote": "3+ years of full software development life cycle, including coding standards, code reviews, source control management, build processes, testing, and operations experience",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "Bachelor's degree in computer science or equivalent",
+   "requirement": "preferred"
+  },
+  {
+   "quote": "A successful candidate will need a strong understanding of software development with Linux, and be comfortable analyzing large amounts of data from multiple sources within a distributed network.",
+   "requirement": "required"
+  },
+  {
+   "quote": "We are seeking an SDE with strong knowledge of distributed systems.",
+   "requirement": "unstated"
+  }
+ ],
+ "notes": "Amazon ECS, Fargate and AWS are the employer's own products, so not listed as skills (a lenient grader might accept aws/ecs). Not an entry-level role (3+ years required). 'software architecture', 'embedded software', 'software testing' are borderline. 'Must enjoy working on complex software systems' left out as a trait. Pay is the Seattle base range, annual. Review: added on-call and data analysis from the role description.",
+ "document_hash": "39c37ea75994a68fcd0937a45d18b21dda685966b73dfb1f394eaaf413b4e339",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'on-call' (quote 'on-call')",
+  "skills: added 'data analysis' (quote 'analyzing large amounts of data')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}

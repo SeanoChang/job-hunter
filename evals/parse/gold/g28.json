@@ -1,0 +1,96 @@
+{
+ "gid": "g28",
+ "skills": [
+  {
+   "name": "category management",
+   "aliases": [
+    "category strategy",
+    "kategoriestrategie"
+   ],
+   "quote": "Kategoriestrategie"
+  },
+  {
+   "name": "market analysis",
+   "aliases": [
+    "market trend analysis",
+    "analyse von markttrends"
+   ],
+   "quote": "Analyse von Markttrends"
+  },
+  {
+   "name": "data analysis",
+   "aliases": [],
+   "quote": "sicherer Umgang mit Daten"
+  },
+  {
+   "name": "e-commerce",
+   "aliases": [
+    "ecommerce"
+   ],
+   "quote": "E-Commerce"
+  },
+  {
+   "name": "strategy consulting",
+   "aliases": [
+    "strategieberatung"
+   ],
+   "quote": "Strategieberatung"
+  },
+  {
+   "name": "assortment management",
+   "aliases": [
+    "assortment planning",
+    "sortiment",
+    "sortimentsmanagement"
+   ],
+   "quote": "Sortimentslücken zu schließen"
+  }
+ ],
+ "experience": [],
+ "experience_without_number": [
+  "relevante Berufserfahrung, idealerweise in Strategieberatung, E-Commerce, Marketplace oder einem vergleichbaren Umfeld",
+  "Erfahrung in der bereichsübergreifenden Zusammenarbeit"
+ ],
+ "pay": [],
+ "sponsorship": "undeclared",
+ "sponsorship_quote": null,
+ "citizenship_required": false,
+ "citizenship_quote": null,
+ "qualifications": [
+  {
+   "quote": "Hochschulabschluss im Bereich Wirtschaft oder einem verwandten Feld sowie relevante Berufserfahrung, idealerweise in Strategieberatung, E-Commerce, Marketplace oder einem vergleichbaren Umfeld",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Ausgeprägte analytische und strukturierte Problemlösungskompetenz sowie ein sicherer Umgang mit Daten zur Unterstützung fundierter Entscheidungen",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Fähigkeit, strategische Fragestellungen in konkrete Maßnahmen zu übersetzen und diese eigenständig und ergebnisorientiert voranzutreiben",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Erfahrung in der bereichsübergreifenden Zusammenarbeit und im professionellen Umgang mit unterschiedlichen Stakeholder",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Sehr gute Kommunikationsfähigkeiten sowie die Fähigkeit, Empfehlungen klar und überzeugend zu vermitteln",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Hohes Maß an Eigeninitiative, Ownership und Verlässlichkeit sowie die Fähigkeit, mehrere Themen parallel zu priorisieren und zu steuern",
+   "requirement": "unstated"
+  },
+  {
+   "quote": "Fließende Deutsch- und Englischkenntnisse",
+   "requirement": "unstated"
+  }
+ ],
+ "notes": "German posting; heading 'Das bringst du mit' (what you bring) has no modal word, so all lines 'unstated'. The first line mixes a degree (unmarked) with 'idealerweise' (ideally) for the experience domain; kept as one unstated line. Strategy consulting is borderline (it names an industry background, not a tool). Spoken languages (German, English) not listed as skills. No pay, no authorization statements. Review: added assortment management (closing assortment gaps is a named category-management practice; borderline). Stakeholder handling left out as soft.",
+ "document_hash": "a8b5188a2a62a790b17ed45ab49541de7d87a542a676b6560575e8dfa9d46ba8",
+ "reviewed": true,
+ "review_changes": [
+  "skills: added 'assortment management' (quote 'Sortimentslücken zu schließen')"
+ ],
+ "reviewed_by": "claude-opus review + verify (2026-10-16)"
+}
