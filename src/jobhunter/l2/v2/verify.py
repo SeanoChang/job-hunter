@@ -29,6 +29,7 @@ from jobhunter.l2.v2.facts import (
     pay_context,
     validator_version_for,
 )
+from jobhunter.l2.v2.skill_pass import is_pass_mention, pass_mentions
 from jobhunter.l2.v2.source import ANNOTATION_VERSION, annotate, blocks_by_id
 from jobhunter.l2.v2.types import (
     AUTHORIZATION_FAMILIES,
@@ -449,6 +450,23 @@ def _check_skill_links(record: dict[str, Any], report: Report) -> None:
                         surface=mention["surface"], statement_kinds=sorted(set(linked)))
 
 
+def _check_skill_pass(record: dict[str, Any], blocks: list[Block], report: Report) -> None:
+    """validator/26: the pass mentions are exactly the ones the pass derives.
+
+    Re-derived here from the record's statements and MODEL mentions, through
+    the same function assembly calls, the way facts and the authorization block
+    are. A pass mention that was added, dropped, moved or edited after assembly
+    fails, and so does a model mention relabelled as one. Each pass mention is
+    also held to every check a model mention meets: attribution, references,
+    grounding and its aliases/1 key."""
+    stored = [m for m in record["mentions"] if is_pass_mention(m)]
+    derived = pass_mentions(record["statements"], record["mentions"], blocks_by_id(blocks))
+    if stored != derived:
+        report.error("mentions", "mentions", "skill_pass_mismatch",
+                     stored=[m["surface"] for m in stored],
+                     derived=[m["surface"] for m in derived])
+
+
 def _check_mentions(record: dict[str, Any], report: Report) -> None:
     """A mention is grounded in the span it cites and keyed by the versioned
     alias policy — never by a vocabulary invented at write time."""
@@ -708,6 +726,7 @@ def verify(record: dict[str, Any], markdown: str, *,
     if schema_version in _CONTRACT_4_SCHEMAS:
         _check_authorization(record, report)
         _check_skill_links(record, report)
+        _check_skill_pass(record, blocks, report)
     _check_accounting(record, blocks, report, schema_version)
     _check_usability(record, blocks, report)
     report.metrics.update({

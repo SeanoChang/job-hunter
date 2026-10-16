@@ -57,6 +57,7 @@ import jsonschema
 from jobhunter.hashing import canonical_json, sha256_hex
 from jobhunter.l2.schemas import emit_schema as packaged_emit_schema
 from jobhunter.l2.v2.assemble import SCHEMA_VERSION, AssembleError, assemble
+from jobhunter.l2.v2.skill_pass import is_pass_mention
 from jobhunter.l2.v2.source import RefBindError, annotate, blocks_by_id, resolve
 
 # version history (bump, never edit in place):
@@ -1030,6 +1031,11 @@ def _rebuild(record: dict[str, Any], ops: list[_Op]) -> dict[str, Any]:
             working["source_assessment"] = one.object
         elif one.kind == _TRACKS:  # schema 4: a removal puts null back
             working["relations"][_TRACKS] = one.object
+    # validator/26: the skill pass's mentions are code's, not the emit's.
+    # Assembly derives them again from the repaired emit; carried back in, they
+    # would pass for model mentions. A pass mention the repair replaced is the
+    # model's object now and stays.
+    working["mentions"] = [m for m in working["mentions"] if not is_pass_mention(m)]
     return working
 
 

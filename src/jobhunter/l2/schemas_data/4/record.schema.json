@@ -265,7 +265,11 @@
         "role": { "enum": ["direct", "example", "contextual"] },
         "normalized_key": { "type": "string", "minLength": 1 },
         "type": { "enum": ["skill", "field_of_study", "credential", "location",
-                            "organization", "other"] }
+                            "organization", "other"] },
+        "origin": {
+          "description": "validator/26: present only on a mention the deterministic skill pass added (l2/v2/skill_pass.py); a model mention has no origin key",
+          "const": "skill_pass"
+        }
       }
     },
     "area": {

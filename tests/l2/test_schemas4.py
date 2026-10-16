@@ -170,7 +170,11 @@ def test_schema_4_keeps_every_other_shape(load: Any) -> None:
         assert four["$defs"][name] == definition, name
     mention3, mention4 = three["$defs"]["mention"], four["$defs"]["mention"]
     assert mention4["required"] == [*mention3["required"], "type"]
-    assert {k: v for k, v in mention4["properties"].items() if k != "type"} == (
+    # validator/26: a record mention may carry the skill pass's optional
+    # `origin`; an emit mention never can
+    added = {"type", "origin"} if load is record_schema else {"type"}
+    assert set(mention4["properties"]) - set(mention3["properties"]) == added
+    assert {k: v for k, v in mention4["properties"].items() if k not in added} == (
         mention3["properties"]
     )
     for key in ("source_assessment", "statements", "mentions", "areas", "block_accounting"):

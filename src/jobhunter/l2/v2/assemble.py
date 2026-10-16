@@ -25,6 +25,7 @@ from jobhunter.l2.v2.facts import (
 )
 from jobhunter.l2.v2.invisible import invisible
 from jobhunter.l2.v2.quality import assess
+from jobhunter.l2.v2.skill_pass import pass_mentions
 from jobhunter.l2.v2.source import (
     ANNOTATION_VERSION,
     RefBindError,
@@ -538,7 +539,8 @@ def assemble(
     six functions it selects. Only the statement shape differs between 2 and
     3 (parsing contract v3 §2.1); everything else is byte-identical. Schema 4
     (parsing contract v4) adds the authorization presence families and the
-    derived `authorization` block, mention `type` and `relations.tracks`;
+    derived `authorization` block, mention `type` and `relations.tracks`,
+    and from validator/26 the skill pass's mentions (`skill_pass.py`);
     schema 2 and 3 records are built exactly as before.
 
     Raises AssembleError carrying every binding failure at once.
@@ -625,6 +627,10 @@ def assemble(
         dropped = _drop_dangling_links(record)
         if dropped:  # absent when empty: a clean record keeps validator 21's shape
             record["extraction"]["dropped_links"] = dropped
+        # validator/26: vocabulary skills the model left out of its own demand
+        # quotes, appended after its mentions and marked `origin: skill_pass`
+        record["mentions"] += pass_mentions(record["statements"], record["mentions"],
+                                             binder.blocks)
     record["extraction"]["candidate_hash"] = candidate_hash(record)
     return record
 

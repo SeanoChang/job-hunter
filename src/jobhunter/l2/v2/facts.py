@@ -192,7 +192,16 @@ VALIDATOR_VERSION = "20"
 # names in this document. Serving reads an unmarked qualification as
 # `preferred` (`derive_requirement(kind=)`, 2026-10-11 ruling). On the
 # 2026-10-11 answer key pay scored 0.48-0.62 with the amounts almost all right.
-SCHEMA_4_VALIDATOR_VERSION = "25"
+#
+# 26 (schema 4 only) adds the deterministic skill pass (`skill_pass.py`). After
+# binding, assembly adds a skill mention (`origin: skill_pass`) for every term
+# of the frozen vocabulary `skill_vocab.json` that stands in a qualification or
+# responsibility quote and is not already a model skill mention. Verification
+# re-derives that list from the record and refuses any difference. The model
+# missed many skills inside its own quotes, and which ones it named varied run
+# to run: skill recall was 0.43/0.49 and skill stability 0.56 on the
+# 2026-10-12 eval baseline.
+SCHEMA_4_VALIDATOR_VERSION = "26"
 _VALIDATOR_BY_SCHEMA = {"4": SCHEMA_4_VALIDATOR_VERSION}
 
 

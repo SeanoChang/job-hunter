@@ -19,7 +19,7 @@ from jobhunter.l2.v2 import audit, prompt, prompt_v15, serve
 from jobhunter.l2.v2.emit_guard import engine_emit_schema
 from tests.l2.v2.conftest import VISA_MD, make_visa_emit
 
-V3 = ("demand-profile/v15", "4", "25")  # v12, v13, v14 before; see test_bundles_v13
+V3 = ("demand-profile/v15", "4", "26")  # v12, v13, v14 before; see test_bundles_v13
 V2 = ("demand-profile/v11", "3", "20")
 
 
@@ -93,10 +93,10 @@ def test_bundle_v3_assembles_and_verifies_a_visa_emit() -> None:
         prompt_version=b.prompt_version,
     )
     assert record["extraction"]["schema_version"] == "4"
-    assert record["extraction"]["validator_version"] == "25"
+    assert record["extraction"]["validator_version"] == "26"
     assert record["authorization"]["sponsorship"] == "no"
     report = b.verify(record, VISA_MD)
-    assert report.status == "pass" and report.validator_version == "25"
+    assert report.status == "pass" and report.validator_version == "26"
 
 
 def test_v3_is_registered_and_selectable() -> None:

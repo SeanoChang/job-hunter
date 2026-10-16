@@ -983,5 +983,5 @@ def test_the_module_imports_nothing_with_side_effects() -> None:
     assert imported <= {
         "__future__", "copy", "dataclasses", "functools", "json", "re", "typing",
         "jsonschema", "jobhunter.hashing", "jobhunter.l2.schemas",
-        "jobhunter.l2.v2.assemble", "jobhunter.l2.v2.source",
+        "jobhunter.l2.v2.assemble", "jobhunter.l2.v2.skill_pass", "jobhunter.l2.v2.source",
     }, imported
