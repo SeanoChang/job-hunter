@@ -14,7 +14,8 @@ The rule (`l2/v2/skill_pass.py` says why):
    pass's own matcher); `emitted` = of those, documents where the model also
    emitted it as a skill.
 3. Kept: seen >= MIN_SEEN and emitted / seen >= MIN_RATE, and not a spoken
-   language (LANGUAGES, an explicit list: languages are not skills, by ruling).
+   language (LANGUAGES, an explicit list: languages are not skills, by ruling)
+   or an ordinary word that is rarely a tool in a demand quote (STOPLIST).
 
 Only model mentions count. A mention the pass added (`origin: skill_pass`) is
 skipped everywhere, so a vocabulary rebuilt over validator/26 records cannot
@@ -69,6 +70,22 @@ LANGUAGES = frozenset({
     "spoken english", "english proficiency", "bilingual", "multilingual",
     "영어", "英語", "英语", "中文", "日本語", "한국어", "inglés", "anglais", "englisch",
     "français", "deutsch", "español", "português", "italiano",
+})
+#: ordinary words that are rarely a tool in a demand quote, never kept. The
+#: first ten from the 2026-10-16 replay of 1,500 v15/25 records, which found
+#: go a tool in 1 of 43 additions, excel 5/24, windows 1/6, swift 1/3,
+#: outlook 1/4 and spark, shell, glue, word, jest 0 of 7 ("go live", "you excel
+#: at", "process windows"). The rest from a scan of the 1,611-term vocabulary:
+#: words whose everyday sense ("spin up", "rally the team", "glean insights")
+#: or non-skill sense (a chef, a foundry, HVAC airflow, Meta the employer) is
+#: common in postings.
+STOPLIST = frozenset({
+    "go", "excel", "windows", "swift", "outlook", "spark", "shell", "glue", "word",
+    "jest",
+    "airflow", "amplitude", "atlas", "bedrock", "challenger", "chef", "chrome", "clay",
+    "dash", "eagle", "far", "foundry", "glean", "heap", "ironclad", "iterable",
+    "lattice", "meta", "notion", "omni", "pit", "rally", "sage", "salt", "sat",
+    "shock", "spin", "splash", "tempo", "temporal", "unity", "var", "x",
 })
 
 _SQL = ("SELECT document_hash, profile FROM extractions"
@@ -132,7 +149,7 @@ def main() -> int:
                 emitted[term] += term in mine
     passing = {t: [emitted[t], seen[t]] for t in candidates
                if seen[t] >= MIN_SEEN and emitted[t] / seen[t] >= MIN_RATE}
-    kept = {t: n for t, n in passing.items() if t not in LANGUAGES}
+    kept = {t: n for t, n in passing.items() if t not in LANGUAGES | STOPLIST}
     meta = {
         "vocab_version": "skill-vocab/1",
         "built_at": utcnow().date().isoformat(),
@@ -142,10 +159,11 @@ def main() -> int:
         "rule": {"min_emitted_documents": MIN_EMITTED, "min_seen": MIN_SEEN,
                  "min_rate": MIN_RATE, "max_tokens": MAX_TOKENS,
                  "statement_kinds": sorted(QUOTED_KINDS), "model_mentions_only": True,
-                 "excluded_terms": "spoken languages (LANGUAGES)",
+                 "excluded_terms": "spoken languages (LANGUAGES), ordinary words (STOPLIST)",
                  "matching": "skill_pass.grams: word boundaries, no comma-spanning terms"},
         "candidates": len(candidates),
-        "languages_dropped": sorted(set(passing) - set(kept)),
+        "languages_dropped": sorted(set(passing) & LANGUAGES),
+        "stoplist_dropped": sorted(set(passing) & STOPLIST),
         "term_format": "term: [emitted, seen] documents",
     }
     args.out.write_text(_dump(meta, kept), encoding="utf-8")

@@ -69,9 +69,11 @@ def test_the_packaged_vocabulary_is_sorted_and_obeys_its_own_rule() -> None:
         assert term == term_key(term), term  # keys, in the pass's own normalization
     assert vocabulary() == frozenset(terms)
     assert {"python", "sql", "c++", "c#", "r", "node.js", "aws"} <= vocabulary()
-    # generic words fall out by the rate; "go" and "c" stay in once "Go-to"
-    # and "C-level" stop counting as sightings (word boundaries)
+    # generic words fall out by the rate; ordinary words by the stoplist
     assert not {"teams", "data", "net"} & vocabulary()
+    assert not {"go", "excel", "windows", "swift", "outlook", "spark", "shell", "glue",
+                "word", "jest", "notion", "chef", "unity"} & vocabulary()
+    assert "excel" in data["stoplist_dropped"]
     # spoken languages are not skills (owner ruling), whatever their rate
     assert not {"english", "french", "spanish", "german", "mandarin"} & vocabulary()
     assert "english" in data["languages_dropped"]
@@ -206,8 +208,21 @@ def test_only_qualification_and_responsibility_quotes_are_read() -> None:
     record, _ = _record([("employer_context", SQL_R), ("hiring_policy", STACK)])
     assert _added(record) == []
     record, _ = _record([("responsibility", STACK)])
-    assert _added(record) == ["React", "Next.js", "Python", "Go", "PostgreSQL", "Redis",
-                              "Docker", "AWS"]
+    assert _added(record) == ["React", "Next.js", "Python", "PostgreSQL", "Redis", "Docker",
+                              "AWS"]
+
+
+@pytest.mark.parametrize("line", [
+    # real v15 demand quotes (the 2026-10-16 replay): stoplisted words in prose
+    "Merchants who go live, transact, and transition smoothly",
+    "You excel at turning ambiguous questions into clear, intuitive interfaces.",
+    "Clearly defined process windows and acceptance criteria",
+    "Review data-driven insights and spark discussion with leadership",
+    "Finding swift solutions for complex invoice discrepancies",
+])
+def test_a_stoplisted_word_in_prose_adds_nothing(line: str) -> None:
+    record, _ = _record([("responsibility", line)])
+    assert _added(record) == []
 
 
 def test_r_and_d_is_not_r() -> None:
