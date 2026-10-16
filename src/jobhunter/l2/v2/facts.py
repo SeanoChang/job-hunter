@@ -196,8 +196,11 @@ VALIDATOR_VERSION = "20"
 # 26 (schema 4 only) adds the deterministic skill pass (`skill_pass.py`). After
 # binding, assembly adds a skill mention (`origin: skill_pass`) for every term
 # of the frozen vocabulary `skill_vocab.json` that stands in a qualification or
-# responsibility quote and is not already a model skill mention. Verification
-# re-derives that list from the record and refuses any difference. The model
+# responsibility quote, on real word boundaries and leftmost-longest, where no
+# model mention of any type already names it or covers its words. Verification
+# re-derives that list from the record and refuses any difference. Pass
+# mentions stay out of `assemble.candidate_hash`, so a 25 candidate re-judged
+# under 26 keeps the hash its audit and repair artifacts name. The model
 # missed many skills inside its own quotes, and which ones it named varied run
 # to run: skill recall was 0.43/0.49 and skill stability 0.56 on the
 # 2026-10-12 eval baseline.

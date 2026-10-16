@@ -10,20 +10,35 @@ vocabulary (`skill_vocab.json`, built by `scripts/build_skill_vocab.py`) lists
 the terms the model itself calls a skill in at least 40% of the documents
 where the term stands in a qualification or responsibility quote, and that
 it saw at least 30 times. Generic words fall out by that rate ("teams" 0%,
-"data" 2%). After assembly binds a schema-4 record, every vocabulary term
-found in such a quote and not already a skill mention becomes one more skill
-mention, quoted from the document and linked to the statements that contain
-it. Verification re-derives the same list from the record and refuses any
-difference, so a pass mention is as checked as a model one.
+"data" 2%), and spoken languages are left out by ruling. After assembly binds
+a schema-4 record, every vocabulary term found in such a quote and not
+already a model mention becomes one more skill mention, quoted from the
+document and linked to the statements that contain it. Verification derives
+the same list again from the record and refuses any difference, so a pass
+mention is as checked as a model one.
 
-Matching is on tokens, never on substrings: a token is a run of word
+Matching is on tokens, never on substrings. A token is a run of word
 characters and `+ # . / &`, so "c" never matches inside "c++" or "c#", "go"
-never inside "google", "r" never inside "r&d", and "node.js" is one token.
-The words of a multi-word term may be separated only by whitespace, hyphens
-or apostrophes, so a term never spans a comma or a parenthesis. A token's key
-is its lowercase text with the edge "." and "/" stripped, so "Python." and
-"python" are one key. `term_key` applies that key to any string; the
-vocabulary build and the duplicate check against model mentions both use it.
+never inside "google", "r" never inside "r&d", and "node.js" is one token. A
+token's key is its lowercase text with the edge "." and "/" stripped, so
+"Python." and "python" are one key; `term_key` applies that key to any
+string. On top of the tokens:
+
+- The words of a multi-word term may be separated only by whitespace,
+  hyphens or apostrophes, so a term never spans a comma or a parenthesis.
+- A match stands on real word boundaries in the source line: a hyphen,
+  apostrophe, colon or emphasis mark that joins it to a letter or digit
+  makes it part of a longer word ("X-ray" is not "ray", "AI-assisted" is not
+  "ai", "Manage**r" is not "r").
+- An all-caps token with a lowercase plural "s" ("SAs") is not the term its
+  letters spell ("sas").
+- Leftmost-longest: a quote is read left to right, and the longest term at a
+  position consumes its words, so "generative AI" yields one term, never
+  "ai" as well.
+- The model's own mentions, of every type, win their words. Their keys take
+  part in the longest match and block what they cover ("Claude Code" never
+  yields "claude"), a term whose key is any model mention's key is not
+  added, and neither is one whose span overlaps a model mention's evidence.
 
 Pure: no I/O apart from reading the packaged vocabulary once.
 """
@@ -56,6 +71,10 @@ _TOKEN = re.compile(r"[\w+#./&]+")
 #: what may stand between two words of one term
 _GAP = re.compile(r"[\s\-‐‑–—'’]+")
 _EDGE = "./"
+#: characters that join a match to the word beside it when a letter or digit
+#: stands on their far side: hyphens, apostrophes, a colon ("erste:r") and
+#: Markdown emphasis
+_JOINERS = frozenset("-‐‑'’:*_")
 
 
 def _key(token: str) -> str:
@@ -65,32 +84,47 @@ def _key(token: str) -> str:
     return lowered.strip(_EDGE) or lowered
 
 
-def _tokens(text: str) -> list[tuple[int, int, str]]:
-    """(start, end, key) for every token of `text`, in order."""
-    return [(m.start(), m.end(), _key(m.group())) for m in _TOKEN.finditer(text)]
-
-
 def term_key(text: str) -> str:
     """The vocabulary key of a name: its token keys joined by one space.
 
     A model mention's `normalized_key` and a vocabulary term compare on this,
     so "Node.js", "node.js" and "Node.JS." are one skill.
     """
-    return " ".join(key for _, _, key in _tokens(text))
+    return " ".join(_key(m.group()) for m in _TOKEN.finditer(text))
 
 
-def _windows(text: str) -> Iterator[tuple[str, int, int]]:
-    """(key, start, end) of every run of 1..MAX_TOKENS tokens whose gaps hold
-    only whitespace, hyphens or apostrophes, by start then length."""
-    tokens = _tokens(text)
-    for i in range(len(tokens)):
-        for n in range(1, MAX_TOKENS + 1):
-            j = i + n - 1
-            if j >= len(tokens):
+def _joined(text: str, at: int, step: int) -> bool:
+    """Does the character at `at` (just outside a match, walking `step`) join
+    the match to a neighbouring word?"""
+    i = at
+    while 0 <= i < len(text) and text[i] in _JOINERS:
+        i += step
+    return 0 <= i < len(text) and text[i].isalnum()
+
+
+def _acronym_plural(raw: str) -> bool:
+    """"SAs": an all-caps token with a lowercase plural "s"."""
+    word = raw.strip(_EDGE)
+    return len(word) >= 3 and word.endswith("s") and word[:-1].isupper()
+
+
+def _windows(text: str, lo: int = 0, hi: int | None = None) -> Iterator[tuple[str, int, int]]:
+    """(key, start, end) of every candidate term in `text[lo:hi]`, by start
+    then length: runs of 1..MAX_TOKENS tokens whose gaps hold only
+    whitespace, hyphens or apostrophes, standing on word boundaries judged
+    against the whole of `text` (the source line, for a quote)."""
+    end_at = len(text) if hi is None else hi
+    tokens = [(m.start(), m.end(), m.group()) for m in _TOKEN.finditer(text, lo, end_at)]
+    for i, (start, _, _) in enumerate(tokens):
+        if _joined(text, start - 1, -1):
+            continue
+        for j in range(i, min(i + MAX_TOKENS, len(tokens))):
+            if j > i and not _GAP.fullmatch(text[tokens[j - 1][1]:tokens[j][0]]):
                 break
-            if n > 1 and not _GAP.fullmatch(text[tokens[j - 1][1]:tokens[j][0]]):
-                break
-            yield " ".join(t[2] for t in tokens[i:j + 1]), tokens[i][0], tokens[j][1]
+            end, raw = tokens[j][1], tokens[j][2]
+            if _joined(text, end, 1) or _acronym_plural(raw):
+                continue
+            yield " ".join(_key(t[2]) for t in tokens[i:j + 1]), start, end
 
 
 def grams(text: str) -> set[str]:
@@ -124,17 +158,32 @@ def is_pass_mention(mention: Any) -> bool:
     return isinstance(mention, dict) and mention.get("origin") == ORIGIN
 
 
-def pass_mentions(statements: list[dict[str, Any]], mentions: list[dict[str, Any]],
-                  blocks: dict[str, Block],
+def _longest(windows: Iterator[tuple[str, int, int]], wanted: set[str] | frozenset[str],
+             blocking: set[str]) -> Iterator[tuple[str, int, int]]:
+    """Leftmost-longest, non-overlapping: the longest window at each start
+    whose key is a term or a model key, starting after the last one taken."""
+    by_start: dict[int, tuple[int, str]] = {}
+    for key, start, end in windows:
+        if (key in wanted or key in blocking) and end > by_start.get(start, (-1, ""))[0]:
+            by_start[start] = (end, key)
+    taken_to = -1
+    for start in sorted(by_start):
+        if start >= taken_to:
+            end, key = by_start[start]
+            taken_to = end
+            yield key, start, end
+
+
+def pass_mentions(record: dict[str, Any], blocks: dict[str, Block],
                   vocab: frozenset[str] | None = None) -> list[dict[str, Any]]:
     """The skill mentions the pass adds to a bound schema-4 record.
 
-    `mentions` are the record's model mentions (pass mentions, if any, are
-    ignored). A term is added once per record, in the order its first
-    occurrence is read: statements in record order, each statement's
+    Reads the record's statements and its MODEL mentions (pass mentions, if
+    any, are ignored). A term is added once per record, in the order its
+    first occurrence is read: statements in record order, each statement's
     evidence quotes in order, then position in the quote. Its evidence is
     that first occurrence, and its `statement_ids` every qualification or
-    responsibility statement whose quotes contain the term.
+    responsibility statement where it matched.
 
     The mention is shaped like a model's. `role` is `direct`: the term is
     named outright in a demand statement's own quote. `example` belongs to a
@@ -143,37 +192,54 @@ def pass_mentions(statements: list[dict[str, Any]], mentions: list[dict[str, Any
     vocabulary selected for. `normalized_key` follows aliases/1 like every
     other mention's (verify holds it to that), so a pass mention keys the same
     as the model mention it stands in for. Ids are `sp1`, `sp2`, ..., skipping
-    any id the model used, so they are unique and re-derivable.
+    every id the record already uses or links to, so they are unique and
+    re-derivable and never complete a dangling link.
     """
     terms = vocabulary() if vocab is None else vocab
-    model = [m for m in mentions if not is_pass_mention(m)]
-    present = {term_key(str(m.get("normalized_key") or m.get("surface") or ""))
-               for m in model if m.get("type") == "skill"}
+    model = [m for m in record.get("mentions") or [] if not is_pass_mention(m)]
+    model_keys = {term_key(str(m.get("normalized_key") or m.get("surface") or ""))
+                  for m in model}
+    model_spans = [(int(m["evidence"]["span"][0]), int(m["evidence"]["span"][1]))
+                   for m in model if isinstance(m.get("evidence"), dict)]
     found: dict[str, dict[str, Any]] = {}
-    for statement in statements:
+    for statement in record.get("statements") or []:
         if statement.get("kind") not in QUOTED_KINDS:
             continue
         for ref in statement.get("evidence") or []:
-            quote = str(ref["text"])
-            for key, start, end in _windows(quote):
-                if key not in terms or key in present:
+            # an unknown block or a span off its block is attribution's
+            # finding, never a crash here
+            block = blocks.get(str(ref["block_id"]))
+            lo = int(ref["span"][0]) - block.span[0] if block is not None else -1
+            if block is None or block.text[lo:lo + len(str(ref["text"]))] != ref["text"]:
+                continue
+            line = block.text
+            for key, start, end in _longest(_windows(line, lo, lo + len(str(ref["text"]))),
+                                            terms, model_keys):
+                if key in model_keys:
+                    continue  # the model's words, of whatever type
+                first, last = _trim(line, start, end)
+                at = block.span[0] + first
+                if any(a < at + last - first and at < b for a, b in model_spans):
                     continue
                 hit = found.get(key)
                 if hit is None:
-                    lo, hi = _trim(quote, start, end)
-                    surface = quote[lo:hi]
-                    # an unknown block is attribution's finding, not a crash here
-                    block = blocks.get(str(ref["block_id"]))
-                    if block is None or len(surface) > _MAX_SURFACE:
+                    surface = line[first:last]
+                    if len(surface) > _MAX_SURFACE:
                         continue
-                    at = int(ref["span"][0]) + lo
                     hit = found[key] = {"surface": surface, "statement_ids": [], "evidence": {
                         "block_id": block.id, "text": surface, "span": [at, at + len(surface)],
-                        "occurrence": occurrence_index(block.text, surface, at - block.span[0]),
+                        "occurrence": occurrence_index(line, surface, first),
                     }}
                 if statement["id"] not in hit["statement_ids"]:
                     hit["statement_ids"].append(statement["id"])
-    taken = {m.get("id") for m in model}
+    relations = record.get("relations") or {}
+    linked = [ref_id for node in relations.get("example_sets") or []
+              for ref_id in node.get("mention_ids") or []]
+    tracks = relations.get("tracks")
+    if isinstance(tracks, dict):
+        linked += [ref_id for item in tracks.get("items") or []
+                   for ref_id in item.get("mention_ids") or []]
+    taken = {m.get("id") for m in model} | set(linked)
     ids = (f"sp{n}" for n in range(1, len(found) + len(taken) + 2) if f"sp{n}" not in taken)
     return [
         {

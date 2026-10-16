@@ -13,7 +13,8 @@ The rule (`l2/v2/skill_pass.py` says why):
    qualification or responsibility statement quote (`skill_pass.grams`, the
    pass's own matcher); `emitted` = of those, documents where the model also
    emitted it as a skill.
-3. Kept: seen >= MIN_SEEN and emitted / seen >= MIN_RATE.
+3. Kept: seen >= MIN_SEEN and emitted / seen >= MIN_RATE, and not a spoken
+   language (LANGUAGES, an explicit list: languages are not skills, by ruling).
 
 Only model mentions count. A mention the pass added (`origin: skill_pass`) is
 skipped everywhere, so a vocabulary rebuilt over validator/26 records cannot
@@ -50,6 +51,25 @@ STATUS = "validated"
 MIN_EMITTED = 20
 MIN_SEEN = 30
 MIN_RATE = 0.4
+#: spoken languages are not skills (owner ruling, 2026-10-16): never kept,
+#: whatever their rate. Keys in `term_key` form.
+LANGUAGES = frozenset({
+    "afrikaans", "albanian", "amharic", "arabic", "armenian", "bahasa", "bahasa indonesia",
+    "bahasa malaysia", "bengali", "bulgarian", "burmese", "cantonese", "catalan",
+    "chinese", "croatian", "czech", "danish", "dutch", "english", "estonian", "farsi",
+    "filipino", "finnish", "flemish", "french", "german", "greek", "gujarati",
+    "hebrew", "hindi", "hungarian", "icelandic", "indonesian", "irish", "italian",
+    "japanese", "kannada", "kazakh", "khmer", "korean", "lao", "latvian",
+    "lithuanian", "malay", "malayalam", "mandarin", "mandarin chinese", "marathi",
+    "mongolian", "nepali", "norwegian", "persian", "polish", "portuguese", "punjabi",
+    "romanian", "russian", "serbian", "sinhala", "slovak", "slovenian", "somali",
+    "spanish", "swahili", "swedish", "tagalog", "tamil", "telugu", "thai",
+    "turkish", "ukrainian", "urdu", "uzbek", "vietnamese", "welsh", "zulu",
+    "english language", "business english", "fluent english", "written english",
+    "spoken english", "english proficiency", "bilingual", "multilingual",
+    "영어", "英語", "英语", "中文", "日本語", "한국어", "inglés", "anglais", "englisch",
+    "français", "deutsch", "español", "português", "italiano",
+})
 
 _SQL = ("SELECT document_hash, profile FROM extractions"
         " WHERE prompt_version = %s AND validator_version = %s AND status = %s")
@@ -110,8 +130,9 @@ def main() -> int:
             for term in candidates & seen_keys(profile):
                 seen[term] += 1
                 emitted[term] += term in mine
-    kept = {t: [emitted[t], seen[t]] for t in candidates
-            if seen[t] >= MIN_SEEN and emitted[t] / seen[t] >= MIN_RATE}
+    passing = {t: [emitted[t], seen[t]] for t in candidates
+               if seen[t] >= MIN_SEEN and emitted[t] / seen[t] >= MIN_RATE}
+    kept = {t: n for t, n in passing.items() if t not in LANGUAGES}
     meta = {
         "vocab_version": "skill-vocab/1",
         "built_at": utcnow().date().isoformat(),
@@ -120,8 +141,11 @@ def main() -> int:
                    "excluded": "evals/parse/cases.jsonl", "excluded_documents": len(skip)},
         "rule": {"min_emitted_documents": MIN_EMITTED, "min_seen": MIN_SEEN,
                  "min_rate": MIN_RATE, "max_tokens": MAX_TOKENS,
-                 "statement_kinds": sorted(QUOTED_KINDS), "model_mentions_only": True},
+                 "statement_kinds": sorted(QUOTED_KINDS), "model_mentions_only": True,
+                 "excluded_terms": "spoken languages (LANGUAGES)",
+                 "matching": "skill_pass.grams: word boundaries, no comma-spanning terms"},
         "candidates": len(candidates),
+        "languages_dropped": sorted(set(passing) - set(kept)),
         "term_format": "term: [emitted, seen] documents",
     }
     args.out.write_text(_dump(meta, kept), encoding="utf-8")

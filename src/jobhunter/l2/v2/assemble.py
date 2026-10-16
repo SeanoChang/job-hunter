@@ -25,7 +25,7 @@ from jobhunter.l2.v2.facts import (
 )
 from jobhunter.l2.v2.invisible import invisible
 from jobhunter.l2.v2.quality import assess
-from jobhunter.l2.v2.skill_pass import pass_mentions
+from jobhunter.l2.v2.skill_pass import is_pass_mention, pass_mentions
 from jobhunter.l2.v2.source import (
     ANNOTATION_VERSION,
     RefBindError,
@@ -184,10 +184,19 @@ def candidate_hash(record: dict[str, Any]) -> str:
 
     Quality is an audit outcome that keeps moving after assembly; folding it in
     would silently re-key a candidate and break repair parent links.
+
+    validator/26: the skill pass's mentions are left out too. They are a pure
+    function of the rest of the record and the validator (verify derives them
+    again), so they add no identity, and an audit or repair artifact keyed by
+    a candidate's hash keeps describing it when only the pass changed. That is
+    what lets `rebuild._same_candidate` carry a 25 record's audit to the same
+    model output re-judged under 26.
     """
     shadow = copy.deepcopy(record)
     shadow["extraction"]["candidate_hash"] = ""
     shadow["quality"] = None
+    if isinstance(shadow.get("mentions"), list):
+        shadow["mentions"] = [m for m in shadow["mentions"] if not is_pass_mention(m)]
     return sha256_hex(canonical_json(shadow))
 
 
@@ -629,8 +638,7 @@ def assemble(
             record["extraction"]["dropped_links"] = dropped
         # validator/26: vocabulary skills the model left out of its own demand
         # quotes, appended after its mentions and marked `origin: skill_pass`
-        record["mentions"] += pass_mentions(record["statements"], record["mentions"],
-                                             binder.blocks)
+        record["mentions"] += pass_mentions(record, binder.blocks)
     record["extraction"]["candidate_hash"] = candidate_hash(record)
     return record
 

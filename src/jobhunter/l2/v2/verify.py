@@ -460,7 +460,7 @@ def _check_skill_pass(record: dict[str, Any], blocks: list[Block], report: Repor
     also held to every check a model mention meets: attribution, references,
     grounding and its aliases/1 key."""
     stored = [m for m in record["mentions"] if is_pass_mention(m)]
-    derived = pass_mentions(record["statements"], record["mentions"], blocks_by_id(blocks))
+    derived = pass_mentions(record, blocks_by_id(blocks))
     if stored != derived:
         report.error("mentions", "mentions", "skill_pass_mismatch",
                      stored=[m["surface"] for m in stored],

@@ -166,6 +166,7 @@ from jobhunter.l2.schemas import normalize_emit, validate_emit, validate_record
 from jobhunter.l2.state import AuditView, Review, derive_state
 from jobhunter.l2.v2 import migrate
 from jobhunter.l2.v2.assemble import control_char_errors
+from jobhunter.l2.v2.skill_pass import is_pass_mention
 from jobhunter.l2.v2.source import annotate
 from jobhunter.l2.v2.types import Block
 from jobhunter.store import extraction
@@ -178,14 +179,37 @@ _STAMPED = ("validator_version", "candidate_hash")
 
 
 def _content(record: dict[str, Any]) -> dict[str, Any]:
-    """The candidate minus the stamps a bump moves by itself."""
+    """The candidate minus the stamps a bump moves by itself, and minus the
+    skill pass's mentions (validator/26), which code derives from the rest."""
     envelope = record.get("extraction")
     if not isinstance(envelope, dict):
         return record  # a record shape with no envelope (v1) is all content
-    return {
+    content = {
         **record,
         "extraction": {k: v for k, v in envelope.items() if k not in _STAMPED},
     }
+    if isinstance(record.get("mentions"), list):
+        content["mentions"] = [m for m in record["mentions"] if not is_pass_mention(m)]
+    return content
+
+
+def _adopted(archived: dict[str, Any], rederived: dict[str, Any]) -> dict[str, Any]:
+    """The archived candidate, carrying today's skill-pass mentions.
+
+    The pass is outside the candidate's identity (`assemble.candidate_hash`
+    leaves it out), so the archived hash stays true of the result and every
+    audit and repair artifact keyed by it still attaches: a 25 record re-judged
+    under 26 keeps its verdict and gains the pass's skills. The model's
+    content is the archived record's, which `_same_candidate` proved equal.
+    """
+    if not isinstance(archived.get("mentions"), list) or (
+            archived["mentions"] == _content(archived)["mentions"]
+            and not any(is_pass_mention(m) for m in rederived.get("mentions") or [])):
+        return archived  # nothing to carry: the archived object itself
+    return {**archived, "mentions": [
+        *(m for m in archived["mentions"] if not is_pass_mention(m)),
+        *(m for m in rederived.get("mentions") or [] if is_pass_mention(m)),
+    ]}
 
 
 def _same_candidate(archived: dict[str, Any] | None, rederived: dict[str, Any]) -> bool:
@@ -242,7 +266,8 @@ def _rejudge(attempt: Attempt, markdown: str, bundle: Bundle) -> Attempt:
         return replace(base, outcome="attribution_failed", validation=findings)
     archived = attempt.record
     if archived is not None and _same_candidate(archived, record):
-        record = archived  # same candidate: keep the identity its artifacts key on
+        # same candidate: keep the identity its artifacts key on
+        record = _adopted(archived, record)
     return replace(base, outcome="ok", record=record, validation=findings)
 
 

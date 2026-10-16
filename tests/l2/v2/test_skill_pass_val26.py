@@ -69,8 +69,12 @@ def test_the_packaged_vocabulary_is_sorted_and_obeys_its_own_rule() -> None:
         assert term == term_key(term), term  # keys, in the pass's own normalization
     assert vocabulary() == frozenset(terms)
     assert {"python", "sql", "c++", "c#", "r", "node.js", "aws"} <= vocabulary()
-    # generic words and ambiguous short ones fall out by the rate
-    assert not {"teams", "data", "go", "c", "net"} & vocabulary()
+    # generic words fall out by the rate; "go" and "c" stay in once "Go-to"
+    # and "C-level" stop counting as sightings (word boundaries)
+    assert not {"teams", "data", "net"} & vocabulary()
+    # spoken languages are not skills (owner ruling), whatever their rate
+    assert not {"english", "french", "spanish", "german", "mandarin"} & vocabulary()
+    assert "english" in data["languages_dropped"]
 
 
 @pytest.mark.parametrize(("text", "key"), [
@@ -130,18 +134,80 @@ def test_what_the_model_already_emitted_is_not_added_again() -> None:
     assert verify(record, markdown, schema_version="4").status == "pass"
 
 
-def test_a_model_mention_of_another_type_does_not_block_a_skill() -> None:
+def test_a_model_mention_of_any_type_blocks_its_key() -> None:
+    # "English" typed other, an employer typed organization: never a pass skill
     record, _ = _record([("qualification", SQL_R)],
                         mentions=[s4_mention("m1", "SQL", "b000002", ["s1"], "other")])
-    assert "SQL" in _added(record)
+    assert "SQL" not in _added(record)
+
+
+def test_the_models_words_win_the_longest_match() -> None:
+    # synthetic quote; the model's "Claude Code" consumes "Claude"
+    line = "Build agents with Claude Code and Python"
+    record, _ = _record([("qualification", line)],
+                        mentions=[s4_mention("m1", "Claude Code", "b000002", ["s1"], "other")])
+    blocks = blocks_by_id(annotate("## Qualifications\n" + line + "\n"))
+    out = pass_mentions(record, blocks, vocab=frozenset({"claude", "python"}))
+    assert [m["surface"] for m in out] == ["Python"]
+
+
+def test_a_term_overlapping_a_model_mentions_span_is_not_added() -> None:
+    line = "Experience using SQL daily"
+    blocks = blocks_by_id(annotate(line + "\n"))
+    ref = {"block_id": "b000001", "text": line, "span": [0, len(line)], "occurrence": 0}
+    at = line.index("QL")
+    model = {"id": "m1", "surface": "QL", "type": "other", "normalized_key": "ql",
+             "evidence": {"block_id": "b000001", "text": "QL", "span": [at, at + 2],
+                          "occurrence": 0}}
+    record = {"statements": [{"id": "s1", "kind": "qualification", "evidence": [ref]}],
+              "mentions": [model]}
+    assert pass_mentions(record, blocks, vocab=frozenset({"sql"})) == []
+    assert len(pass_mentions({**record, "mentions": []}, blocks,
+                             vocab=frozenset({"sql"}))) == 1
+
+
+@pytest.mark.parametrize(("line", "vocab", "expected"), [
+    ("Experience with generative AI tools", {"generative ai", "ai"}, ["generative AI"]),
+    ("Build pipelines on AWS Glue and Spark", {"aws", "glue", "aws glue", "spark"},
+     ["AWS Glue", "Spark"]),
+])
+def test_matching_is_leftmost_longest(line: str, vocab: set[str], expected: list[str]) -> None:
+    # synthetic quotes
+    blocks = blocks_by_id(annotate(line + "\n"))
+    ref = {"block_id": "b000001", "text": line, "span": [0, len(line)], "occurrence": 0}
+    record = {"statements": [{"id": "s1", "kind": "qualification", "evidence": [ref]}],
+              "mentions": []}
+    assert [m["surface"] for m in pass_mentions(record, blocks, frozenset(vocab))] == expected
+
+
+@pytest.mark.parametrize(("text", "absent"), [
+    ("Interpret X-ray images", "ray"),
+    ("Use AI-assisted tools", "ai"),
+    ("Run a meta-analysis", "meta"),
+    ("Product Manage**r** role", "r"),
+    ("Als erste:r Ansprechpartner:in", "r"),
+    ("Work with SAs and customers", "sas"),
+    ("Python's ecosystem", "python"),
+])
+def test_a_match_stands_on_real_word_boundaries(text: str, absent: str) -> None:
+    assert absent not in grams(text)
+
+
+@pytest.mark.parametrize(("text", "present"), [
+    ("**Python** and SQL", "python"), ("- R, SAS or Stata", "sas"),
+    ("real-time systems", "real time"), ("Python: required", "python"),
+    ("(SQL)", "sql"), ("-Python", "python"),
+])
+def test_ordinary_punctuation_is_a_boundary(text: str, present: str) -> None:
+    assert present in grams(text)
 
 
 def test_only_qualification_and_responsibility_quotes_are_read() -> None:
     record, _ = _record([("employer_context", SQL_R), ("hiring_policy", STACK)])
     assert _added(record) == []
     record, _ = _record([("responsibility", STACK)])
-    assert _added(record) == ["React", "Next.js", "Python", "PostgreSQL", "Redis", "Docker",
-                              "AWS"]
+    assert _added(record) == ["React", "Next.js", "Python", "Go", "PostgreSQL", "Redis",
+                              "Docker", "AWS"]
 
 
 def test_r_and_d_is_not_r() -> None:
@@ -158,7 +224,8 @@ def test_synthetic_dotted_names_keep_their_own_spelling() -> None:
     blocks = blocks_by_id(annotate("Use .NET daily.\n"))
     ref = {"block_id": "b000001", "text": "Use .NET daily.", "span": [0, 15], "occurrence": 0}
     statement = {"id": "s1", "kind": "qualification", "evidence": [ref]}
-    out = pass_mentions([statement], [], blocks, vocab=frozenset({"net"}))
+    out = pass_mentions({"statements": [statement], "mentions": []}, blocks,
+                        vocab=frozenset({"net"}))
     assert [m["surface"] for m in out] == [".NET"]
 
 
