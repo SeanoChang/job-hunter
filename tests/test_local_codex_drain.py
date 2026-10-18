@@ -269,3 +269,73 @@ def test_the_script_writes_what_the_runner_writes(
     assert [a.outcome for a in by_order] == [
         "attribution_failed", "schema_invalid", "ok", "ok", "ok",
     ]
+
+
+class Haiku(Recording):
+    """A claude-cli answer: Haiku 5.5 observed, a per-call cost reported."""
+
+    name = "claude-cli"
+
+    def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
+        res = super().complete(prompt, schema, model)
+        return EngineResult(res.raw_text, "claude-haiku-5-5", None, None, 0.026)
+
+
+def test_claude_cli_asks_for_haiku_and_records_the_cost(drain: Any, tmp_path: Path) -> None:
+    markdown, good = _case("v2")
+    queue, _ = _queue(tmp_path / "queue.jsonl", markdown)
+    outbox = tmp_path / "outbox"
+    engine = Haiku([good])
+    assert drain.main([str(queue), str(outbox), "--bundle", "v2", "--engine", "claude-cli"],
+                      engine=engine) == 0
+    [attempt] = _outbox_attempts(outbox)
+    assert attempt.outcome == "ok"
+    assert (attempt.requested_engine, attempt.requested_model,
+            attempt.observed_model) == ("claude-cli", "claude-haiku-5-5", "claude-haiku-5-5")
+    assert attempt.cost_usd == 0.026
+    assert [m for _, _, m in engine.calls] == ["claude-haiku-5-5"]
+
+
+def test_an_observed_model_outside_the_requested_family_is_rejected(
+    drain: Any, tmp_path: Path
+) -> None:
+    # asking for Haiku and getting codex back is the model gate's business
+    markdown, good = _case("v2")
+    queue, _ = _queue(tmp_path / "queue.jsonl", markdown)
+    outbox = tmp_path / "outbox"
+    assert drain.main([str(queue), str(outbox), "--bundle", "v2", "--engine", "claude-cli"],
+                      engine=Recording([good])) == 0
+    [attempt] = _outbox_attempts(outbox)
+    assert attempt.outcome == "model_rejected"
+
+
+class ByDocument:
+    """Answers each prompt with its own document's emit, in any call order."""
+
+    name = "codex-cli"
+
+    def __init__(self, cases: list[str]) -> None:
+        self.answers = {v2.source(c): json.dumps(v2.emit_of(c)) for c in cases}
+
+    def complete(self, prompt: str, schema: dict[str, Any], model: str) -> EngineResult:
+        if "CANDIDATE HASH:" in prompt:
+            raise EngineTransportError("no auditor in this test")
+        rendered = {get_bundle("v2").render(md, [], None): raw
+                    for md, raw in self.answers.items()}
+        return EngineResult(rendered[prompt], CODEX_MODEL, 40, 9, None)
+
+
+def test_concurrency_drains_every_document_once(drain: Any, tmp_path: Path) -> None:
+    cases = ["C01", "C04", "C09"]
+    queue = tmp_path / "queue.jsonl"
+    queue.write_text("".join(json.dumps({
+        "document_hash": sha256_hex(v2.source(c).encode("utf-8")),
+        "markdown": v2.source(c), "next_attempt_no": 1}) + "\n" for c in cases),
+        encoding="utf-8")
+    outbox = tmp_path / "outbox"
+    assert drain.main([str(queue), str(outbox), "--bundle", "v2", "--max-docs", "3",
+                       "--concurrency", "3"], engine=ByDocument(cases)) == 0
+    first = [a for a in _outbox_attempts(outbox) if a.sample_slot == 1]
+    assert sorted(a.document_hash for a in first) == sorted(
+        sha256_hex(v2.source(c).encode("utf-8")) for c in cases)
+    assert {a.outcome for a in first} == {"ok"}

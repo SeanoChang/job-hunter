@@ -30,8 +30,14 @@ unreachable" outcome, `AuditPhase.unreachable`), the fold flags it
 `_reaudit_pass` — which takes `validated` rows only, so a `needs_review`
 cohort stays unaudited until a human `retry`.
 
+The engine defaults to codex-cli on gpt-6-luna. `--engine claude-cli` drains
+through `claude -p` instead (default model claude-haiku-5-5), and
+`--concurrency N` drains N documents at once: each document's loop is
+independent and writes its own attempt keys, so only the dispatch is parallel.
+
 Usage:
     uv run python scripts/local_codex_drain.py queue.jsonl outbox/ --max-docs 25 [--bundle v2]
+        [--engine claude-cli] [--model claude-haiku-5-5] [--concurrency 16]
 """
 
 from __future__ import annotations
@@ -39,7 +45,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -51,6 +59,7 @@ from jobhunter.l2.assemble import AssembleError
 from jobhunter.l2.attempts import Attempt, from_bytes, to_bytes
 from jobhunter.l2.bundles import DEFAULT_BUNDLE, Bundle, get_bundle
 from jobhunter.l2.engines import (
+    ClaudeCli,
     CodexCli,
     Engine,
     EngineFatalError,
@@ -73,6 +82,8 @@ from jobhunter.timeutil import iso, utcnow_precise
 
 MODEL = "gpt-6-luna"
 GLOBS = (MODEL + "*",)
+#: the model each engine asks for when `--model` is not given
+DEFAULT_MODELS = {"codex-cli": MODEL, "claude-cli": "claude-haiku-5-5"}
 AUDIT_MOD = 20  # spec §4.5: 5% deterministic audit by hash slot
 
 
@@ -131,7 +142,8 @@ def _errors(report: Report, bundle: Bundle) -> list[str]:
 
 
 def _drain_doc(
-    doc: _Doc, outbox: Path, engine: Engine, run_id: str, bundle: Bundle
+    doc: _Doc, outbox: Path, engine: Engine, run_id: str, bundle: Bundle,
+    model: str = MODEL,
 ) -> str:
     """One document through the runner's exact loop; returns its disposition."""
     dh = doc.hash
@@ -149,7 +161,7 @@ def _drain_doc(
         produced: list[str],
         ladder_exhausted: bool,
         findings: list[dict[str, Any]] | None = None,
-        tokens: tuple[int | None, int | None] = (None, None),
+        tokens: tuple[int | None, int | None, float | None] = (None, None, None),
         started_at: datetime | None = None,
         record: dict[str, Any] | None = None,
         sample_slot: int = 1,
@@ -180,7 +192,7 @@ def _drain_doc(
             ladder_exhausted=ladder_exhausted,
             input_tokens=tokens[0],
             output_tokens=tokens[1],
-            cost_usd=None,  # codex-cli reports no per-call cost
+            cost_usd=tokens[2],  # claude-cli reports one; codex-cli does not
             started_at=iso(t0),
             finished_at=iso(utcnow_precise()),
             record=record,
@@ -192,7 +204,7 @@ def _drain_doc(
     markdown = doc.markdown
     if len(markdown) > MAX_DOC_CHARS:
         put_attempt(
-            requested_model=MODEL, observed_model=None, outcome="over_budget",
+            requested_model=model, observed_model=None, outcome="over_budget",
             raw_response=None, fed=[],
             produced=[f"document {len(markdown)} chars > {MAX_DOC_CHARS}"],
             ladder_exhausted=True,
@@ -210,25 +222,25 @@ def _drain_doc(
         t0 = utcnow_precise()
         prompt = bundle.render(markdown, prior_errors, prior_raw)
         try:
-            result = engine.complete(prompt, schema, MODEL)
+            result = engine.complete(prompt, schema, model)
         except EngineThrottled as exc:
-            put_attempt(requested_model=MODEL, observed_model=None, outcome="throttled",
+            put_attempt(requested_model=model, observed_model=None, outcome="throttled",
                         raw_response=None, fed=prior_errors, produced=[str(exc)],
                         ladder_exhausted=False, started_at=t0)
             return "throttled"
         except EngineFatalError as exc:
-            put_attempt(requested_model=MODEL, observed_model=None, outcome="engine_fatal",
+            put_attempt(requested_model=model, observed_model=None, outcome="engine_fatal",
                         raw_response=None, fed=prior_errors, produced=[str(exc)],
                         ladder_exhausted=False, started_at=t0)
             return "fatal"
         except EngineModelNotFound:
-            put_attempt(requested_model=MODEL, observed_model=None, outcome="model_rejected",
+            put_attempt(requested_model=model, observed_model=None, outcome="model_rejected",
                         raw_response=None, fed=prior_errors, produced=["model not found"],
                         ladder_exhausted=False, started_at=t0)
             return "fatal"
         except EngineTransportError as exc:
             transports += 1
-            put_attempt(requested_model=MODEL, observed_model=None, outcome="transport",
+            put_attempt(requested_model=model, observed_model=None, outcome="transport",
                         raw_response=None, fed=prior_errors, produced=[str(exc)],
                         ladder_exhausted=False, started_at=t0)
             if transports >= TRANSPORT_RETRIES:
@@ -236,9 +248,9 @@ def _drain_doc(
             continue
 
         observed = result.observed_model
-        tokens = (result.input_tokens, result.output_tokens)
-        if not model_matches(observed, GLOBS):
-            put_attempt(requested_model=MODEL, observed_model=observed,
+        tokens = (result.input_tokens, result.output_tokens, result.cost_usd)
+        if not model_matches(observed, (model + "*",)):
+            put_attempt(requested_model=model, observed_model=observed,
                         outcome="model_rejected", raw_response=result.raw_text,
                         fed=prior_errors,
                         produced=[f"observed model {observed!r} outside globs"],
@@ -255,7 +267,7 @@ def _drain_doc(
             emit = normalize_emit(emit, bundle.schema_version)
         except ValueError as exc:
             errors = [f"response is not valid JSON: {exc}"]
-            put_attempt(requested_model=MODEL, observed_model=observed,
+            put_attempt(requested_model=model, observed_model=observed,
                         outcome="schema_invalid", raw_response=result.raw_text,
                         fed=prior_errors, produced=errors, ladder_exhausted=exhausted,
                         started_at=t0, tokens=tokens)
@@ -272,7 +284,7 @@ def _drain_doc(
             prior_raw, prior_emit = result.raw_text, emit
         if schema_errors := validate_emit(emit, bundle.schema_version):
             errors = schema_errors + dropped
-            put_attempt(requested_model=MODEL, observed_model=observed,
+            put_attempt(requested_model=model, observed_model=observed,
                         outcome="schema_invalid", raw_response=result.raw_text,
                         fed=prior_errors, produced=errors, ladder_exhausted=exhausted,
                         started_at=t0, tokens=tokens)
@@ -284,7 +296,7 @@ def _drain_doc(
                                      observed_model=observed, at=iso(t0))
         except AssembleError as exc:
             errors = exc.errors + dropped
-            put_attempt(requested_model=MODEL, observed_model=observed,
+            put_attempt(requested_model=model, observed_model=observed,
                         outcome="attribution_failed", raw_response=result.raw_text,
                         fed=prior_errors, produced=errors, ladder_exhausted=exhausted,
                         started_at=t0, tokens=tokens)
@@ -294,13 +306,13 @@ def _drain_doc(
         findings = _findings(report)
         if report.status == "fail" or dropped:
             errors = _errors(report, bundle) + dropped
-            put_attempt(requested_model=MODEL, observed_model=observed,
+            put_attempt(requested_model=model, observed_model=observed,
                         outcome="attribution_failed", raw_response=result.raw_text,
                         fed=prior_errors, produced=errors, findings=findings,
                         ladder_exhausted=exhausted, started_at=t0, tokens=tokens)
             prior_errors = errors
             continue
-        put_attempt(requested_model=MODEL, observed_model=observed, outcome="ok",
+        put_attempt(requested_model=model, observed_model=observed, outcome="ok",
                     raw_response=result.raw_text, fed=prior_errors, produced=[],
                     findings=findings, ladder_exhausted=False, started_at=t0,
                     tokens=tokens, record=record)
@@ -309,7 +321,7 @@ def _drain_doc(
         # deterministic audit slot by hash, and nothing else.
         sampled = AUDIT_MOD <= 1 or int(dh[:8], 16) % AUDIT_MOD == 0
         if sampled and _take_samples(
-            markdown, dh, schema, engine, bundle, put_attempt
+            markdown, dh, schema, engine, bundle, put_attempt, model
         ) == "throttled":
             return "throttled"
         return "ok"
@@ -318,7 +330,7 @@ def _drain_doc(
 
 def _take_samples(
     markdown: str, dh: str, schema: dict[str, Any], engine: Engine, bundle: Bundle,
-    put_attempt: Any,
+    put_attempt: Any, model: str = MODEL,
 ) -> str | None:
     """Slots 2 and 3, as `runner._take_samples`: single-shot generations with
     one transport retry and SAMPLE_CONTENT_ATTEMPTS content attempts each."""
@@ -328,30 +340,30 @@ def _take_samples(
         t0 = utcnow_precise()
         prompt = bundle.render(markdown, prior_errors, None)
         try:
-            result = engine.complete(prompt, schema, MODEL)
+            result = engine.complete(prompt, schema, model)
         except EngineThrottled as exc:
-            put_attempt(requested_model=MODEL, observed_model=None, outcome="throttled",
+            put_attempt(requested_model=model, observed_model=None, outcome="throttled",
                         raw_response=None, fed=[], produced=[str(exc)],
                         ladder_exhausted=False, started_at=t0, sample_slot=slot)
             return "throttled"
         except EngineTransportError as exc:
-            put_attempt(requested_model=MODEL, observed_model=None, outcome="transport",
+            put_attempt(requested_model=model, observed_model=None, outcome="transport",
                         raw_response=None, fed=[], produced=[str(exc)],
                         ladder_exhausted=False, started_at=t0, sample_slot=slot)
             if not retried:
                 slots.insert(0, (slot, True, content_no, prior_errors))
             continue
         except (EngineModelNotFound, EngineFatalError) as exc:
-            put_attempt(requested_model=MODEL, observed_model=None, outcome="engine_fatal",
+            put_attempt(requested_model=model, observed_model=None, outcome="engine_fatal",
                         raw_response=None, fed=[], produced=[str(exc)],
                         ladder_exhausted=False, started_at=t0, sample_slot=slot)
             continue
         observed = result.observed_model
         common: dict[str, Any] = {
-            "requested_model": MODEL, "observed_model": observed,
+            "requested_model": model, "observed_model": observed,
             "raw_response": result.raw_text, "fed": list(prior_errors),
             "ladder_exhausted": False, "started_at": t0, "sample_slot": slot,
-            "tokens": (result.input_tokens, result.output_tokens),
+            "tokens": (result.input_tokens, result.output_tokens, result.cost_usd),
         }
 
         def _content_retry(errors: list[str], *, _slot: int = slot,
@@ -359,7 +371,7 @@ def _take_samples(
             if _n < SAMPLE_CONTENT_ATTEMPTS:
                 slots.insert(0, (_slot, _retried, _n + 1, errors))
 
-        if not model_matches(observed, GLOBS):
+        if not model_matches(observed, (model + "*",)):
             put_attempt(outcome="model_rejected",
                         produced=[f"observed model {observed!r} outside globs"], **common)
             continue
@@ -405,37 +417,59 @@ def main(argv: Sequence[str] | None = None, *, engine: Engine | None = None) -> 
     ap.add_argument("--max-docs", type=int, default=25)
     ap.add_argument("--bundle", default=None,
                     help="engine tuple to extract under (default: JOB_HUNTER_L2_BUNDLE, else v1)")
+    ap.add_argument("--engine", choices=tuple(DEFAULT_MODELS), default="codex-cli")
+    ap.add_argument("--model", default=None, help="default: the engine's model in DEFAULT_MODELS")
+    ap.add_argument("--concurrency", type=int, default=1, help="documents drained at once")
     args = ap.parse_args(argv)
     name = args.bundle or default_bundle()
     try:
         bundle = get_bundle(name)
     except KeyError as exc:
         ap.error(str(exc.args[0]))
+    model = args.model or DEFAULT_MODELS[args.engine]
 
     started = utcnow_precise()
     run_id = f"xlocal-{iso(started).replace(':', '').replace('-', '')}"
-    engine = engine if engine is not None else CodexCli(trust_requested_model=True)
+    if engine is None:
+        engine = (ClaudeCli() if args.engine == "claude-cli"
+                  else CodexCli(trust_requested_model=True))
     if bundle.audit_version is not None:
         print(f"local_codex_drain: bundle {name} has an audit phase ({bundle.audit_version}); "
               "it is deferred to the next `extract run` after ingest (_reaudit_pass)",
               file=sys.stderr, flush=True)
-    counts: dict[str, int] = {}
-    attempted = 0
+    docs: list[_Doc] = []
     with args.queue.open(encoding="utf-8") as fh:
         for line in fh:
-            if attempted >= args.max_docs:
+            if len(docs) >= args.max_docs:
                 break
             doc = _Doc(json.loads(line))
-            if _drained(args.outbox, doc.hash, bundle):
-                continue
+            if not _drained(args.outbox, doc.hash, bundle):
+                docs.append(doc)
+    counts: dict[str, int] = {}
+    attempted = 0
+    lock = threading.Lock()
+    # a throttle stops the dispatch: documents not yet started are left for
+    # the next run, as the serial loop's break leaves them
+    throttled = threading.Event()
+
+    def one(doc: _Doc) -> None:
+        nonlocal attempted
+        if throttled.is_set():
+            return
+        disposition = _drain_doc(doc, args.outbox, engine, run_id, bundle, model)
+        with lock:
             attempted += 1
-            disposition = _drain_doc(doc, args.outbox, engine, run_id, bundle)
             counts[disposition] = counts.get(disposition, 0) + 1
             print(json.dumps({"doc": doc.hash[:12], "disposition": disposition}), flush=True)
-            if disposition == "throttled":
-                break
+        if disposition == "throttled":
+            throttled.set()
+
+    with ThreadPoolExecutor(max_workers=max(1, args.concurrency)) as pool:
+        for fut in [pool.submit(one, d) for d in docs]:
+            fut.result()
     print(json.dumps({
-        "run_id": run_id, "bundle": name, "attempted": attempted, "counts": counts,
+        "run_id": run_id, "bundle": name, "engine": args.engine, "model": model,
+        "attempted": attempted, "counts": counts,
         "audit": "deferred" if bundle.audit_version is not None else "none",
     }))
     return 3 if counts.get("throttled") else 0

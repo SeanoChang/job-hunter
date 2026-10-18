@@ -235,15 +235,17 @@ def _last_summary(stdout: str) -> dict[str, Any]:
 
 
 def drain(
-    queue: Path, outbox: Path, batch: int, *, run: Run, bundle: str = DEFAULT_BUNDLE
+    queue: Path, outbox: Path, batch: int, *, run: Run, bundle: str = DEFAULT_BUNDLE,
+    engine: list[str] | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """One local codex drain. Returns its exit code and its summary line.
 
     Exit 0 is a finished pass, 3 is "codex throttled" (the caller decides
     whether to wait it out); anything else means the script itself broke.
     """
+    # `engine` is the drain's own engine flags (--engine/--model/--concurrency)
     res = run(["uv", "run", "python", str(DRAIN_SCRIPT), str(queue), str(outbox),
-               "--bundle", bundle, "--max-docs", str(batch)])
+               "--bundle", bundle, *(engine or []), "--max-docs", str(batch)])
     out = res.stdout or ""
     if out:
         print(out, end="" if out.endswith("\n") else "\n", flush=True)
@@ -392,6 +394,9 @@ def loop(args: argparse.Namespace, *, run: Run, sleep: Sleep) -> int:
     work_root = Path(args.work_dir) if args.work_dir else Path(tempfile.mkdtemp(prefix="drain-"))
 
     pool = "queue" if args.pool == "auto" else args.pool
+    engine = ["--engine", args.engine, "--concurrency", str(args.concurrency)]
+    if args.model:
+        engine += ["--model", args.model]
     # stdout stays the cycle log; the banner (and the throttle notices) are for
     # the operator watching an unattended run.
     print(f"drain-cycle: pool={args.pool} bundle={bundle} batch={args.batch} "
@@ -417,7 +422,8 @@ def loop(args: argparse.Namespace, *, run: Run, sleep: Sleep) -> int:
             return 0
 
         totals: dict[str, Any] = {"attempted": 0, "counts": {}}
-        code, summary = drain(dumped.queue, outbox, args.batch, run=run, bundle=bundle)
+        code, summary = drain(dumped.queue, outbox, args.batch, run=run, bundle=bundle,
+                              engine=engine)
         _merge(totals, summary)
         retries = 0
         while code == 3 and retries < args.throttle_retries:
@@ -425,7 +431,8 @@ def loop(args: argparse.Namespace, *, run: Run, sleep: Sleep) -> int:
             print(f"drain-cycle: throttled, waiting {args.throttle_wait:g}m "
                   f"(retry {retries}/{args.throttle_retries})", flush=True)
             sleep(args.throttle_wait * 60)
-            code, summary = drain(dumped.queue, outbox, args.batch, run=run, bundle=bundle)
+            code, summary = drain(dumped.queue, outbox, args.batch, run=run, bundle=bundle,
+                                  engine=engine)
             _merge(totals, summary)
 
         held = blobs(outbox)
@@ -486,6 +493,10 @@ def main(argv: Sequence[str] | None = None, *, run: Run = shell, sleep: Sleep = 
     ap.add_argument("--work-dir", type=Path, default=None,
                     help="where dumps and tarballs land (default: a temp dir)")
     ap.add_argument("--key", type=Path, default=DEFAULT_KEY, help="outbox encryption key file")
+    ap.add_argument("--engine", choices=("codex-cli", "claude-cli"), default="codex-cli",
+                    help="the drain's engine (claude-cli = `claude -p`)")
+    ap.add_argument("--model", default=None, help="default: the drain's model for the engine")
+    ap.add_argument("--concurrency", type=int, default=1, help="documents the drain runs at once")
     ap.add_argument("--throttle-wait", type=float, default=45.0,
                     help="minutes to wait after a throttled drain")
     ap.add_argument("--throttle-retries", type=int, default=4,

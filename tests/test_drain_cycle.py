@@ -391,6 +391,7 @@ def test_full_cycle_orders_the_pipeline(tmp_path: Path) -> None:
     assert drain.argv[:3] == ["uv", "run", "python"]
     assert drain.argv[-2:] == ["--max-docs", "5"]
 
+    assert drain.argv[drain.argv.index("--engine") + 1] == "codex-cli"  # the default
     # macOS AppleDouble suppression is an invariant of the transport
     tar = fake.of_kind("tar")[0]
     assert (tar.env or {}).get("COPYFILE_DISABLE") == "1"
@@ -695,3 +696,16 @@ def test_an_unregistered_bundle_fails_before_any_ci_run(tmp_path: Path) -> None:
                        run=fake, sleep=lambda _s: None)
     assert code == 1
     assert fake.calls == []
+
+
+def test_the_engine_flags_reach_the_drain(tmp_path: Path) -> None:
+    fake = FakeRun(docs=[5], drain_codes=[0], blobs_per_drain=3)
+    assert driver.main(
+        _fixture(tmp_path) + ["--pool", "queue", "--cycles", "1", "--engine", "claude-cli",
+                              "--model", "claude-haiku-5-5", "--concurrency", "16"],
+        run=fake, sleep=lambda _s: None,
+    ) == 0
+    argv = fake.of_kind("drain")[0].argv
+    flags = argv[argv.index("--engine"):]
+    assert flags == ["--engine", "claude-cli", "--concurrency", "16",
+                     "--model", "claude-haiku-5-5", "--max-docs", "5"]
