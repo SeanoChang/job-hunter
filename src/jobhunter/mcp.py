@@ -427,7 +427,11 @@ def build_app(token: str) -> BearerAuth:
 
 
 def main() -> None:
-    """`job-hunter-mcp`: serve on $PORT, Cloud Run's contract (default 8080)."""
+    """`job-hunter-mcp`: serve on $PORT, Cloud Run's contract (default 8080).
+
+    $HOST is the bind address: all interfaces by default, as Cloud Run needs;
+    a laptop install sets 127.0.0.1 so the server never faces the network.
+    """
     import uvicorn
 
     env = env_snapshot()  # config.py stays the only reader of os.environ
@@ -440,4 +444,4 @@ def main() -> None:
     except ValueError:
         print(f"config error: PORT must be a number, got {env.get('PORT')!r}", file=sys.stderr)
         raise SystemExit(int(Exit.CONFIG)) from None
-    uvicorn.run(build_app(token), host="0.0.0.0", port=port)
+    uvicorn.run(build_app(token), host=env.get("HOST", "0.0.0.0"), port=port)
